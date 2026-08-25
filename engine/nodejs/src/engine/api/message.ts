@@ -3,11 +3,10 @@ import { engine } from "./context";
 /**
  * メッセージウィンドウにテキストを書き足す。
  *
- * `std::game::base_engine::write` (lang item `write`) の実体で、
- * scene 本文に直接書かれたノベルテキストがここに来る。
- * 即座にリターンする非ブロッキング syscall。
+ * syscall `Sys.Write` の実装。scene 本文に直接書かれたノベルテキストがここに来る。
+ * 中断しないので、そのまま値を返す。
  */
-export function showMessage(text: string): void {
+export function writeMessage(text: string): void {
   const { components, messageBoxId } = engine();
   const box = components.getTextBox(messageBoxId);
   box.show();
@@ -15,15 +14,15 @@ export function showMessage(text: string): void {
 }
 
 /**
- * クリック待ち。`std::game::base_engine::wait` (lang item `wait`) の実体。
+ * クリックが来るまで待つ。
  *
- * 本来は「完了までブロックする syscall」だが、現在のコード生成は
- * scene 本文を同期関数として吐くため、JavaScript 側で待つ手段がない。
- * したがって現状は即座にリターンする (= シーンが一気に流れる)。
- * 解決の方向性は engine の README を参照。
+ * syscall `Sys.Wait` の実装。Promise を返すので kernel はこれを await し、
+ * 解決するまで scene を再開しない (= VM は止まったまま)。
  */
-export function waitForClick(): void {
-  console.warn(
-    "[biwa] waitForClick() is not blocking yet: the scene runs to the end without waiting",
-  );
+export function waitForClick(): Promise<void> {
+  const { host } = engine();
+
+  return new Promise((resolve) => {
+    host.addEventListener("click", () => resolve(), { once: true });
+  });
 }

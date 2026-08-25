@@ -53,7 +53,7 @@ Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン�
     deps/std/                      ← CLI が用意する依存パッケージ
     typescript/{<pkg>.ts, std.ts}  ← biwac の出力
   .biwa_runtime/                   ← エンジン (Vite プロジェクト) の展開先
-    src/engine/api/*.ts            ← エンジンの syscall 層
+    src/engine/{vm,api}/*.ts       ← kernel と syscall の実装
     src/game/{<pkg>.ts, std.ts, entry.ts}
 ```
 
@@ -78,10 +78,14 @@ export default __biwa_entrypoint as unknown as BiwaEntrypoint;
 
 エンジンはパッケージ名を知らないまま `./game/entry` を import して呼べばよい。
 
-std の native TypeScript がエンジンの API を呼ぶときは
-`@biwa/engine/<name>` という論理パスで書く。
+`__biwa_entrypoint` は generator function である
+(scene の実行モデルについては [`docs/execution-model.md`](../docs/execution-model.md))。
+エンジンはこれを kernel で駆動する。
+
+std の native TypeScript がエンジンを参照するときは
+`@biwa/engine/<path>` という論理パスで書く。
 これは `.biwa_runtime/vite.config.ts` の alias と `tsconfig.json` の paths で
-`.biwa_runtime/src/engine/api/<name>.ts` に解決される。
+`.biwa_runtime/src/engine/<path>.ts` に解決される。
 生成物の物理的な配置に import が依存しないようにするための仕組みである。
 
 ## 同梱物の扱い

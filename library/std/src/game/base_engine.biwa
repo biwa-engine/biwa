@@ -1,15 +1,16 @@
-// エンジン (基盤ランタイム) の API を取り込む。
-//
-// `@biwa/engine/*` は生成物の配置場所に依存しないための論理パスで、
-// Biwa CLI が用意する Vite の alias / tsconfig の paths によって
-// 実際のエンジン実装 (`.biwa_runtime/src/engine/api/*`) へ解決される。
 [[native(arch="typescript")]]
 {{
-  import { createImage } from "@biwa/engine/image";
-  import { showMessage, waitForClick } from "@biwa/engine/message";
+  import { createImage } from "@biwa/engine/api/image";
+  import { Sys, type BiwaSyscall } from "@biwa/engine/vm/syscall";
 }}
 
 import package::types::string::String;
+
+[[lang="syscall"]]
+[[native(arch="typescript")]]
+type Syscall = {{
+  BiwaSyscall
+}};
 
 [[native(arch="typescript")]]
 fn create_image(path: String, x: Int, y: Int) {{
@@ -19,19 +20,27 @@ fn create_image(path: String, x: Int, y: Int) {{
   });
 }}
 
-// scene 内で直接記述されたテキスト (novel statement) の展開先。
-// コンパイラのみが呼び出すことを想定しており、
-// ゲーム開発者やサードパーティが直接呼ぶことは想定していない。
 [[lang="write"]]
 [[native(arch="typescript")]]
-fn write(msg: String) {{
-  showMessage(msg);
+fn write(msg: String) -> Syscall {{
+  return { sys: Sys.Write, args: [msg] };
 }}
 
-// novel statement の待機 (クリック待ち) の展開先。
-// write と同じくコンパイラのみが呼び出す。
 [[lang="wait"]]
 [[native(arch="typescript")]]
-fn wait() {{
-  waitForClick();
+fn wait() -> Syscall {{
+  return { sys: Sys.Wait, args: [] };
 }}
+
+// NOTE: エンジン API の分類
+//
+// - 中断する syscall (クリック待ちなど) は、scene から `yield` で発行される。
+//   ここにある関数は「レジスタに積む」役だけを持ち、syscall の記述子を組み立てて返す。
+//   実際に制御を渡す `yield` 命令はコンパイラが scene の中に置く。
+//   中断できるのは generator である scene だけなので、この形になる。
+// - 中断しない syscall (画像を出す、名前を変える) は普通の関数呼び出しでよい。
+//   エンジンの API をそのまま呼び、積んで即座に返る。
+//
+// `@biwa/engine/*` は生成物の配置場所に依存しないための論理パスで、
+// Biwa CLI が用意する Vite の alias / tsconfig の paths によって
+// 実際のエンジン実装 (`.biwa_runtime/src/engine/...`) へ解決される。

@@ -4,7 +4,7 @@ import type { BiwaEntrypoint } from "../engine/game";
 
 export const packageName = "(no game)";
 
-const entrypoint: BiwaEntrypoint = (game) => {
+const entrypoint: BiwaEntrypoint = function* (game) {
   console.warn(
     "[biwa] no game is loaded: run `biwa dev` in a Biwa package to generate src/game/entry.ts",
   );

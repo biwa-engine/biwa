@@ -16,14 +16,22 @@ export interface BiwaGame {
   };
 }
 
-/** `__biwa_entrypoint` の型。scene main のシグネチャ `(g: Game) -> Game` に対応する。 */
-export type BiwaEntrypoint = (game: BiwaGame) => BiwaGame;
+/**
+ * `__biwa_entrypoint` の型。
+ *
+ * scene は generator function として出力される (`scene main` のシグネチャ
+ * `(g: Game) -> Game` に対応)。呼んでも本体は走らず、
+ * kernel が `next()` で駆動して初めて進む。
+ */
+export type BiwaEntrypoint = (
+  game: BiwaGame,
+) => Generator<unknown, BiwaGame, unknown>;
 
 /**
  * ゲーム開始時の `Game` を組み立てる。
  *
  * `Window` / `Canvas` / `MessageWindow` は std 側では空の構造体で、
- * 実体はすべて syscall (`@biwa/engine/*`) の向こうにある。
+ * 実体はすべて syscall の向こうにある。
  * `characters` と `states` はゲーム側が初期化する手段がまだ無いので空で渡す。
  */
 export function createInitialGame(name: string): BiwaGame {

@@ -16,9 +16,8 @@ Biwa エンジンの基盤エンジン実装 (Node.js 版)。
 
 ```
 src/main.ts
-  └─ entrypoint(createInitialGame(packageName))   ← scene main
-       └─ std の関数呼び出し
-            └─ @biwa/engine/*  ← エンジンの API (syscall 層)
+  └─ kernel.run(entrypoint(createInitialGame(packageName)))   ← scene main (generator)
+       ↑ yield された syscall を処理して結果を書き戻す
 ```
 
 エンジンが知っているのは以下だけで、パッケージ名や生成されたシンボル名は知らない。
@@ -26,60 +25,85 @@ src/main.ts
 | 規約                     | 実体                                                  |
 | ------------------------ | ----------------------------------------------------- |
 | `src/game/entry.ts`      | `biwa dev` が生成するスタブ。default export が scene main |
-| `@biwa/engine/<name>`    | std から呼ばれるエンジン API。Vite alias で解決          |
+| `@biwa/engine/<path>`    | std から参照されるエンジン実装。Vite alias で解決        |
 | `BiwaGame` (`src/engine/game.ts`) | `std::game::Game` に対応する構造               |
 
 ## エンジン API は syscall である
 
-std の native 実装から呼ばれる `@biwa/engine/*` の関数は、
-ゲームコードから見ればシステムコールにあたる。
+ゲームコードから見ると、エンジンの API はシステムコールにあたる。
 呼ぶとエンジン側 (kernel land) の処理に入り、
 API によっては完了までブロックし、API によっては処理を積んで直ちに返る。
 
+**scene は generator function として出力される。** これが VM にあたる。
+`yield` が syscall 命令で、kernel が `next()` で結果を書き戻して再開する。
+
+```ts
+// 生成された scene
+export function* main(g) {
+  yield write("こんにちは。");   // ← レジスタに積んで VM exit
+  yield wait();                  // ← クリックが来るまで再開しない
+  return g;
+}
 ```
+
+| 層 | 役割 | 対応するもの |
+| --- | --- | --- |
+| std (`base_engine.biwa`) | syscall の記述子を組み立てる | レジスタに引数を積む |
+| コンパイラ (codegen) | scene の中に `yield` を置く | syscall 命令 |
+| `src/engine/vm/kernel.ts` | 記述子を処理し、結果を書き戻して再開する | kernel land |
+
+```
+src/engine/vm/
+  syscall.ts   # syscall 番号と記述子の型 (std との唯一の合意点)
+  kernel.ts    # VM を回すループ
+  handlers.ts  # syscall 番号 → 実装の対応表
 src/engine/api/
-  context.ts    # 現在のエンジン実体 (syscall の実装が参照する)
-  message.ts    # showMessage / waitForClick
-  image.ts      # createImage
+  context.ts   # 現在のエンジン実体 (syscall の実装が参照する)
+  message.ts   # writeMessage / waitForClick
+  image.ts     # createImage
 ```
 
-現状の分類:
+現状の syscall:
 
-| API              | 対応する std の関数              | ふるまい                       |
-| ---------------- | -------------------------------- | ------------------------------ |
-| `showMessage`    | `base_engine::write` (lang item)  | 即座に返る                     |
-| `createImage`    | `base_engine::create_image`       | 読み込みを積んで即座に返る     |
-| `waitForClick`   | `base_engine::wait` (lang item)   | **本来ブロックすべきだが返る** |
+| syscall | 対応する std の関数 | ふるまい |
+| --- | --- | --- |
+| `Sys.Write` | `base_engine::write` (lang item) | 中断しない |
+| `Sys.Wait` | `base_engine::wait` (lang item) | クリックまで**中断する** |
 
-## 制約: ブロッキング API が実装できていない
+実装が Promise を返せばブロッキング syscall で、解決するまで scene を再開しない。
+値をそのまま返せば非ブロッキング syscall で、scene はそのまま走り続ける。
+非ブロッキング syscall が続いてフレームを落とさないよう、
+8ms を超えたら一度 `requestAnimationFrame` に制御を返す。
 
-コンパイラが吐く scene 本文は**同期関数**である。
-そのため JavaScript 側でクリックを待つ手段がなく、
-`waitForClick` は警告を出して即座に返る。
-結果として、現状はシーンが最後まで一気に流れる。
+### 中断できるのは scene の中だけ
 
-目指す形は VM である。scene を VM 上で走らせ、
-ブロッキング syscall では VM を exit させて制御をエンジンに返し、
-エンジンがクリックイベントを捕捉したら VM を再開する。
-変数は TS (JS) の通常のメモリ領域で扱いたいので、
-実行そのものは JavaScript の上に載せたまま、中断と再開だけを外から制御する形になる。
+generator にしているのは scene だけなので、
 
-暫定の `CommandQueue` (`src/engine/CommandQueue.ts`) は、
-scene を走らせながら描画コマンドを積み、後からエンジンが `await` で再生する仕組みだが、
-プレイヤーの入力より先に分岐が確定してしまうため選択肢を扱えない。
-現在ゲームの実行経路では使っていない。
+- 中断する syscall は scene の中にしか現れない (novel statement の展開先なので構文上そうなる)
+- 中断しない API (画像を出す、名前を変える) は普通の関数呼び出しでよい。
+  std の native 実装が `@biwa/engine/api/*` を直接呼ぶ
+- 普通の `fn` からブロッキング API を呼ぶことはできない
+
+kernel が `next()` を呼ばない限り VM は止まったままなので、
+ポーズ・スキップ・オート・速度調整はこのループの外側で決められる。
+`scene.return()` で巻き戻せば、シーンの強制終了もできる。
+
+設計の検討過程 (`node:vm` が使えない理由、Worker + `Atomics.wait` や
+QuickJS + ASYNCIFY との比較、セーブ・ロードの方針) は
+[`docs/execution-model.md`](../../docs/execution-model.md) にある。
 
 ## ディレクトリ構成
 
 ```
 src/
-  main.ts             # 起動: レンダラ初期化 → コンテキスト登録 → scene main 呼び出し
+  main.ts             # 起動: レンダラ初期化 → コンテキスト登録 → kernel で scene main を駆動
   engine/
     game.ts           # ゲームコードとの境界の型 (BiwaGame / BiwaEntrypoint)
-    api/              # syscall 層 (std から `@biwa/engine/*` として呼ばれる)
+    vm/               # scene を駆動する kernel と syscall の定義
+    api/              # syscall の実装 (std からも `@biwa/engine/api/*` として呼ばれる)
     Renderer.ts       # PixiJS Application のラッパー
     LayerManager.ts   # Canvas/DOM レイヤーの生成・参照管理
-    CommandQueue.ts   # 暫定。現在は未使用
+    CommandQueue.ts   # 使っていない。VM 化以前の名残
     tween.ts          # PixiJS Ticker ベースの線形補間
   components/
     ComponentRegistry.ts
@@ -122,7 +146,7 @@ Canvas レイヤーと DOM レイヤーを `z-index` で任意に積み重ねる
 
 ## 今後の実装予定
 
-- [ ] VM 実行モデル (ブロッキング syscall / クリック待ち)
+- [ ] セーブ・ロード (syscall ログの記録と再生)
 - [ ] XML によるレイヤー・コンポーネント定義のローダー
 - [ ] `std::game::window` の native (`MessageWindow` / `Canvas`) の実装
 - [ ] `characters` / `states` の初期化をゲーム側から渡す口

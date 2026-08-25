@@ -11,7 +11,7 @@
     "paths": {
       // std の native TypeScript が書く論理パス。vite.config.ts の alias と対応させる。
       // baseUrl を使わない場合、この tsconfig からの相対パスとして解決される。
-      "@biwa/engine/*": ["./src/engine/api/*"]
+      "@biwa/engine/*": ["./src/engine/*"]
     },
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
