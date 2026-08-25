@@ -1,0 +1,37 @@
+// エンジン (基盤ランタイム) の API を取り込む。
+//
+// `@biwa/engine/*` は生成物の配置場所に依存しないための論理パスで、
+// Biwa CLI が用意する Vite の alias / tsconfig の paths によって
+// 実際のエンジン実装 (`.biwa_runtime/src/engine/api/*`) へ解決される。
+[[native(arch="typescript")]]
+{{
+  import { createImage } from "@biwa/engine/image";
+  import { showMessage, waitForClick } from "@biwa/engine/message";
+}}
+
+import package::types::string::String;
+
+[[native(arch="typescript")]]
+fn create_image(path: String, x: Int, y: Int) {{
+  createImage(path, x, y, {
+    dx: (_) => 0,
+    dy: (_) => 0,
+  });
+}}
+
+// scene 内で直接記述されたテキスト (novel statement) の展開先。
+// コンパイラのみが呼び出すことを想定しており、
+// ゲーム開発者やサードパーティが直接呼ぶことは想定していない。
+[[lang="write"]]
+[[native(arch="typescript")]]
+fn write(msg: String) {{
+  showMessage(msg);
+}}
+
+// novel statement の待機 (クリック待ち) の展開先。
+// write と同じくコンパイラのみが呼び出す。
+[[lang="wait"]]
+[[native(arch="typescript")]]
+fn wait() {{
+  waitForClick();
+}}

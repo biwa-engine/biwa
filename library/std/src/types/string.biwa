@@ -1,0 +1,12 @@
+[[lang="string"]]
+[[native(arch="typescript")]]
+type String = {{
+  string
+}};
+
+impl String {
+  [[native(arch="typescript")]]
+  fn concat(self, other: Self) -> Self {{
+    return self + other;
+  }}
+}
