@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "module": "esnext",
+    "lib": ["ES2023", "DOM"],
+    "types": ["vite/client"],
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "paths": {
+      // std の native TypeScript が書く論理パス。vite.config.ts の alias と対応させる。
+      // baseUrl を使わない場合、この tsconfig からの相対パスとして解決される。
+      "@biwa/engine/*": ["./src/engine/api/*"]
+    },
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    /* Linting */
+    // NOTE: 未使用シンボルの検査は有効にしない。
+    // `src/game/` にはコンパイラが生成した TypeScript が同居しており、
+    // 未使用の引数 (native 実装のスタブなど) が普通に現れるため。
+    // 生成物を型検査の対象から外すより、std とエンジン API の食い違いを
+    // ここで捕まえられるほうが価値が高い。
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"]
+}
+
