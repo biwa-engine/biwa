@@ -27,7 +27,8 @@ Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン�
    - エンジンを `<project>/.biwa_runtime/` に展開し、初回だけ `npm install` する。
      同梱物の内容が変わったときだけ展開し直す (`.biwa-engine-stamp` で判定)。
 2. **ビルドする** — `biwac_driver::compile` を呼ぶ。
-   出力は `<project>/.biwa_build/typescript/` に `<package>.ts` として生える。
+   出力は `<project>/.biwa_build/<target>/` に生える
+   (`wasm/<package>.wasm` または `typescript/<package>.ts`)。
 3. **生成物をエンジンに渡す** — `.biwa_runtime/src/game/` に配り、
    エントリポイントのスタブ `entry.ts` を生成する (後述)。
 4. **Vite を起動する** — `.biwa_runtime/` をルートとして開発サーバが立つ。
@@ -37,11 +38,25 @@ Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン�
 
 オプション:
 
-| オプション                    | 意味                                     |
-| ----------------------------- | ---------------------------------------- |
-| `-p`, `--package-path <DIR>`  | 対象パッケージ (既定: カレントディレクトリ) |
-| `-r`, `--rebuild`             | キャッシュを無視して最初から建て直す     |
-| `--port <PORT>`               | 開発サーバのポート                       |
+| オプション                   | 意味                                        |
+| ---------------------------- | ------------------------------------------- |
+| `-p`, `--package-path <DIR>` | 対象パッケージ (既定: カレントディレクトリ) |
+| `-r`, `--rebuild`            | キャッシュを無視して最初から建て直す        |
+| `--port <PORT>`              | 開発サーバのポート                          |
+| `--target <TARGET>`          | コード生成のターゲット (既定: `wasm`)       |
+
+### ターゲット
+
+| ターゲット    | 生成物                                        | 実行のされ方                                      |
+| ------------- | --------------------------------------------- | ------------------------------------------------- |
+| `wasm` (既定) | `<package>.wasm` 1 つ (単相化で std ごと入る) | Worker で走る。エンジン API はホスト関数の import |
+| `typescript`  | `<package>.ts` と依存の `.ts`                 | メインスレッドで走る。scene は generator          |
+
+どちらも見た目の挙動は同じで、syscall の実装もエンジン側で共有している。
+違うのは中断の作り方である
+([`docs/execution-model.md`](../docs/execution-model.md))。
+
+中間生成物もターゲットごとに分かれているので、切り替えても互いのキャッシュは壊れない。
 
 ## ディレクトリ
 
@@ -51,11 +66,16 @@ Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン�
   src/*.biwa                       ← ゲームのソース (監視対象)
   .biwa_build/
     deps/std/                      ← CLI が用意する依存パッケージ
-    typescript/{<pkg>.ts, std.ts}  ← biwac の出力
+    wasm/<pkg>.wasm                ← biwac の出力 (--target wasm)
+    typescript/{<pkg>.ts, std.ts}  ← biwac の出力 (--target typescript)
   .biwa_runtime/                   ← エンジン (Vite プロジェクト) の展開先
     src/engine/{vm,api}/*.ts       ← kernel と syscall の実装
-    src/game/{<pkg>.ts, std.ts, entry.ts}
+    src/game/{game.wasm, entry.ts} ← 配られた生成物 (typescript なら *.ts)
 ```
+
+`src/game/` には**今のターゲットの生成物だけ**が残る。
+ターゲットを切り替えたときに古いほうが型検査に混ざると、
+どちらが動いているのか分からなくなるためである。
 
 `.biwa_build/` も `.biwa_runtime/` も生成物なので、消してよい。
 
@@ -63,24 +83,48 @@ Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン�
 
 コンパイラが吐くシンボルはマングルされていてパッケージごとに名前が変わるが、
 エントリポイントだけは `__biwa_entrypoint` という固定名で export される
-(TypeScript ターゲット固有の規約)。
+(TypeScript の export でも wasm の export でも同じ名前である)。
 
 CLI はこれをさらに固定の形へ均したスタブ `.biwa_runtime/src/game/entry.ts` を生成する。
+エンジンが見るのはこのファイルの default export だけで、
+パッケージ名もターゲットもここから読み取る。
 
 ```ts
-import { __biwa_entrypoint } from "./<package>.ts";
-import type { BiwaEntrypoint } from "../engine/game";
+// --target wasm
+import type { BiwaBackend } from "../engine/game";
+import wasmUrl from "./game.wasm?url";
 
-export const packageName = "<package>";
+const backend: BiwaBackend = {
+  kind: "wasm",
+  packageName: "<package>",
+  url: wasmUrl,
+  buildId: "<生成物の内容から決まる値>",
+};
 
-export default __biwa_entrypoint as unknown as BiwaEntrypoint;
+export default backend;
 ```
 
-エンジンはパッケージ名を知らないまま `./game/entry` を import して呼べばよい。
+```ts
+// --target typescript
+import { __biwa_entrypoint } from "./<package>.ts";
+import type { BiwaBackend, BiwaEntrypoint } from "../engine/game";
 
-`__biwa_entrypoint` は generator function である
-(scene の実行モデルについては [`docs/execution-model.md`](../docs/execution-model.md))。
-エンジンはこれを kernel で駆動する。
+const backend: BiwaBackend = {
+  kind: "typescript",
+  packageName: "<package>",
+  entrypoint: __biwa_entrypoint as unknown as BiwaEntrypoint,
+};
+
+export default backend;
+```
+
+`buildId` は wasm の中身から決まる値である。ブラウザのキャッシュ避けのほかに、
+**このファイルが変わることで Vite がページを作り直す**という役目がある。
+`.wasm` は Vite のモジュールグラフでは葉なので、これが無いと
+再ビルドしても画面が古いままになる。
+
+実行モデル (scene がどう中断するか) は
+[`docs/execution-model.md`](../docs/execution-model.md) にある。
 
 std の native TypeScript がエンジンを参照するときは
 `@biwa/engine/<path>` という論理パスで書く。

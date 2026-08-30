@@ -7,6 +7,9 @@ edition = "2024"
 anyhow = "1.0.104"
 biwac_base = { version = "0.1.0", path = "../compiler/src/biwac_base" }
 biwac_driver = { path = "../compiler/src/biwac_driver" }
+# `--target` の候補を出すためだけに要る。
+# どの feature でどのバックエンドが入るかを知っているのはこの crate である。
+biwac_generator = { path = "../compiler/src/biwac_generator" }
 clap = { version = "4.6.6", features = ["derive"] }
 notify = "8.2.0"
 rust-embed = { version = "8.12.0", features = ["include-exclude"] }

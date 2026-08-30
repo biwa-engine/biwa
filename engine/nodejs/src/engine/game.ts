@@ -45,3 +45,27 @@ export function createInitialGame(name: string): BiwaGame {
     },
   };
 }
+
+/**
+ * ゲーム本体の受け渡し方。`biwa dev` が生成する `src/game/entry.ts` の形である。
+ *
+ * コンパイラは同じソースから TypeScript にも wasm にも吐けるので、
+ * エンジンはどちらで来ても動く必要がある。
+ * 違うのは実行のさせ方だけで、エンジン API (`api/*`) は共有している。
+ */
+export type BiwaBackend =
+  | {
+    /** 生成物が TypeScript。scene は generator で、kernel が `next()` で駆動する。 */
+    kind: "typescript";
+    packageName: string;
+    entrypoint: BiwaEntrypoint;
+  }
+  | {
+    /** 生成物が wasm。Worker で走らせ、syscall はスレッドを跨ぐ。 */
+    kind: "wasm";
+    packageName: string;
+    /** `.wasm` の URL。 */
+    url: string;
+    /** 生成物の内容から決まる値。ブラウザのキャッシュを避けるために付ける。 */
+    buildId: string;
+  };

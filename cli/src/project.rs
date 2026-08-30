@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use biwac_base::Target;
 use serde::Deserialize;
 
 /// biwac が読むパッケージメタデータのうち、CLI が必要とする部分だけ。
@@ -60,9 +61,12 @@ impl Project {
         self.root.join(biwac_base::BIWA_BUILD_DIRECTORY_NAME)
     }
 
-    /// 生成された TypeScript が並ぶディレクトリ。
-    pub fn generated_typescript_dir(&self) -> PathBuf {
-        self.build_dir().join("typescript")
+    /// 生成物が並ぶディレクトリ。
+    ///
+    /// `arch` の切り落としでシンボルの集合がターゲットごとに変わるため、
+    /// biwac は成果物も中間生成物もターゲットごとに分けて置く。
+    pub fn generated_dir(&self, target: Target) -> PathBuf {
+        self.build_dir().join(target.build_subdir())
     }
 
     /// 取得済み依存パッケージが並ぶディレクトリ (`<root>/.biwa_build/deps`)。

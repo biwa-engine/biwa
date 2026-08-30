@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use biwac_base::Target;
 
 use crate::assets::{self, Engine, Std};
 use crate::project::Project;
@@ -21,8 +22,11 @@ const STD_STAMP_FILE: &str = ".biwa-std-stamp";
 
 /// 生成物とスタブを置くディレクトリ (`.biwa_runtime/` からの相対)。
 const GAME_DIR: &str = "src/game";
-/// エンジンが import するスタブ。ファイル名も関数名もエンジンと合意済みの規約。
+/// エンジンが import するスタブ。ファイル名も default export もエンジンと合意済みの規約。
 const ENTRY_FILE: &str = "entry.ts";
+/// wasm の生成物を置く名前。パッケージ名に依らない固定名にして、
+/// エンジン側の import (`./game.wasm?url`) を安定させる。
+const WASM_FILE: &str = "game.wasm";
 /// コンパイラがエントリポイントに付ける名前。
 const ENTRYPOINT_NAME: &str = "__biwa_entrypoint";
 
@@ -107,10 +111,12 @@ fn npm_install(runtime_dir: &Path) -> Result<()> {
 
 /// コンパイル結果をエンジンから見える場所へ移し、エントリポイントのスタブを書く。
 ///
-/// biwac は自パッケージと推移的依存の `.ts` を 1 つのディレクトリに並べて出力する
-/// (相互 import が `./<package>.ts` のため)。その関係を保ったまま丸ごと移す。
-pub fn sync_generated(project: &Project) -> Result<()> {
-    let src_dir = project.generated_typescript_dir();
+/// biwac の出力は `<project>/.biwa_build/<target>/` に生えるが、
+/// Vite が見るのは `<project>/.biwa_runtime/` である。
+/// 何をどう移すかはターゲットで違うが、
+/// 「エンジンは `src/game/entry.ts` の default export だけを見る」点は共通である。
+pub fn sync_generated(project: &Project, target: Target) -> Result<()> {
+    let src_dir = project.generated_dir(target);
     let dst_dir = project.runtime_dir().join(GAME_DIR);
 
     if !src_dir.is_dir() {
@@ -123,8 +129,27 @@ pub fn sync_generated(project: &Project) -> Result<()> {
     std::fs::create_dir_all(&dst_dir)
         .with_context(|| format!("failed to create {}", dst_dir.display()))?;
 
+    let mut placed = match target {
+        Target::TypeScript => place_typescript(project, &src_dir, &dst_dir)?,
+        Target::Wasm => place_wasm(project, &src_dir, &dst_dir)?,
+    };
+    placed.insert(std::ffi::OsString::from(ENTRY_FILE));
+
+    prune(&dst_dir, &placed)
+}
+
+/// TypeScript の生成物を配る。
+///
+/// biwac は自パッケージと推移的依存の `.ts` を 1 つのディレクトリに並べて出力する
+/// (相互 import が `./<package>.ts` のため)。その関係を保ったまま丸ごと移す。
+fn place_typescript(
+    project: &Project,
+    src_dir: &Path,
+    dst_dir: &Path,
+) -> Result<std::collections::HashSet<std::ffi::OsString>> {
     let mut placed = std::collections::HashSet::new();
-    for entry in std::fs::read_dir(&src_dir)
+
+    for entry in std::fs::read_dir(src_dir)
         .with_context(|| format!("failed to read {}", src_dir.display()))?
     {
         let path = entry?.path();
@@ -135,8 +160,8 @@ pub fn sync_generated(project: &Project) -> Result<()> {
             continue;
         };
 
-        let contents = std::fs::read(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
+        let contents =
+            std::fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
         write_if_changed(&dst_dir.join(file_name), &contents)?;
         placed.insert(file_name.to_os_string());
     }
@@ -145,21 +170,50 @@ pub fn sync_generated(project: &Project) -> Result<()> {
         bail!("no generated TypeScript found in {}", src_dir.display());
     }
 
-    write_entry_stub(project, &dst_dir)?;
-    placed.insert(std::ffi::OsString::from(ENTRY_FILE));
+    write_typescript_entry_stub(project, dst_dir)?;
 
-    // 依存から外れたパッケージの `.ts` を残すと、古いコードが混ざり続ける。
-    for entry in std::fs::read_dir(&dst_dir)
+    Ok(placed)
+}
+
+/// wasm の生成物を配る。
+///
+/// 単相化で std ごと 1 つにまとまるので、運ぶのはこの 1 ファイルだけである。
+fn place_wasm(
+    project: &Project,
+    src_dir: &Path,
+    dst_dir: &Path,
+) -> Result<std::collections::HashSet<std::ffi::OsString>> {
+    let src = src_dir.join(format!("{}.{}", project.name, Target::Wasm.bin_extension()));
+
+    let contents = std::fs::read(&src).with_context(|| {
+        format!(
+            "failed to read {} (did the build produce a wasm module?)",
+            src.display()
+        )
+    })?;
+
+    write_if_changed(&dst_dir.join(WASM_FILE), &contents)?;
+    write_wasm_entry_stub(project, dst_dir, &content_id(&contents))?;
+
+    Ok([std::ffi::OsString::from(WASM_FILE)].into_iter().collect())
+}
+
+/// 前のターゲットや、依存から外れたパッケージの生成物を消す。
+///
+/// 残しておくと古いコードが型検査に混ざり続けるし、
+/// ターゲットを切り替えたときにどちらが動いているのか分からなくなる。
+fn prune(dst_dir: &Path, placed: &std::collections::HashSet<std::ffi::OsString>) -> Result<()> {
+    for entry in std::fs::read_dir(dst_dir)
         .with_context(|| format!("failed to read {}", dst_dir.display()))?
     {
         let path = entry?.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("ts") {
+        if !matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("ts") | Some("wasm")
+        ) {
             continue;
         }
-        let is_stale = path
-            .file_name()
-            .is_none_or(|name| !placed.contains(name));
-        if is_stale {
+        if path.file_name().is_none_or(|name| !placed.contains(name)) {
             std::fs::remove_file(&path)
                 .with_context(|| format!("failed to remove {}", path.display()))?;
         }
@@ -175,37 +229,84 @@ fn write_if_changed(path: &Path, contents: &[u8]) -> Result<()> {
     if std::fs::read(path).is_ok_and(|current| current == contents) {
         return Ok(());
     }
-    std::fs::write(path, contents)
-        .with_context(|| format!("failed to write {}", path.display()))
+    std::fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))
 }
 
-/// エンジンが呼ぶスタブを生成する。
+/// 生成物の中身から決まる短い値。FNV-1a。
+///
+/// wasm の URL は再ビルドしても変わらないので、これを付けて
+/// ブラウザが古いモジュールを掴んだままになるのを防ぐ。
+fn content_id(bytes: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// TypeScript 生成物のためのスタブ。
 ///
 /// 生成物のシンボルはマングルされていてパッケージごとに名前が変わるが、
 /// エントリポイントだけは `__biwa_entrypoint` という固定名で export されている。
 /// それをさらに固定のファイル名・固定の default export に均し、
 /// エンジンがパッケージ名を知らなくても済むようにする。
-fn write_entry_stub(project: &Project, dst_dir: &Path) -> Result<()> {
-    let path = dst_dir.join(ENTRY_FILE);
-    let pkg = &project.name;
-
+fn write_typescript_entry_stub(project: &Project, dst_dir: &Path) -> Result<()> {
     let contents = format!(
         r#"// AUTO-GENERATED by `biwa dev`. Do not edit.
 //
 // コンパイル結果のエントリポイントを、エンジンが知っている形に均すスタブ。
 import {{ {entrypoint} }} from "./{pkg}.ts";
-import type {{ BiwaEntrypoint }} from "../engine/game";
+import type {{ BiwaBackend, BiwaEntrypoint }} from "../engine/game";
 
-export const packageName = "{pkg}";
+const backend: BiwaBackend = {{
+  kind: "typescript",
+  packageName: "{pkg}",
+  // 生成コードの `Game` 型はマングル名なので、エンジン側の構造的な型に読み替える。
+  entrypoint: {entrypoint} as unknown as BiwaEntrypoint,
+}};
 
-// 生成コードの `Game` 型はマングル名なので、エンジン側の構造的な型に読み替える。
-export default {entrypoint} as unknown as BiwaEntrypoint;
+export default backend;
 "#,
         entrypoint = ENTRYPOINT_NAME,
-        pkg = pkg,
+        pkg = project.name,
     );
 
-    write_if_changed(&path, contents.as_bytes())
+    write_if_changed(&dst_dir.join(ENTRY_FILE), contents.as_bytes())
+}
+
+/// wasm 生成物のためのスタブ。
+///
+/// wasm は import できないので、エンジンには置き場所だけを教える。
+/// 読み込みと実行は Worker がやる。
+///
+/// `buildId` が毎回変わることには、ブラウザのキャッシュ避けのほかに
+/// 「このファイルが変わる = Vite がページを作り直す」という役目もある。
+/// `.wasm` は Vite のモジュールグラフでは葉なので、
+/// これが無いと再ビルドしても画面が古いままになる。
+fn write_wasm_entry_stub(project: &Project, dst_dir: &Path, build_id: &str) -> Result<()> {
+    let contents = format!(
+        r#"// AUTO-GENERATED by `biwa dev`. Do not edit.
+//
+// コンパイル結果 (wasm) の在り処を、エンジンが知っている形に均すスタブ。
+import type {{ BiwaBackend }} from "../engine/game";
+import wasmUrl from "./{wasm}?url";
+
+const backend: BiwaBackend = {{
+  kind: "wasm",
+  packageName: "{pkg}",
+  url: wasmUrl,
+  buildId: "{build_id}",
+}};
+
+export default backend;
+"#,
+        wasm = WASM_FILE,
+        pkg = project.name,
+        build_id = build_id,
+    );
+
+    write_if_changed(&dst_dir.join(ENTRY_FILE), contents.as_bytes())
 }
 
 /// Vite の開発サーバを起動する。
@@ -224,10 +325,15 @@ pub fn spawn_vite(project: &Project, port: Option<u16>) -> Result<std::process::
     let mut command = std::process::Command::new(vite_bin);
     command.current_dir(&runtime_dir);
     if let Some(port) = port {
-        command.arg("--port").arg(port.to_string()).arg("--strictPort");
+        command
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--strictPort");
     }
 
-    command.spawn().context("failed to start the vite dev server")
+    command
+        .spawn()
+        .context("failed to start the vite dev server")
 }
 
 /// 開発サーバが監視するディレクトリ。
@@ -235,5 +341,8 @@ pub fn spawn_vite(project: &Project, port: Option<u16>) -> Result<std::process::
 /// 依存パッケージは監視しない。ビルド成果物がその中 (`deps/<name>/.biwa_build`)
 /// に書かれるため、監視すると再ビルドが自分自身を呼び続ける。
 pub fn watch_targets(project: &Project) -> Vec<PathBuf> {
-    [project.src_dir()].into_iter().filter(|p| p.is_dir()).collect()
+    [project.src_dir()]
+        .into_iter()
+        .filter(|p| p.is_dir())
+        .collect()
 }

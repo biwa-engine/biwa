@@ -45,16 +45,21 @@ JavaScript の同期関数の中で「クリックが来るまで待つ」こと
 プロトタイプで、ブロッキング待ち・プレイヤー入力による分岐・セーブ/ロードが
 すべて動くことを確認した (後述)。syscall 1 回のコストは実測 **約 75ns**。
 
+これは **TypeScript ターゲットの話**である。
+その後 biwac に wasm バックエンドが入り、そちらでは中断の作り方が違う
+(Worker のスレッドを止める)。「wasm ターゲット」の節を参照。
+どちらでも、syscall の実装 (`src/engine/api/*`) は共有している。
+
 ## 検討した方式
 
-| 方式 | VM exit の実現 | コンパイラ変更 | 変数の置き場 | 直列化 | 判定 |
-| --- | --- | --- | --- | --- | --- |
-| A. `node:vm` | できない | なし | - | - | ✗ |
-| B. generator + trampoline | `yield` | 中 (codegen) | 普通の JS スコープ | 不可 | **採用** |
-| C. Worker + `Atomics.wait` | スレッドブロック | **なし** | 普通の JS スコープ | 不可 | 次点 |
-| D. QuickJS(wasm) + ASYNCIFY | wasm スタック巻き戻し | なし | QuickJS ヒープ | 不可 | 過剰 |
-| E. 自前 wasm + JSPI | スタックスイッチ | 特大 (新バックエンド) | wasm 線形メモリ | 不可 | 将来 |
-| F. 自前バイトコード VM | 明示的な命令ポインタ | 大 (新バックエンド) | VM の配列 | **可能** | 将来 |
+| 方式                        | VM exit の実現        | コンパイラ変更        | 変数の置き場       | 直列化   | 判定     |
+| --------------------------- | --------------------- | --------------------- | ------------------ | -------- | -------- |
+| A. `node:vm`                | できない              | なし                  | -                  | -        | ✗        |
+| B. generator + trampoline   | `yield`               | 中 (codegen)          | 普通の JS スコープ | 不可     | **採用** |
+| C. Worker + `Atomics.wait`  | スレッドブロック      | **なし**              | 普通の JS スコープ | 不可     | 次点     |
+| D. QuickJS(wasm) + ASYNCIFY | wasm スタック巻き戻し | なし                  | QuickJS ヒープ     | 不可     | 過剰     |
+| E. 自前 wasm + JSPI         | スタックスイッチ      | 特大 (新バックエンド) | wasm 線形メモリ    | 不可     | 将来     |
+| F. 自前バイトコード VM      | 明示的な命令ポインタ  | 大 (新バックエンド)   | VM の配列          | **可能** | 将来     |
 
 ### A. `node:vm` — 使えない
 
@@ -76,7 +81,7 @@ JavaScript が言語として持っているコルーチンが generator であ�
 ```ts
 // 生成コード (ゲーム側の scene)
 export function* main(g) {
-  yield write("こんにちは。");   // ← 積んで exit。戻り値が書き戻される
+  yield write("こんにちは。"); // ← 積んで exit。戻り値が書き戻される
   yield wait();
   return g;
 }
@@ -87,7 +92,7 @@ export function* main(g) {
 async function run(gen) {
   let send;
   for (;;) {
-    const { value, done } = gen.next(send);        // ← VM 再開
+    const { value, done } = gen.next(send); // ← VM 再開
     if (done) return value;
     send = await handlers[value.sys](...value.args); // ← 処理して結果を書き戻す
   }
@@ -143,6 +148,9 @@ scene を Worker で走らせ、syscall では共有メモリに引数を書い�
 B が採れない場合の代案として持っておく価値はあるが、
 コンパイラを触れる以上、先に B を採る。
 
+**追記: wasm ターゲットではこれを採った。** wasm には中断の仕組みが無いので、
+「スレッドごと止める」以外に選択肢が (JSPI を除いて) 無い。後述。
+
 ### D. QuickJS (wasm) + ASYNCIFY
 
 生成した TypeScript を、wasm にコンパイルされた QuickJS の中で走らせる。
@@ -163,9 +171,10 @@ wasm モジュール全体を中断してホストの Promise を待ち、完了
 
 [JSPI](https://v8.dev/blog/jspi) は 2025 年 4 月に W3C Wasm CG で標準化され、
 Chrome 137 / Firefox 139 で出荷済み。wasm から Promise を返す JS API を呼ぶと
-wasm スタックが中断され、解決後に再開される。まさに VM exit だが、
-biwac に wasm バックエンドを作る話になるので今回のスコープ外。
-将来ネイティブ配布 (Tauri) と合わせて検討する余地はある。
+wasm スタックが中断され、解決後に再開される。まさに VM exit である。
+
+**その後 biwac に wasm バックエンドが入った。** ただし中断には JSPI ではなく
+C (Worker + `Atomics.wait`) を使っている。理由は「wasm ターゲット」の節に書いた。
 
 ### F. 自前バイトコード VM
 
@@ -204,17 +213,17 @@ export function* _ZN5test14mainE(__lv1: Game<...>): Generator<unknown, Game<...>
 ```ts
 // std: syscall の記述子を組み立てるだけの普通の関数 (libc のスタブにあたる)
 export function _ZN3std4game11base_engine4waitE(): Syscall {
-	return { sys: Sys.Wait, args: [] };
+  return { sys: Sys.Wait, args: [] };
 }
 ```
 
 ### 役割分担
 
-| 層 | 役割 | 対応するもの |
-| --- | --- | --- |
-| std (`base_engine.biwa`) | syscall の記述子を組み立てる | レジスタに引数を積む |
-| コンパイラ (codegen) | scene の中に `yield` を置く | syscall 命令 |
-| エンジン (`src/engine/vm/kernel.ts`) | 記述子を見て処理し、結果を書き戻して再開する | kernel land |
+| 層                                   | 役割                                         | 対応するもの         |
+| ------------------------------------ | -------------------------------------------- | -------------------- |
+| std (`base_engine.biwa`)             | syscall の記述子を組み立てる                 | レジスタに引数を積む |
+| コンパイラ (codegen)                 | scene の中に `yield` を置く                  | syscall 命令         |
+| エンジン (`src/engine/vm/kernel.ts`) | 記述子を見て処理し、結果を書き戻して再開する | kernel land          |
 
 syscall 番号の定義はエンジン (`src/engine/vm/syscall.ts`) にあり、
 std が `@biwa/engine/vm/syscall` として取り込む。コンパイラは番号を知らない。
@@ -271,15 +280,119 @@ kernel は `scene.next(send)` で再開し、`yield` された記述子を見て
 
 ### 変更した箇所
 
-| 対象 | 内容 |
-| --- | --- |
-| `biwac_generator` | scene を `generator: true` に、戻り値型を `Generator<...>` に、novel statement を `yield <lang item 呼び出し>` に、scene 呼び出しを `yield*` に |
-| `biwac_lang_item` | lang item `syscall` (syscall 記述子の型) を追加 |
-| `biwac_type_inferrer` | novel statement の展開先の戻り値を `Syscall` として検査 |
-| `biwac_novel_parser` | 待ちコマンド `>>` のパース |
-| `library/std` | `write` / `wait` が syscall 記述子を返すように。`Syscall` 型を追加 |
-| `engine/nodejs` | `src/engine/vm/` (kernel・syscall 定義・対応表)、`main.ts` を VM 駆動に |
-| `cli` | 変更なし (`entry.ts` のスタブはそのまま使える) |
+| 対象                  | 内容                                                                                                                                            |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `biwac_generator`     | scene を `generator: true` に、戻り値型を `Generator<...>` に、novel statement を `yield <lang item 呼び出し>` に、scene 呼び出しを `yield*` に |
+| `biwac_lang_item`     | lang item `syscall` (syscall 記述子の型) を追加                                                                                                 |
+| `biwac_type_inferrer` | novel statement の展開先の戻り値を `Syscall` として検査                                                                                         |
+| `biwac_novel_parser`  | 待ちコマンド `>>` のパース                                                                                                                      |
+| `library/std`         | `write` / `wait` が syscall 記述子を返すように。`Syscall` 型を追加                                                                              |
+| `engine/nodejs`       | `src/engine/vm/` (kernel・syscall 定義・対応表)、`main.ts` を VM 駆動に                                                                         |
+| `cli`                 | 変更なし (`entry.ts` のスタブはそのまま使える)                                                                                                  |
+
+## wasm ターゲット
+
+biwac に wasm バックエンド (WasmGC) が入り、`--target wasm` で
+playable パッケージにつき 1 つのモジュールが出るようになった (単相化で std ごと入る)。
+方式 E の前半 —「自前 wasm」— が現実になった形である。
+
+wasm では scene も普通の関数として出力される。generator は TypeScript 固有の話で、
+エンジン API は**ホスト関数の import**になる。
+
+```wat
+(import "biwa:engine" "sys_write" (func $sys_write (param externref)))
+(import "biwa:engine" "sys_wait"  (func $sys_wait))
+```
+
+呼び出し規約が wasm の `call` そのものなので、B よりも syscall に近い。
+中断するかどうかは呼ぶ側から見えず、std も「記述子を組み立てて返す」必要が無い。
+一方で **wasm 自身には中断の仕組みが無い**ので、
+「クリックが来るまで返らない」はホスト側で作ることになる。
+
+### 中断の作り方: C (Worker + `Atomics.wait`) を採った
+
+wasm を Worker で走らせ、ブロッキング syscall ではそのスレッドを止める。
+
+```
+  Worker (wasm)                    Main (エンジン)
+  -------------                    ---------------
+  call $sys_wait
+    postMessage({name, args})  ->  waitForClick() を await
+    Atomics.wait(状態)             (この間も描画は動く)
+      (スレッドが止まる)            結果を SAB に書く
+                               <-  Atomics.notify
+    結果を読んで wasm に返る
+```
+
+wasm 側から見れば「関数が長く掛かった」だけである。
+止まるのは Worker のスレッドだけなので、描画とイベント処理は動き続ける。
+
+E の後半 (JSPI) を採らなかった理由:
+
+- Chrome 137 / Firefox 139 以降に限られる (Safari は未対応)
+- Worker が要らなくなる代わりに、ゲームロジックが描画スレッドに戻る。
+  ブロッキング中は止まらないが、重い計算をすれば止まる
+
+代償は `SharedArrayBuffer` の要件である cross-origin isolation で、
+配信するサーバが `Cross-Origin-Opener-Policy: same-origin` と
+`Cross-Origin-Embedder-Policy: require-corp` を返す必要がある。
+開発サーバの分は `vite.config.ts` で閉じてある。
+
+なお C の弱点として挙げていた「戻り値も共有メモリ経由で符号化が要る」は
+そのまま残っている。ブロッキング syscall が返せるのは JSON にできる値だけである。
+
+### ホストが埋める import
+
+| 名前空間       | 名前                             | 区分         | 実行される場所                    |
+| -------------- | -------------------------------- | ------------ | --------------------------------- |
+| `biwa:runtime` | `string_const`                   | -            | Worker (memory から UTF-8 を復号) |
+| `biwa:engine`  | `sys_write`                      | 積んで返る   | Main                              |
+| `biwa:engine`  | `sys_wait`                       | **中断する** | Main                              |
+| `biwa:engine`  | `sys_create_image`               | 積んで返る   | Main                              |
+| `biwa:engine`  | `sys_string_concat`              | -            | Worker                            |
+| `biwa:engine`  | `sys_map_insert` / `sys_map_get` | -            | Worker                            |
+
+`biwa:engine` の名前空間と名前は **std とエンジンの取り決め**であり、
+std が `[[native(arch="wasm")]]` の中に import 文を自分で書き、
+コンパイラはそれをそのまま生成物の先頭に置く。
+`biwa:runtime` だけは std ではなくコンパイラ自身が要求するもので、
+今のところ文字列リテラルの実体化 (データセグメント上のバイト列 → JS 文字列) だけである。
+
+Worker 側で実行するものを分けているのは速さのためではなく、
+`externref` / `anyref` が JS のオブジェクト参照そのもので、
+**スレッド境界を越えられない**からである。
+`String` は externref、`Map` / `Option` も externref / anyref なので、
+それらを触るだけの操作は wasm と同じスレッドに置くしかない。
+
+import object は `WebAssembly.Module.imports()` を見てから組み立てる。
+std に native を足したとき、`LinkError` ではなく
+「エンジンが `biwa:engine sys_foo` を実装していない」と名前で言うためである。
+
+### 実装
+
+```
+src/engine/vm/wasm/
+  contract.ts  # import 名 → 区分 (local / cast / call)。std との合意点
+  bridge.ts    # SAB のプロトコル。Worker 側の窓口と Main 側の書き戻し
+  worker.ts    # wasm の instantiate と実行。ここが VM の中
+  host.ts      # Main 側の kernel。syscall を api/* に流す
+```
+
+syscall の実装 (`api/message.ts` / `api/image.ts`) は TypeScript 経路と共有している。
+違うのは輸送路だけで、`writeMessage` も `waitForClick` も両方から呼ばれる。
+
+`biwa dev --target <wasm|typescript>` で切り替わる。
+どちらで来ても、エンジンが見るのは `src/game/entry.ts` の default export だけである。
+
+### wasm 固有の未解決点
+
+- **初期 `Game` を渡せない**。`__biwa_entrypoint` の引数は `(ref null $Game)` だが、
+  WasmGC の struct を JS から作る手段が無いので `null` を渡している。
+  scene が `g` のフィールドを読むと trap する。
+  コンパイラ側に初期 `Game` を組み立てる入口 (export) が要る。
+- **ブロッキング syscall の戻り値は JSON にできる値に限られる** (上述)。
+- std の `sys_map_get` は戻り値を `anyref` と宣言しているが、
+  実際に入るのは `externref` (JS の値) である。現状到達しない。
 
 ## セーブ・ロード
 
@@ -326,7 +439,10 @@ ink のように実行状態そのものを JSON にする方式 (F) との中�
   再生中に副作用を止められない。記録再生を入れるときは、
   これらも kernel を経由させる必要がある (`yield` は不要で、登録するだけでよい)。
 - **色付け**: 普通の `fn` からブロッキング API を呼べるようにする場合に必要。
-- **パッケージを跨いだ scene 呼び出し**: `.biwameta` に scene かどうかを持たせる。
+  wasm ターゲットではそもそも色が無いので、この問題は起きない。
+- **パッケージを跨いだ scene 呼び出し**: `.biwameta` に scene かどうかを持たせる
+  (TypeScript ターゲットのみの問題。`yield*` を置くかどうかの判断に要る)。
+- **wasm の初期 `Game`**: `null` を渡している。上述。
 - **スキップ・オート・ポーズ**: kernel が `next()` を呼ぶ間隔と条件を変えるだけで載る。
   中断は `scene.return()` で巻き戻せる。
 
