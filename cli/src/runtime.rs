@@ -22,6 +22,8 @@ const STD_STAMP_FILE: &str = ".biwa-std-stamp";
 
 /// 生成物とスタブを置くディレクトリ (`.biwa_runtime/` からの相対)。
 const GAME_DIR: &str = "src/game";
+/// Vite がそのまま URL のルートに出すディレクトリ (`.biwa_runtime/` からの相対)。
+const PUBLIC_DIR: &str = "public";
 /// エンジンが import するスタブ。ファイル名も default export もエンジンと合意済みの規約。
 const ENTRY_FILE: &str = "entry.ts";
 /// wasm の生成物を置く名前。パッケージ名に依らない固定名にして、
@@ -91,6 +93,85 @@ pub fn ensure_engine(project: &Project) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// パッケージの `assets/` をエンジンから引ける場所に繋ぐ。
+///
+/// エンジンは Vite プロジェクトなので、`public/` に置いたものが
+/// そのまま URL のルートに出る。そこへ `assets` という名前で
+/// パッケージの `assets/` を向けたシンボリックリンクを張る。
+/// これでエンジンから見たアセットの位置は常に `<base>assets/<path>` になり、
+/// `.biwa` が書いた「`assets/` を基準とする相対パス」がそのまま使える。
+///
+/// リンクにしているのは、ファイルを足しても `biwa dev` を建て直さずに済むからである。
+/// 配布用の `biwa build` ではコピーすることになる。
+pub fn link_assets(project: &Project) -> Result<()> {
+    let assets_dir = project.assets_dir();
+
+    if !assets_dir.exists() {
+        // 規約で決まっている置き場所なので、無ければこちらで用意する。
+        println!("Creating {}", assets_dir.display());
+        std::fs::create_dir_all(&assets_dir)
+            .with_context(|| format!("failed to create {}", assets_dir.display()))?;
+    }
+
+    let link = project
+        .runtime_dir()
+        .join(PUBLIC_DIR)
+        .join(crate::ASSETS_DIRECTORY_NAME);
+    // `.biwa_runtime` は常にプロジェクト直下なので、相対のままで安定する。
+    let target = Path::new("..")
+        .join("..")
+        .join(crate::ASSETS_DIRECTORY_NAME);
+
+    if std::fs::read_link(&link).is_ok_and(|current| current == target) {
+        return Ok(());
+    }
+
+    // 別物 (古いリンク、コピーされたディレクトリ) が居たら退ける。
+    // `.biwa_runtime/` は CLI が所有しているので消してよい。
+    match std::fs::symlink_metadata(&link) {
+        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(&link),
+        Ok(_) => std::fs::remove_file(&link),
+        Err(_) => Ok(()),
+    }
+    .with_context(|| format!("failed to replace {}", link.display()))?;
+
+    if let Some(parent) = link.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    symlink_dir(&target, &link).with_context(|| {
+        format!(
+            "failed to link {} to {}",
+            link.display(),
+            assets_dir.display()
+        )
+    })
+}
+
+/// ディレクトリへのシンボリックリンクを張る。
+///
+/// Windows ではディレクトリとファイルで API が分かれていて、
+/// しかも作成に開発者モードか管理者権限が要る。
+#[cfg(unix)]
+fn symlink_dir(target: &Path, link: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(target, link)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn symlink_dir(target: &Path, link: &Path) -> Result<()> {
+    std::os::windows::fs::symlink_dir(target, link).context(
+        "creating a symbolic link requires Developer Mode (or an elevated prompt) on Windows",
+    )?;
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn symlink_dir(_target: &Path, _link: &Path) -> Result<()> {
+    bail!("this platform does not support symbolic links, which `biwa dev` needs for `assets/`")
 }
 
 fn npm_install(runtime_dir: &Path) -> Result<()> {

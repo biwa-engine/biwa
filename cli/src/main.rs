@@ -14,6 +14,12 @@ use clap::{Parser, Subcommand};
 /// エンジンを展開するディレクトリ。Vite のルートでもある。
 pub const RUNTIME_DIRECTORY_NAME: &str = ".biwa_runtime";
 
+/// アセットを置くディレクトリ。パッケージ直下、`src/` の兄弟である。
+///
+/// `.biwa` が書くアセットのパスはこのディレクトリを基準とした相対パスで、
+/// エンジンからは同じ名前で公開される (`runtime::link_assets`)。
+pub const ASSETS_DIRECTORY_NAME: &str = "assets";
+
 #[derive(Debug, Parser)]
 #[command(name = "biwa", version, about = "Biwa novel game engine", long_about = None)]
 struct Cli {

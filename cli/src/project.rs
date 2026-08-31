@@ -83,4 +83,11 @@ impl Project {
     pub fn src_dir(&self) -> PathBuf {
         self.root.join("src")
     }
+
+    /// アセットが置かれるディレクトリ (`src/` の兄弟)。
+    ///
+    /// `.biwa` が書くアセットのパスはここを基準とした相対パスである。
+    pub fn assets_dir(&self) -> PathBuf {
+        self.root.join(crate::ASSETS_DIRECTORY_NAME)
+    }
 }

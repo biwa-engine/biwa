@@ -144,6 +144,28 @@ Worker 側に置くものがあるのは、`externref` / `anyref` が JS のオ�
 QuickJS + ASYNCIFY との比較、セーブ・ロードの方針) は
 [`docs/execution-model.md`](../../docs/execution-model.md) にある。
 
+## アセット
+
+アセットはゲームのパッケージ直下の `assets/` に置かれる (`src/` の兄弟)。
+`.biwa` が書くパスは**その `assets/` を基準とした相対パス**である。
+
+`biwa dev` はそのディレクトリを `.biwa_runtime/public/assets` へリンクする。
+`public/` の中身はそのまま URL のルートに出るので、
+エンジンから見たアセットの位置は常にこうなる。
+
+```
+.biwa が書いたパス  →  `${import.meta.env.BASE_URL}assets/<path>`
+
+  "bg/room.png"     →  /assets/bg/room.png
+```
+
+この変換は `src/engine/api/assets.ts` の `resolveAssetUrl()` 1 箇所にある。
+画像以外の syscall (音・動画) が増えても同じ規約に従わせるためで、
+アセットを読む API は必ずここを通すこと。
+
+`..` で `assets/` の外へ出るパスは弾く。
+将来はコンパイラがパスの実在も含めて静的に検査する。
+
 ## ディレクトリ構成
 
 ```
@@ -154,6 +176,7 @@ src/
     vm/               # scene を駆動する kernel と syscall の定義
     vm/wasm/          # wasm 生成物を Worker で走らせる側
     api/              # syscall の実装 (std からも `@biwa/engine/api/*` として呼ばれる)
+    api/assets.ts     # `.biwa` が書くアセットのパスを URL に直す
     Renderer.ts       # PixiJS Application のラッパー
     LayerManager.ts   # Canvas/DOM レイヤーの生成・参照管理
     CommandQueue.ts   # 使っていない。VM 化以前の名残

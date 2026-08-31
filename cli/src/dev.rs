@@ -81,6 +81,9 @@ pub fn run(args: DevArgs) -> Result<()> {
 
     runtime::ensure_std(&project)?;
     runtime::ensure_engine(&project)?;
+    // エンジンを展開したあとに張る。展開は `.biwa_runtime/` を掃除しないので、
+    // 次回以降エンジンが更新されてもこのリンクは残る。
+    runtime::link_assets(&project)?;
 
     // 初回は通らないと開発サーバを立てる意味がないので、失敗したらそこで止める。
     build(&project, target, args.rebuild)?;

@@ -22,6 +22,9 @@
     処理して結果を書き戻す。
     syscall を足すときは `vm/syscall.ts` の番号、`vm/handlers.ts` の対応表、
     `library/std` の `[[native(arch="typescript")]]` を対で変更する。
+- アセットを読む API は必ず `src/engine/api/assets.ts` の `resolveAssetUrl()` を通す。
+  `.biwa` が書くパスはゲームのパッケージの `assets/` 基準の相対パスで、
+  `biwa dev` がそれを `.biwa_runtime/public/assets` にリンクしている。
 - wasm を動かすにはページが cross-origin isolated である必要がある
   (`vite.config.ts` が COOP/COEP を送っている)。外すと `SharedArrayBuffer` が消える。
 - std から参照される import は `@biwa/engine/<path>` という論理パスで書く規約

@@ -64,11 +64,13 @@ Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン�
 <project>/
   biwa-package.json
   src/*.biwa                       ← ゲームのソース (監視対象)
+  assets/                          ← 画像・音などのアセット
   .biwa_build/
     deps/std/                      ← CLI が用意する依存パッケージ
     wasm/<pkg>.wasm                ← biwac の出力 (--target wasm)
     typescript/{<pkg>.ts, std.ts}  ← biwac の出力 (--target typescript)
   .biwa_runtime/                   ← エンジン (Vite プロジェクト) の展開先
+    public/assets → ../../assets   ← 上の assets/ へのシンボリックリンク
     src/engine/{vm,api}/*.ts       ← kernel と syscall の実装
     src/game/{game.wasm, entry.ts} ← 配られた生成物 (typescript なら *.ts)
 ```
@@ -78,6 +80,25 @@ Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン�
 どちらが動いているのか分からなくなるためである。
 
 `.biwa_build/` も `.biwa_runtime/` も生成物なので、消してよい。
+
+## アセット
+
+アセットはパッケージ直下の `assets/` に置く (`src/` の兄弟)。
+`.biwa` から参照するときのパスは**この `assets/` を基準とした相対パス**である。
+
+```
+assets/bg/room.png   に置いたものは   create_image("bg/room.png", 0, 0)
+```
+
+`biwa dev` は起動時に `assets/` を
+`.biwa_runtime/public/assets` へシンボリックリンクする (無ければ作る)。
+エンジンは Vite プロジェクトなので `public/` の中身がそのまま URL のルートに出る。
+結果としてエンジンから見たアセットの位置は常に `<base>assets/<path>` になり、
+`.biwa` が書いたパスに `assets/` を被せるだけで引ける
+(解決はエンジン側の `src/engine/api/assets.ts` 1 箇所)。
+
+コピーではなくリンクにしているので、`assets/` にファイルを足しても
+`biwa dev` を建て直す必要はない。監視の対象にもしていない。
 
 ## エンジンとの規約
 
@@ -149,3 +170,9 @@ std の native TypeScript がエンジンを参照するときは
 - 依存パッケージの取得
   現状 `deps/` に std を置くところまでしかやっていない。
   サードパーティのパッケージは利用者が自分で `deps/` に並べる必要がある。
+- アセットの検査と選別
+  将来はコンパイラがパッケージ内のパス文字列を巡回して `assets/` 以下の実在を検査し、
+  必要なものの一覧を `.biwa_build/` に `.biwaassets` として吐く。
+  CLI はそれを読み、`biwa dev` なら要るものだけをリンクし、
+  `biwa build` ならコピーすることになる。
+  今は検査をせず、`assets/` を丸ごとリンクしているだけである。
