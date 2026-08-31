@@ -20,9 +20,17 @@ export function writeMessage(text: string): void {
  * 解決するまで scene を再開しない (= VM は止まったまま)。
  */
 export function waitForClick(): Promise<void> {
-  const { host } = engine();
+  const { host, components, messageBoxId } = engine();
+  const box = components.getTextBox(messageBoxId);
 
   return new Promise((resolve) => {
-    host.addEventListener("click", () => resolve(), { once: true });
+    host.addEventListener(
+      "click",
+      () => {
+        box.clear();
+        resolve();
+      },
+      { once: true },
+    );
   });
 }
