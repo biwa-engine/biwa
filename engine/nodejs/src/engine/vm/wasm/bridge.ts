@@ -19,6 +19,8 @@
  *
  * 本物の syscall と同じで、呼んだ側からは「関数が長く掛かった」ようにしか見えない。
  * 止まるのは Worker だけなので、その間もメインスレッドは描画を続けられる。
+ *
+ * 止まらない syscall (`cast`) はまとめて 1 通で流す。「まとめ流し」を参照。
  */
 
 /** 制御語の数 (Int32 単位)。 */
@@ -34,6 +36,14 @@ const PAYLOAD_CAPACITY = 64 * 1024;
 
 const HEADER_BYTES = CONTROL_WORDS * 4;
 
+/**
+ * 溜めておける cast の数。超えたら送り出す。
+ *
+ * ブロッキング syscall にも発火にも当たらないまま走り続けるシーンへの保険で、
+ * 普段はここに掛からない。
+ */
+const CAST_BUFFER_LIMIT = 64;
+
 /** 呼び出しの状態。`enum` は消去可能な構文ではないので定数にしてある。 */
 const State = {
   /** メインスレッドが処理中。 */
@@ -46,13 +56,21 @@ const State = {
 
 type State = (typeof State)[keyof typeof State];
 
-/** Worker からメインスレッドへ送る syscall。 */
-export interface SyscallRequest {
-  kind: "syscall";
+/** 1 つの syscall。 */
+export interface SyscallEntry {
   name: string;
   args: unknown[];
-  /** true なら Worker は `Atomics.wait` で結果を待っている。 */
-  blocking: boolean;
+}
+
+/** Worker からメインスレッドへ送る、止まらない syscall のまとまり。 */
+export interface SyscallBatch {
+  kind: "syscalls";
+  calls: SyscallEntry[];
+}
+
+/** Worker からメインスレッドへ送る、結果を待つ syscall。 */
+export interface SyscallRequest extends SyscallEntry {
+  kind: "syscall";
 }
 
 /** Worker からメインスレッドへ送る、実行そのものの結末。 */
@@ -61,7 +79,7 @@ export type WorkerReport =
   | { kind: "exit" }
   | { kind: "error"; message: string };
 
-export type WorkerMessage = SyscallRequest | WorkerReport;
+export type WorkerMessage = SyscallBatch | SyscallRequest | WorkerReport;
 
 export function createChannelBuffer(): SharedArrayBuffer {
   return new SharedArrayBuffer(HEADER_BYTES + PAYLOAD_CAPACITY);
@@ -74,11 +92,23 @@ const decoder = new TextDecoder();
  * Worker 側の窓口。
  *
  * `Atomics.wait` はメインスレッドでは使えないため、これは Worker 専用である。
+ *
+ * ## まとめ流し
+ *
+ * Worker はゲームの実行中にイベントループへ帰らない。生成物のエントリポイントを
+ * **同期に呼び切る**からである (`worker.ts`)。したがって「ターンの終わり」に
+ * 相当する瞬間は存在せず、cast を流す契機は自分で決めるしかない。
+ *
+ * - `call` の直前 (順序を保つため。必ず要る)
+ * - 呼び出し側が区切ったとき (`contract.ts` の `FLUSH_AFTER_CAST`)
+ * - 実行の結末を報告するとき
+ * - 溜まりすぎたとき (保険)
  */
 export class SyscallChannel {
   private readonly control: Int32Array;
   private readonly payload: Uint8Array;
   private readonly post: (message: WorkerMessage) => void;
+  private buffered: SyscallEntry[] = [];
 
   constructor(
     buffer: SharedArrayBuffer,
@@ -89,15 +119,29 @@ export class SyscallChannel {
     this.post = post;
   }
 
-  /** 積んで即座に返る syscall。 */
+  /** 積んで即座に返る syscall。まとめて後で流す。 */
   cast(name: string, args: unknown[]): void {
-    this.post({ kind: "syscall", name, args, blocking: false });
+    this.buffered.push({ name, args });
+    if (this.buffered.length >= CAST_BUFFER_LIMIT) {
+      this.flush();
+    }
+  }
+
+  /** 溜めてある cast を送り出す。 */
+  flush(): void {
+    if (this.buffered.length === 0) return;
+    const calls = this.buffered;
+    this.buffered = [];
+    this.post({ kind: "syscalls", calls });
   }
 
   /** 完了するまで Worker を止める syscall。 */
   call(name: string, args: unknown[]): unknown {
+    // 先に積んだものを追い越さないよう、必ず流してから止まる。
+    this.flush();
+
     Atomics.store(this.control, STATE, State.Pending);
-    this.post({ kind: "syscall", name, args, blocking: true });
+    this.post({ kind: "syscall", name, args });
 
     // 待っている間、この Worker は JS を 1 命令も実行しない。
     // メッセージも処理されないので、結果は必ず SAB 経由で受け取る。
@@ -117,6 +161,7 @@ export class SyscallChannel {
   }
 
   report(message: WorkerReport): void {
+    this.flush();
     this.post(message);
   }
 }

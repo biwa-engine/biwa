@@ -45,6 +45,15 @@ export type SyscallKind =
    */
   | "cast"
   /**
+   * メインスレッドへ投げるが、戻り値 (新しい id) は Worker 内で採番して返す。
+   *
+   * `cast` と同じく止まらないのに戻り値を持てる。
+   * 素直に `call` にすると、オブジェクトを 1 つ作るたびに
+   * `Atomics.wait` でスレッドが往復してしまう。
+   * 採番は単調増加なので決定的で、セーブ・ロードの記録再生とも噛み合う。
+   */
+  | "alloc"
+  /**
    * メインスレッドへ投げて、完了するまで Worker を止める。
    *
    * クリック待ちのように完了までブロックする API。
@@ -63,8 +72,19 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   sys_write: "cast",
   /** クリックが来るまで止まる。 */
   sys_wait: "call",
-  /** 画像を配置する。読み込みは待たない。 */
-  sys_create_image: "cast",
+
+  /** canvas にオブジェクトを置く。id を返すが、止まらない。 */
+  sys_create_object: "alloc",
+  /** オブジェクトを消す。 */
+  sys_delete_object: "cast",
+  /** 次の発火に備えて遷移を積む。 */
+  sys_add_transition: "cast",
+  /** 積まれた遷移を発火する。 */
+  sys_start_transitions: "cast",
+  /** sync 印の演出が終わるまで止まる。 */
+  sys_await_transitions: "call",
+  /** エンジン時計の上で指定時間止まる。 */
+  sys_sleep: "call",
 
   // 以下はエンジン呼び出しではなく、wasm の値に対する操作である。
   // 生成物は `String` を externref、`Map` / `Option` を externref / anyref として
@@ -76,3 +96,15 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   /** Map からの取得。 */
   sys_map_get: "local",
 };
+
+/**
+ * cast したあと直ちに送り出す syscall。
+ *
+ * cast はまとめて 1 通の postMessage で流している (`bridge.ts`)。
+ * 遷移の発火だけは待たせたくないので、ここで区切る。
+ * ついでにバッチが 1 通に収まるので、**メインスレッドが発火の途中で
+ * フレームを描けない** — 揃って始まることが構造として保証される。
+ */
+export const FLUSH_AFTER_CAST: ReadonlySet<string> = new Set([
+  "sys_start_transitions",
+]);

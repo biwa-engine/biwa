@@ -1,6 +1,7 @@
 import { ComponentRegistry } from "./components/ComponentRegistry";
 import { TextBox } from "./components/TextBox";
 import { setEngineContext } from "./engine/api/context";
+import { CanvasObjects } from "./engine/canvas/CanvasObjects";
 import { createInitialGame, type BiwaBackend } from "./engine/game";
 import { Renderer } from "./engine/Renderer";
 import { Kernel } from "./engine/vm/kernel";
@@ -12,7 +13,7 @@ const WIDTH = 1280;
 const HEIGHT = 720;
 
 const MESSAGE_BOX_ID = "main-message-window";
-const SPRITE_LAYER_ID = "chara";
+const MESSAGE_LAYER_ID = "message";
 
 const host = document.querySelector<HTMLDivElement>("#app")!;
 host.style.cursor = "pointer";
@@ -20,28 +21,32 @@ host.style.cursor = "pointer";
 const renderer = new Renderer(host);
 await renderer.init(WIDTH, HEIGHT);
 
-renderer.layers.defineLayer({ id: "background", type: "canvas", zIndex: 0 });
-renderer.layers.defineLayer({
-  id: SPRITE_LAYER_ID,
-  type: "canvas",
-  zIndex: 10,
-});
-renderer.layers.defineLayer({ id: "message", type: "dom", zIndex: 20 });
+// canvas レイヤーは `create_object` の layer index から必要に応じて作られる。
+// ここで定義するのは DOM レイヤーだけでよい。
+renderer.layers.defineDom(MESSAGE_LAYER_ID, 20);
 
 const components = new ComponentRegistry();
 components.register(
   MESSAGE_BOX_ID,
   new TextBox(0, 460, WIDTH, 260),
-  renderer.layers.getDom("message"),
+  renderer.layers.dom(MESSAGE_LAYER_ID),
 );
+
+const objects = new CanvasObjects(renderer.layers, WIDTH, HEIGHT);
+// エンジンが Ticker に登録するコールバックはこれ 1 つだけである。
+// オブジェクトごとに生やさないのは、リークを避けるためでもあるし、
+// ポーズ・オート・スキップを 1 箇所の時間操作で効かせるためでもある。
+renderer.app.ticker.add((ticker) => {
+  objects.update(ticker.deltaMS);
+});
 
 // 以降、syscall の実装はこのコンテキストを通してエンジンを触る。
 setEngineContext({
   renderer,
   components,
+  objects,
   host,
   messageBoxId: MESSAGE_BOX_ID,
-  spriteLayerId: SPRITE_LAYER_ID,
 });
 
 document.title = `${backend.packageName} — Biwa`;

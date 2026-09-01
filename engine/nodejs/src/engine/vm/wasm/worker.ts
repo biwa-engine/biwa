@@ -12,6 +12,7 @@ import { SyscallChannel, type WorkerMessage } from "./bridge";
 import {
   ENGINE_NAMESPACE,
   ENGINE_SYSCALLS,
+  FLUSH_AFTER_CAST,
   RUNTIME_NAMESPACE,
 } from "./contract";
 
@@ -194,6 +195,15 @@ const LOCAL_SYSCALLS: Record<string, (...args: never[]) => unknown> = {
 };
 
 /**
+ * canvas オブジェクトの id を採る連番。
+ *
+ * メインスレッドと往復せずに `create_object` の戻り値を返すため、
+ * 採番は Worker 側で行う (`contract.ts` の `alloc`)。
+ * 単調増加なので決定的で、セーブ・ロードの記録再生とも噛み合う。
+ */
+let nextObjectId = 1;
+
+/**
  * `biwa:engine` の import 1 つを、その区分に応じた関数にする。
  *
  * wasm 側から見ればどれも同じ同期呼び出しで、
@@ -215,8 +225,20 @@ function syscall(
   }
 
   if (kind === "cast") {
+    const flush = FLUSH_AFTER_CAST.has(name);
     return ((...args: unknown[]): void => {
       channel.cast(name, args);
+      if (flush) channel.flush();
+    }) as WebAssembly.ImportValue;
+  }
+
+  if (kind === "alloc") {
+    // 採番だけをこちらで行い、本体はメインスレッドへ投げる。
+    // 戻り値があるのに Worker は止まらない。
+    return ((...args: unknown[]): number => {
+      const id = nextObjectId++;
+      channel.cast(name, [id, ...args]);
+      return id;
     }) as WebAssembly.ImportValue;
   }
 

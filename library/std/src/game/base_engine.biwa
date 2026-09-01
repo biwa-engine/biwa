@@ -14,7 +14,13 @@
 // 実際のエンジン実装 (`.biwa_runtime/src/engine/...`) へ解決される。
 [[native(arch="typescript")]]
 {{
-  import { createImage } from "@biwa/engine/api/image";
+  import {
+    addTransition,
+    allocObjectId,
+    createObject,
+    deleteObject,
+    startTransitions,
+  } from "@biwa/engine/api/object";
   import { Sys, type BiwaSyscall } from "@biwa/engine/vm/syscall";
 }}
 
@@ -31,7 +37,15 @@
 {{
   (import "biwa:engine" "sys_write" (func $sys_write (param externref)))
   (import "biwa:engine" "sys_wait" (func $sys_wait))
-  (import "biwa:engine" "sys_create_image" (func $sys_create_image (param externref i32 i32)))
+  (import "biwa:engine" "sys_create_object"
+    (func $sys_create_object
+      (param externref i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "biwa:engine" "sys_delete_object" (func $sys_delete_object (param i32 i32)))
+  (import "biwa:engine" "sys_add_transition"
+    (func $sys_add_transition (param i32 i32 i32 i32 i32 i32)))
+  (import "biwa:engine" "sys_start_transitions" (func $sys_start_transitions (param i32)))
+  (import "biwa:engine" "sys_await_transitions" (func $sys_await_transitions))
+  (import "biwa:engine" "sys_sleep" (func $sys_sleep (param i32)))
   (import "biwa:engine" "sys_string_concat"
     (func $sys_string_concat (param externref externref) (result externref)))
   (import "biwa:engine" "sys_map_insert" (func $sys_map_insert (param externref anyref anyref)))
@@ -59,22 +73,121 @@ type Syscall = {{
   i32
 }};
 
-// 中断しない syscall。積んで即座に返る。
+// --- canvas オブジェクト ---------------------------------------------------
+//
+// 座標は canvas の中央が原点で、x は右が正、y は**上が正**である。
+// 位置と回転はどちらも画像の中心を基準にする。
+// パラメータの番号 (param) と遷移の種類 (kind) はエンジンとの取り決めで、
+// 一覧は engine の `src/engine/api/transition.ts` にある。
+// 設計は `docs/media-object-model.md` を参照。
+
+// オブジェクトを canvas に置き、その id を返す。
+//
+// `path` はパッケージの `assets/` を基準とした相対パスである。
+// `w` / `h` が負なら「指定しない」で、画像の元のサイズから決まる。
+// 片方だけ正ならアスペクトを保つ。
+//
+// 読み込みは非同期だが、この呼び出しは待たない。
+// 読み込みに失敗しても id は返る (ゲーム側にできることが無いため)。
 [[native(arch="typescript")]]
-fn create_image(path: String, x: Int, y: Int) {{
-  createImage(path, x, y, {
-    dx: (_) => 0,
-    dy: (_) => 0,
-  });
+fn create_object(
+  path: String, layer: Uint,
+  x: Int, y: Int, w: Int, h: Int, alpha: Int, theta: Int,
+) -> Uint {{
+  const id = allocObjectId();
+  createObject(id, path, layer, x, y, w, h, alpha, theta);
+  return id;
 }}
 
 [[native(arch="wasm")]]
-fn create_image(path: String, x: Int, y: Int) {{
+fn create_object(
+  path: String, layer: Uint,
+  x: Int, y: Int, w: Int, h: Int, alpha: Int, theta: Int,
+) -> Uint {{
   local.get 0
   local.get 1
   local.get 2
-  call $sys_create_image
+  local.get 3
+  local.get 4
+  local.get 5
+  local.get 6
+  local.get 7
+  call $sys_create_object
 }}
+
+// `after` ミリ秒後にオブジェクトを消す。
+//
+// 完全に透明にしただけでは資源は解放されない。
+// 消えるアニメーションを出したあとは、その終わりに合わせてこれを呼ぶ。
+[[native(arch="typescript")]]
+fn delete_object(id: Uint, after: Uint) {{
+  deleteObject(id, after);
+}}
+
+[[native(arch="wasm")]]
+fn delete_object(id: Uint, after: Uint) {{
+  local.get 0
+  local.get 1
+  call $sys_delete_object
+}}
+
+// 次の `start_transitions` に備えて遷移を積む。積むだけで何も起きない。
+//
+// `value` は一度限りの遷移では目標値、周期的な遷移では振幅。
+// `after` は発火からの遅れ、`duration` は遷移時間 (周期系では周期)。
+[[native(arch="typescript")]]
+fn add_transition(id: Uint, param: Uint, kind: Uint, value: Int, after: Uint, duration: Uint) {{
+  addTransition(id, param, kind, value, after, duration);
+}}
+
+[[native(arch="wasm")]]
+fn add_transition(id: Uint, param: Uint, kind: Uint, value: Int, after: Uint, duration: Uint) {{
+  local.get 0
+  local.get 1
+  local.get 2
+  local.get 3
+  local.get 4
+  local.get 5
+  call $sys_add_transition
+}}
+
+// 積まれた遷移を発火する。オブジェクトを跨いで一斉に始まる。
+//
+// 置き換わるのは積まれた遷移が触れているパラメータだけなので、
+// 別のオブジェクトや別のパラメータで走っているアニメーションは壊れない。
+//
+// `sync` が 0 でなければ、この演出はテキストの進行と結びつく。
+// クリックはまずこれを完了させ、`await_transitions` が待つ対象にもなる。
+[[native(arch="typescript")]]
+fn start_transitions(sync: Uint) {{
+  startTransitions(sync);
+}}
+
+[[native(arch="wasm")]]
+fn start_transitions(sync: Uint) {{
+  local.get 0
+  call $sys_start_transitions
+}}
+
+// sync 印の演出がすべて終わるまでシーンを止める。
+//
+// NOTE: wasm ターゲット専用である。TypeScript ターゲットで `yield` を置けるのは
+// 今のところ novel statement の展開先だけで、任意の呼び出しを中断させる手段が
+// コンパイラに無い。
+[[native(arch="wasm")]]
+fn await_transitions() {{
+  call $sys_await_transitions
+}}
+
+// エンジン時計の上で指定時間シーンを止める (ポーズ中は進まない)。
+// `await_transitions` と同じく wasm ターゲット専用。
+[[native(arch="wasm")]]
+fn sleep(ms: Uint) {{
+  local.get 0
+  call $sys_sleep
+}}
+
+// --- ノベルテキスト --------------------------------------------------------
 
 // scene 内で直接記述されたテキスト (novel statement) の展開先。
 // コンパイラのみが呼び出すことを想定しており、

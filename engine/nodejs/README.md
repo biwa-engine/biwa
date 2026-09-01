@@ -66,17 +66,24 @@ src/engine/vm/
   kernel.ts    # VM を回すループ
   handlers.ts  # syscall 番号 → 実装の対応表
 src/engine/api/
-  context.ts   # 現在のエンジン実体 (syscall の実装が参照する)
-  message.ts   # writeMessage / waitForClick
-  image.ts     # createImage
+  context.ts    # 現在のエンジン実体 (syscall の実装が参照する)
+  message.ts    # writeMessage / waitForClick
+  object.ts     # canvas オブジェクトの生成・遷移・削除
+  transition.ts # param / kind の番号と曲線 (std との合意点)
 ```
 
-現状の syscall:
+kernel を通るのは**中断する syscall だけ**である。
+中断しない syscall (canvas オブジェクトの操作など) は
+std の native が `@biwa/engine/api/*` を直接呼ぶので、記述子にならない。
 
 | syscall     | 対応する std の関数              | ふるまい                 |
 | ----------- | -------------------------------- | ------------------------ |
 | `Sys.Write` | `base_engine::write` (lang item) | 中断しない               |
 | `Sys.Wait`  | `base_engine::wait` (lang item)  | クリックまで**中断する** |
+
+`await_transitions` / `sleep` は TypeScript ターゲットには無い。
+コンパイラが `yield` を置くのは今のところ novel statement の展開先だけで、
+任意の関数呼び出しを中断させる手段が無いためである (wasm ターゲット専用)。
 
 実装が Promise を返せばブロッキング syscall で、解決するまで scene を再開しない。
 値をそのまま返せば非ブロッキング syscall で、scene はそのまま走り続ける。
@@ -123,8 +130,21 @@ src/engine/vm/wasm/
 | `biwa:runtime` `string_const`                   | -            | Worker (memory から UTF-8 を復号) |
 | `biwa:engine` `sys_write`                       | 積んで返る   | Main                              |
 | `biwa:engine` `sys_wait`                        | **中断する** | Main                              |
-| `biwa:engine` `sys_create_image`                | 積んで返る   | Main                              |
+| `biwa:engine` `sys_create_object`               | 積んで返る   | Main (id の採番のみ Worker)       |
+| `biwa:engine` `sys_add_transition` ほか         | 積んで返る   | Main                              |
+| `biwa:engine` `sys_await_transitions`           | **中断する** | Main                              |
+| `biwa:engine` `sys_sleep`                       | **中断する** | Main                              |
 | `biwa:engine` `sys_string_concat` / `sys_map_*` | -            | Worker                            |
+
+`sys_create_object` は戻り値 (オブジェクト id) を持つが**中断しない**。
+採番だけを Worker 内で行い、本体はメインスレッドへ投げるからである
+(`contract.ts` の `alloc`)。素直に中断させると、
+オブジェクトを 1 つ作るたびにスレッドが往復してしまう。
+
+積んで返る syscall はまとめて 1 通の `postMessage` で流している。
+Worker はゲームの実行中にイベントループへ帰らない (生成物を同期に呼び切る) ので、
+流す契機は `bridge.ts` が自分で決めている。
+遷移の発火が 1 通に収まるおかげで、**メインスレッドは発火の途中でフレームを描けない。**
 
 Worker 側に置くものがあるのは、`externref` / `anyref` が JS のオブジェクト参照
 そのもので**スレッド境界を越えられない**からである。
@@ -170,40 +190,82 @@ QuickJS + ASYNCIFY との比較、セーブ・ロードの方針) は
 
 ```
 src/
-  main.ts             # 起動: レンダラ初期化 → コンテキスト登録 → ターゲットに応じて実行
+  main.ts               # 起動: レンダラ初期化 → コンテキスト登録 → ターゲットに応じて実行
   engine/
-    game.ts           # ゲームコードとの境界の型 (BiwaGame / BiwaEntrypoint / BiwaBackend)
-    vm/               # scene を駆動する kernel と syscall の定義
-    vm/wasm/          # wasm 生成物を Worker で走らせる側
-    api/              # syscall の実装 (std からも `@biwa/engine/api/*` として呼ばれる)
-    api/assets.ts     # `.biwa` が書くアセットのパスを URL に直す
-    Renderer.ts       # PixiJS Application のラッパー
-    LayerManager.ts   # Canvas/DOM レイヤーの生成・参照管理
-    CommandQueue.ts   # 使っていない。VM 化以前の名残
-    tween.ts          # PixiJS Ticker ベースの線形補間
+    game.ts             # ゲームコードとの境界の型 (BiwaGame / BiwaEntrypoint / BiwaBackend)
+    vm/                 # scene を駆動する kernel と syscall の定義
+    vm/wasm/            # wasm 生成物を Worker で走らせる側
+    api/                # syscall の実装 (std からも `@biwa/engine/api/*` として呼ばれる)
+    api/assets.ts       # `.biwa` が書くアセットのパスを URL に直す
+    api/transition.ts   # param / kind の番号と曲線・波形 (std との合意点)
+    canvas/
+      CanvasObjects.ts  # canvas オブジェクトと遷移の本体。Ticker で回る
+    Renderer.ts         # PixiJS Application のラッパー
+    LayerManager.ts     # canvas / DOM レイヤーの生成・参照管理
   components/
     ComponentRegistry.ts
-    TextBox.ts        # メッセージウィンドウ
-  commands/           # 暫定。CommandQueue 用のコマンド群
+    TextBox.ts          # メッセージウィンドウ
   game/
-    entry.ts          # `biwa dev` が生成して上書きする (リポジトリのものはプレースホルダ)
+    entry.ts            # `biwa dev` が生成して上書きする (リポジトリのものはプレースホルダ)
 ```
+
+## canvas オブジェクトと遷移
+
+画像などを canvas に置き、パラメータの遷移でアニメーションさせる。
+規約と設計の理由は [`docs/media-object-model.md`](../../docs/media-object-model.md) にある。
+
+- 座標は **canvas の中央が原点**で、x は右が正、**y は上が正**。
+  位置も回転も画像の中心を基準にする (PixiJS とは向きも単位も違うので、
+  biwa 側の値を正として毎フレーム射影している)
+- 遷移は `add_transition` で積み、`start_transitions` で発火する。
+  発火はオブジェクトを跨いで一斉に起こる
+- **置き換わるのは積まれた遷移が触れたパラメータだけ**である。
+  背景のパンの最中にキャラクターが跳ねても、パンは死なない
+- パラメータごとに、いつでも活性な区間は 1 つ。
+  ある区間は同じパラメータの次の区間が始まった時点で終わる
+- 周期系 (`sin` など) は基準値からの**偏差**を乗せるだけなので、
+  区間が終われば値は基準値に戻る。止めるには `none` を置く
+
+Ticker に登録するコールバックは `main.ts` の 1 つだけである。
+オブジェクトごとに生やさないのは、リークを避けるためでもあるし、
+ポーズ・オート・スキップを 1 箇所の時間操作で効かせるためでもある。
+時間は `performance.now()` ではなく Ticker の差分を積んだエンジン時計で測る。
+
+### テキストと同期する演出 / しない演出
+
+`start_transitions(sync)` の `sync` が 0 でなければ、
+その演出はテキストの進行と結びつく。
+
+| したいこと                                       | 書き方                            |
+| ------------------------------------------------ | --------------------------------- |
+| 走らせっぱなし (背景のパン、常時のゆらぎ)        | `start(0)`                        |
+| テキストは進むが、次のクリックで先に演出が終わる | `start(1)`                        |
+| 演出が終わるまでシーンを進めない                 | `start(1)` → `await_transitions()` |
+
+クリック待ちの最中に進行中の sync 演出があれば、
+クリックはまずそれを完了させて消費される (`api/message.ts`)。
+完了の判定は終端を持つ区間だけを見るので、
+ゆらぎが混じっていても待ちが固まることはない。
 
 ## レイヤーシステム
 
-Canvas レイヤーと DOM レイヤーを `z-index` で任意に積み重ねる。
+canvas レイヤーと DOM レイヤーを積み重ねる。
 
-- **Canvas レイヤー**: スプライト・エフェクト描画 (PixiJS Container)
-- **DOM レイヤー**: テキスト・UI 描画 (HTMLElement, `pointer-events: none`)
+- **canvas レイヤー**: PixiJS の Container。**整数の index** で識別し、
+  `create_object` に渡された index のものが必要に応じて作られる。
+  背景・立ち絵・前景といった意味づけは std の仕事なのでここには無い。
+  レイヤーは安いので、前後を細かく分けたければ index を分ければよい
+- **DOM レイヤー**: テキスト・UI 描画 (HTMLElement, `pointer-events: none`)。名前で識別する
 
-現在は `main.ts` に直書きしている。
-レイヤーと UI コンポーネントの定義は将来 XML で行う。
+canvas は 1 枚の `<canvas>` の中に積まれ、その `<canvas>` は
+すべての DOM レイヤーより下にある。
+つまり canvas レイヤーの index が DOM レイヤーを追い越すことはない。
+
+DOM レイヤーと UI コンポーネントの定義は将来 XML で行う。
 
 ```xml
 <layers>
-  <layer id="background"  type="canvas" />
-  <layer id="chara"       type="canvas" />
-  <layer id="message"     type="dom"    />
+  <layer id="message" type="dom" />
 </layers>
 ```
 
@@ -213,7 +275,7 @@ Canvas レイヤーと DOM レイヤーを `z-index` で任意に積み重ねる
 | -------------------- | --------------------------- |
 | ビルド               | Vite + TypeScript (vanilla) |
 | 描画                 | PixiJS v8 (WebGL/Canvas)    |
-| アニメーション       | PixiJS Ticker (自前 tween)  |
+| アニメーション       | PixiJS Ticker (自前の遷移)  |
 | デスクトップ出力     | Tauri (予定)                |
 | パッケージマネージャ | npm                         |
 
@@ -226,5 +288,8 @@ Canvas レイヤーと DOM レイヤーを `z-index` で任意に積み重ねる
 - [ ] XML によるレイヤー・コンポーネント定義のローダー
 - [ ] `std::game::window` の native (`MessageWindow` / `Canvas`) の実装
 - [ ] `characters` / `states` の初期化をゲーム側から渡す口
-- [ ] tween のイージング対応
+- [ ] 動画 / GIF のバックエンド (`create_object` は拡張子で分ける前提で書いてある)
+- [ ] `preload` (テクスチャが読めるまでオブジェクトは見えないので、
+      その間のフェードインは見えないまま終わる)
+- [ ] ポーズ・オート・スキップ (エンジン時計の `timeScale` と kernel の駆動間隔)
 - [ ] Tauri アダプター (ファイルアクセスの抽象化)

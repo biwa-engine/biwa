@@ -6,8 +6,15 @@
  * syscall の実装そのもの (`api/*`) は両者で共有している。
  */
 
-import { createImage } from "../../api/image";
 import { waitForClick, writeMessage } from "../../api/message";
+import {
+  addTransition,
+  awaitTransitions,
+  createObject,
+  deleteObject,
+  sleep,
+  startTransitions,
+} from "../../api/object";
 import {
   completeCall,
   createChannelBuffer,
@@ -28,6 +35,9 @@ type SyscallHandler = (...args: never[]) => unknown;
  *
  * どれをブロッキングにするかは `contract.ts` が決めている。
  * ここにあるのは中身だけである。
+ *
+ * `sys_create_object` の先頭の `id` は Worker が採ったものである
+ * (`alloc`。メインスレッドと往復せずに戻り値を返すため)。
  */
 function createHandlers(): Record<string, SyscallHandler> {
   return {
@@ -35,11 +45,34 @@ function createHandlers(): Record<string, SyscallHandler> {
 
     sys_wait: () => waitForClick(),
 
-    sys_create_image: (path: string, x: number, y: number) =>
-      createImage(path, x, y, {
-        dx: () => 0,
-        dy: () => 0,
-      }),
+    sys_create_object: (
+      id: number,
+      path: string,
+      layer: number,
+      x: number,
+      y: number,
+      w: number,
+      h: number,
+      alpha: number,
+      theta: number,
+    ) => createObject(id, path, layer, x, y, w, h, alpha, theta),
+
+    sys_delete_object: (id: number, after: number) => deleteObject(id, after),
+
+    sys_add_transition: (
+      id: number,
+      param: number,
+      kind: number,
+      value: number,
+      after: number,
+      duration: number,
+    ) => addTransition(id, param, kind, value, after, duration),
+
+    sys_start_transitions: (sync: number) => startTransitions(sync),
+
+    sys_await_transitions: () => awaitTransitions(),
+
+    sys_sleep: (ms: number) => sleep(ms),
   };
 }
 
@@ -79,14 +112,15 @@ export function runWasm(url: string): Promise<void> {
       const message = event.data;
 
       switch (message.kind) {
+        case "syscalls":
+          // 止まらない syscall のまとまり。1 通で来るので、
+          // この間にフレームが挟まることはない。
+          for (const call of message.calls) {
+            dispatch(handlers, call.name, call.args);
+          }
+          return;
         case "syscall":
-          void serve(
-            buffer,
-            handlers,
-            message.name,
-            message.args,
-            message.blocking,
-          );
+          void serve(buffer, handlers, message.name, message.args);
           return;
         case "ready":
           return;
@@ -111,9 +145,32 @@ export function runWasm(url: string): Promise<void> {
 }
 
 /**
- * syscall を 1 つ処理する。
+ * 止まらない syscall を 1 つ処理する。
  *
- * ブロッキングなら、結果を共有バッファに書いて Worker を起こすところまでが仕事である。
+ * 呼び出し元は既に返っているので、失敗しても伝える先が無い。ログに出す。
+ */
+function dispatch(
+  handlers: Record<string, SyscallHandler>,
+  name: string,
+  args: unknown[],
+): void {
+  const handler = handlers[name];
+  if (handler === undefined) {
+    console.error(`[biwa] unknown syscall: ${name}`);
+    return;
+  }
+
+  try {
+    (handler as (...a: unknown[]) => unknown)(...args);
+  } catch (e) {
+    console.error(`[biwa] syscall \`${name}\` failed:`, e);
+  }
+}
+
+/**
+ * ブロッキング syscall を 1 つ処理する。
+ *
+ * 結果を共有バッファに書いて Worker を起こすところまでが仕事である。
  * 起こし忘れると wasm は永久に止まるので、失敗も必ず書き戻す。
  */
 async function serve(
@@ -121,31 +178,18 @@ async function serve(
   handlers: Record<string, SyscallHandler>,
   name: string,
   args: unknown[],
-  blocking: boolean,
 ): Promise<void> {
   const handler = handlers[name];
 
   if (handler === undefined) {
-    const message = `[biwa] unknown syscall: ${name}`;
-    if (blocking) {
-      failCall(buffer, message);
-    } else {
-      console.error(message);
-    }
+    failCall(buffer, `[biwa] unknown syscall: ${name}`);
     return;
   }
 
   try {
     const result = await (handler as (...a: unknown[]) => unknown)(...args);
-    if (blocking) {
-      completeCall(buffer, result);
-    }
+    completeCall(buffer, result);
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    if (blocking) {
-      failCall(buffer, message);
-    } else {
-      console.error(`[biwa] syscall \`${name}\` failed:`, e);
-    }
+    failCall(buffer, e instanceof Error ? e.message : String(e));
   }
 }

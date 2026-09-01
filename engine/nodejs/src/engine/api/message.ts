@@ -18,19 +18,22 @@ export function writeMessage(text: string): void {
  *
  * syscall `Sys.Wait` の実装。Promise を返すので kernel はこれを await し、
  * 解決するまで scene を再開しない (= VM は止まったまま)。
+ *
+ * **進行中の sync 印の演出があれば、クリックはまずそれを完了させる。**
+ * テキストを進めるにはもう一度クリックが要る。
+ * 独立に走らせている演出 (背景のパン、常時のゆらぎ) はこれに巻き込まれない。
  */
 export function waitForClick(): Promise<void> {
-  const { host, components, messageBoxId } = engine();
+  const { host, components, messageBoxId, objects } = engine();
   const box = components.getTextBox(messageBoxId);
 
   return new Promise((resolve) => {
-    host.addEventListener(
-      "click",
-      () => {
-        box.clear();
-        resolve();
-      },
-      { once: true },
-    );
+    const onClick = (): void => {
+      if (objects.skipSync()) return;
+      host.removeEventListener("click", onClick);
+      box.clear();
+      resolve();
+    };
+    host.addEventListener("click", onClick);
   });
 }

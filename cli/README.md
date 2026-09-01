@@ -87,7 +87,7 @@ Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン�
 `.biwa` から参照するときのパスは**この `assets/` を基準とした相対パス**である。
 
 ```
-assets/bg/room.png   に置いたものは   create_image("bg/room.png", 0, 0)
+assets/bg/room.png   に置いたものは   create_object("bg/room.png", 0, ...)
 ```
 
 `biwa dev` は起動時に `assets/` を

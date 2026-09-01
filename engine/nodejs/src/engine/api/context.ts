@@ -1,4 +1,5 @@
 import type { ComponentRegistry } from "../../components/ComponentRegistry";
+import type { CanvasObjects } from "../canvas/CanvasObjects";
 import type { Renderer } from "../Renderer";
 
 /**
@@ -11,12 +12,12 @@ import type { Renderer } from "../Renderer";
 export interface EngineContext {
   renderer: Renderer;
   components: ComponentRegistry;
+  /** canvas に置かれたオブジェクトと、その遷移。 */
+  objects: CanvasObjects;
   /** 入力を受け取る要素 (クリック待ちの対象) */
   host: HTMLElement;
   /** メッセージウィンドウとして使うコンポーネントの ID */
   messageBoxId: string;
-  /** キャラクター・立ち絵を載せる canvas レイヤーの ID */
-  spriteLayerId: string;
 }
 
 let current: EngineContext | null = null;

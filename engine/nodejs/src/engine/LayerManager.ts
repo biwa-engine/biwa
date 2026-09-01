@@ -1,27 +1,21 @@
 import { Application, Container } from "pixi.js";
 
-export type LayerType = "canvas" | "dom";
-
-interface LayerDef {
-  id: string;
-  type: LayerType;
-  zIndex: number;
-}
-
-interface CanvasLayer {
-  type: "canvas";
-  container: Container;
-}
-
-interface DomLayer {
-  type: "dom";
-  element: HTMLElement;
-}
-
-type Layer = CanvasLayer | DomLayer;
-
+/**
+ * 描画の層。
+ *
+ * - **canvas レイヤー**: PixiJS の Container。整数の index で識別する。
+ *   `create_object` が受け取るのはこの index である。
+ *   意味づけ (背景・立ち絵・前景) は std の仕事なので、ここには持たない。
+ *   レイヤーは安いので、前後を細かく分けたければ index を分ければよい。
+ * - **DOM レイヤー**: テキストや UI を載せる HTMLElement。名前で識別する。
+ *
+ * canvas は 1 枚の `<canvas>` の中に積まれ、その `<canvas>` は
+ * すべての DOM レイヤーより下にある (`Renderer` が z-index 0 に置く)。
+ * つまり canvas レイヤーの index が DOM レイヤーを追い越すことはない。
+ */
 export class LayerManager {
-  private layers = new Map<string, Layer>();
+  private canvasLayers = new Map<number, Container>();
+  private domLayers = new Map<string, HTMLElement>();
   private app: Application;
   private host: HTMLElement;
 
@@ -30,42 +24,40 @@ export class LayerManager {
     this.host = host;
   }
 
-  defineLayer(def: LayerDef): void {
-    if (this.layers.has(def.id)) return;
-
-    if (def.type === "canvas") {
-      const container = new Container();
-      container.zIndex = def.zIndex;
-      this.app.stage.addChild(container);
-      this.layers.set(def.id, { type: "canvas", container });
-    } else {
-      const el = document.createElement("div");
-      el.style.cssText = `
-        position: absolute;
-        inset: 0;
-        z-index: ${def.zIndex};
-        pointer-events: none;
-      `;
-      el.dataset.layerId = def.id;
-      this.host.appendChild(el);
-      this.layers.set(def.id, { type: "dom", element: el });
+  /** canvas レイヤーを引く。無ければ作る。 */
+  canvas(index: number): Container {
+    const found = this.canvasLayers.get(index);
+    if (found !== undefined) {
+      return found;
     }
+
+    const container = new Container();
+    container.zIndex = index;
+    this.app.stage.addChild(container);
+    this.canvasLayers.set(index, container);
+    return container;
   }
 
-  getCanvas(id: string): Container {
-    const layer = this.layers.get(id);
-    if (!layer || layer.type !== "canvas") {
-      throw new Error(`Canvas layer "${id}" not found`);
-    }
-    return layer.container;
+  defineDom(id: string, zIndex: number): void {
+    if (this.domLayers.has(id)) return;
+
+    const el = document.createElement("div");
+    el.style.cssText = `
+      position: absolute;
+      inset: 0;
+      z-index: ${zIndex};
+      pointer-events: none;
+    `;
+    el.dataset.layerId = id;
+    this.host.appendChild(el);
+    this.domLayers.set(id, el);
   }
 
-  getDom(id: string): HTMLElement {
-    const layer = this.layers.get(id);
-    if (!layer || layer.type !== "dom") {
-      throw new Error(`DOM layer "${id}" not found`);
+  dom(id: string): HTMLElement {
+    const layer = this.domLayers.get(id);
+    if (layer === undefined) {
+      throw new Error(`[biwa] DOM layer "${id}" is not defined`);
     }
-    return layer.element;
+    return layer;
   }
 }
-
