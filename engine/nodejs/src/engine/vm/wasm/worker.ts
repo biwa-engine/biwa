@@ -176,6 +176,20 @@ function runtimeImports(
 const LOCAL_SYSCALLS: Record<string, (...args: never[]) => unknown> = {
   sys_string_concat: (a: string, b: string): string => a + b,
 
+  sys_vec_new: (): unknown[] => [],
+
+  sys_vec_of: (value: unknown): unknown[] => [value],
+
+  sys_vec_push: (vec: unknown[], value: unknown): void => {
+    vec.push(value);
+  },
+
+  sys_vec_len: (vec: unknown[]): number => vec.length,
+
+  // 範囲外は Option::none (null) として返す。
+  sys_vec_get: (vec: unknown[], index: number): unknown =>
+    index < vec.length ? vec[index] : null,
+
   sys_map_insert: (
     map: Map<unknown, unknown>,
     key: unknown,

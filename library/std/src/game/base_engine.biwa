@@ -48,6 +48,12 @@
   (import "biwa:engine" "sys_sleep" (func $sys_sleep (param i32)))
   (import "biwa:engine" "sys_string_concat"
     (func $sys_string_concat (param externref externref) (result externref)))
+  (import "biwa:engine" "sys_vec_new" (func $sys_vec_new (result externref)))
+  (import "biwa:engine" "sys_vec_of" (func $sys_vec_of (param anyref) (result externref)))
+  (import "biwa:engine" "sys_vec_push" (func $sys_vec_push (param externref anyref)))
+  (import "biwa:engine" "sys_vec_len" (func $sys_vec_len (param externref) (result i32)))
+  (import "biwa:engine" "sys_vec_get"
+    (func $sys_vec_get (param externref i32) (result anyref)))
   (import "biwa:engine" "sys_map_insert" (func $sys_map_insert (param externref anyref anyref)))
   (import "biwa:engine" "sys_map_get" (func $sys_map_get (param externref anyref) (result anyref)))
 }}

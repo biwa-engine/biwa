@@ -1,15 +1,90 @@
 import package::types::option::Option;
 
+// 可変長の配列。
+//
+// TypeScript では素の Array、wasm ではホスト (Worker) が持つ JS の配列である。
+// wasm の値をホスト側に置くのは、`String` や `Map` と同じ理由による
+// (可変長のコンテナを wasm 側で持つ手段がまだない)。
+//
+// 制約: wasm では要素が anyref として渡るため、
+// **要素の型は参照型 (struct) に限る**。`Vec[Int]` や `Vec[String]` は
+// バックエンドがエラーにする。Option[T] と同じ制約である。
 [[native(arch="typescript")]]
 type Vec[T] = {{
   Array<T>
 }};
 
-// 可変長のコンテナはホストが持つ。
 [[native(arch="wasm")]]
 type Vec[T] = {{
   externref
 }};
+
+impl[T] Vec[T] {
+  // 空のVecを生成
+  [[native(arch="typescript")]]
+  fn new() -> Self {{
+    return [];
+  }}
+
+  [[native(arch="wasm")]]
+  fn new() -> Self {{
+    call $sys_vec_new
+  }}
+
+  // 最初の 1 要素から作る。
+  //
+  // `new()` は要素の型が戻り値にしか現れないため、
+  // 文脈から決められない場所では使えない (コンパイラの制限)。
+  // 引数から要素の型が決まるこちらならどこでも書ける。
+  [[native(arch="typescript")]]
+  fn of(value: T) -> Self {{
+    return [value];
+  }}
+
+  [[native(arch="wasm")]]
+  fn of(value: T) -> Self {{
+    local.get 0
+    call $sys_vec_of
+  }}
+
+  // 値を後ろに追加
+  [[native(arch="typescript")]]
+  fn push(self, value: T) {{
+    self.push(value);
+  }}
+
+  [[native(arch="wasm")]]
+  fn push(self, value: T) {{
+    local.get 0
+    local.get 1
+    call $sys_vec_push
+  }}
+
+  // 長さを取得
+  [[native(arch="typescript")]]
+  fn len(self) -> Uint {{
+    return self.length;
+  }}
+
+  [[native(arch="wasm")]]
+  fn len(self) -> Uint {{
+    local.get 0
+    call $sys_vec_len
+  }}
+
+  // index指定した位置の値を取得。範囲外なら none。
+  [[native(arch="typescript")]]
+  fn get(self, index: Uint) -> Option[T] {{
+    return index < self.length ? self[index] : null;
+  }}
+
+  [[native(arch="wasm")]]
+  fn get(self, index: Uint) -> Option[T] {{
+    local.get 0
+    local.get 1
+    call $sys_vec_get
+  }}
+}
 
 [[native(arch="typescript")]]
 type Map[K, V] = {{
@@ -54,3 +129,5 @@ impl[K, V] Map[K, V] {
     call $sys_map_get
   }}
 }
+
+

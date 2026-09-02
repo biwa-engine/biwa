@@ -91,6 +91,13 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   // 持っているので、その実体は JS 側にしか無い。
   /** 文字列の連結。 */
   sys_string_concat: "local",
+  /** 可変長配列。中身は wasm の値なので Worker 側に置く。 */
+  sys_vec_new: "local",
+  sys_vec_of: "local",
+  sys_vec_push: "local",
+  sys_vec_len: "local",
+  /** 範囲外なら null (= `Option::none`) を返す。 */
+  sys_vec_get: "local",
   /** Map への挿入。 */
   sys_map_insert: "local",
   /** Map からの取得。 */
