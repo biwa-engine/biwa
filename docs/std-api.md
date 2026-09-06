@@ -164,34 +164,58 @@ Option と同じ制約である。
 
 std を書く / std を使うときに踏むもの。回避方法つき。
 
-| 制限                                                                                            | 回避                                                                                                           |
-| ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| ジェネリックな型の関連関数を、**呼び出し側のジェネリック引数**で呼べない (MIR の符号化で落ちる) | 構造体リテラルで作る。`CharacterBatchChain::new(self, ..)` ではなく `CharacterBatchChain { chara = self, .. }` |
-| ジェネリックな型のメソッドを、呼び出し側のジェネリック引数で呼べない (同上)                     | 具体型のチェーンを使う。`Character[P]` の中では `self.visual().x_then()` のように `CanvasObject` 側を通す      |
-| 型エイリアスの**型引数**が関連関数に伝わらない (`type IntVec = Vec[Int]; IntVec::new()`)        | 引数から型が決まる形を使う。エイリアスの型引数は現状 assoc fn 呼び出しでは無視される                           |
-| 戻り値にしか現れないジェネリック引数が決まらない (`Vec::new()`)                                 | 引数から決まる形を用意する (`Vec::of(value)`)                                                                  |
-| `if cond { 式 }` は if **式**なので `else` が要る                                               | 文にするなら最後に `;` を付ける                                                                                |
-| `await_transitions` / `sleep` は wasm 専用                                                      | TypeScript では `yield` を任意の呼び出しに置けない (`docs/media-object-model.md`)                              |
-| TypeScript 生成器に `while` / ブロック文 / ブロックを含む if **式** が無い (`todo!()` で落ちる) | tier 1 の wasm では動く。tier 2 では `if cond { return .. } ..` のように文の形に崩す                           |
+| 制限                                                                                            | 回避                                                                                 |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| 関数の中で一度も型が決まらないジェネリック引数は決まらない (`let v = Vec::new();` で終わり)     | 使うか、戻り値の型かエイリアスで決める                                               |
+| **型エラーが診断にならず panic する** (`TypeConfliced` を driver が unwrap する)                | 型推論のエラーはまだ整形されていない。パスは無関係で、`takes_int(image)` でも同じ    |
+| `if cond { 式 }` は if **式**なので `else` が要る                                               | 文にするなら最後に `;` を付ける                                                      |
+| `await_transitions` / `sleep` は wasm 専用                                                      | TypeScript では `yield` を任意の呼び出しに置けない (`docs/media-object-model.md`)    |
+| TypeScript 生成器に `while` / ブロック文 / ブロックを含む if **式** が無い (`todo!()` で落ちる) | tier 1 の wasm では動く。tier 2 では `if cond { return .. } ..` のように文の形に崩す |
 
 `scene` の `{{ }}` の中はノベルテキストなので、`//` から始まる行、
 または `//` 以降がコメントになる。
+
+`library/std` の `character.biwa` には
+「ジェネリックな型の関連関数・メソッドを呼び出し側のジェネリック引数で呼べない」
+ことを避けるための書き方が残っている
+(`CharacterBatchChain { chara = self, .. }` の構造体リテラル、
+`self.visual().x_then()` の具体型経由)。
+この制限はもう無いので、素直な書き方に戻してよい。
 
 ### 型エイリアス越しの関連関数
 
 `type CharacterBiwa = Character[BiwaCharacterProps];` に対して
 `CharacterBiwa::new(..)` と書ける。エイリアスの連鎖も辿る。
 
-ただしエイリアスに書いた**型引数はまだ呼び出しに伝わらない**。
-型引数は今までどおり引数から推論されるので、
+エイリアスに書いた**型引数も呼び出しに伝わる**。
 
-- `CharacterBiwa::new(.., BiwaCharacterProps {}, ..)` は期待どおり動く
-  (`Character::new(..)` と書いたときと生成物が一致する)
-- 型引数が戻り値にしか現れない `IntVec::new()` は決まらず落ちる
-- エイリアスの型引数と食い違う引数を渡しても検査されない
+```biwa
+type ImageVec = Vec[Image];
 
-伝えるには HIR の `Callee::Fn` に呼び出し側の self 型を持たせる必要があり、
-そこは手を付けていない。
+let v = ImageVec::new();   // 引数が無くても T = Image に決まる
+```
+
+食い違いは呼び出しの場所でぶつかる。
+
+```biwa
+type AliasOther = Character[OtherProps];
+
+AliasOther::new("a", "b", BiwaCharacterProps {}, img, img)
+//                        ^^^^^^^^^^^^^^^^^^^^^ OtherProps と衝突する
+```
+
+エイリアス自身がまだ型引数を取る場合 (`type PairIntT[T] = Pair[Int, T];`) は、
+書かれた型が型引数を埋めきっていないので使えない。
+この場合は今までどおり引数から推論する。
+
+仕組みは HIR の `Callee::AssocFn { def_id, self_ty }` である。
+`self_ty` は**呼び出し位置に書かれた型**で、エイリアスなら
+`alias_expansion` が右辺に置き換える。推論はこれをレシーバのように
+第 1 引数として `FnSignature::impl_self_ty` と単一化する。
+
+呼び出し位置に型引数を書く構文 (`Vec[Image]::new()`) はまだ無いので、
+エイリアスを経由しない `Vec::new()` の `self_ty` は型引数が空のままである。
+その場合は単一化に混ぜず、従来どおり引数と文脈から推論する。
 
 ### `if` / `while` の条件式に構造体リテラルは置けない
 
