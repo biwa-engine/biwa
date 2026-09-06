@@ -121,24 +121,36 @@ biwa.disappear(ms(1200));
 
 ## Option
 
-enum が入るまでの暫定。TypeScript では `T | null`、wasm では `anyref` である。
+enum である。native の実装は無い。
+
+```biwa
+enum Option[T] {
+  None,
+  Some(T),
+}
+```
 
 ```biwa
 let found = images.get(1);
+
+// match で取り出すのが基本の形
+let n = match found {
+  Option::Some(image) => 1,
+  Option::None => 0,
+};
+
+// 近道も用意してある
 if found.is_some() { ... }
-found.unwrap()
+found.unwrap()          // none なら実行を打ち切る
 ```
 
 `some` / `none` / `is_some` / `is_none` / `unwrap`。
 
-wasm の `unwrap` は `anyref` から `T` へ落とすので `ref.cast` が要る。
-型は単相化ごとに違うため、native の本体に **`%ret%`** と書くと
-コンパイラがその単相化での戻り値の型を埋める
-(`%param0%`, `%param1%`, … も同様に引数の型になる。
-番号は `local.get` と同じで、self があれば 0 が self)。
+payload は生の型のまま入るので、**`Option[Int]` も `Option[String]` も書ける**。
+以前は wasm で `anyref` に詰めていたため、参照型しか入れられなかった。
 
-**制約**: `anyref` に入るのは WasmGC の参照型だけなので、
-wasm では `Option[Int]` や `Option[String]` (externref は別の型階層) は使えない。
+`unwrap` の none 側は `std::panic::abort()` を呼ぶ。
+wasm では `unreachable` (trap)、TypeScript では例外になる。
 
 ## Vec
 
@@ -152,11 +164,20 @@ images.len()
 TypeScript では素の `Array`、wasm ではホスト (Worker) が持つ JS の配列で、
 `sys_vec_*` として Worker 内で完結する syscall になっている。
 要素は `anyref` として渡るので、**wasm では要素の型は参照型 (struct) に限る**。
-Option と同じ制約である。
+(`Option[T]` はこの制約から外れた。enum になったため)
 
-`Vec::new()` は要素の型が戻り値にしか現れないため、
-文脈から決められない場所では使えない (下記)。
+`get` は範囲を検査して `Option` を組み立てる。
+Option は enum なので native からは作れず、
+native が担うのは範囲を検査しない `get_unchecked` だけである。
+
+`Vec::new()` は要素の型が戻り値にしか現れないので、
+関数の中でどこからも決まらないと単相化できない (下記)。
 最初の 1 要素から作る `Vec::of()` ならどこでも書ける。
+
+native の本体では、単相化ごとに変わる型を **`%ret%`** で書ける
+(`%param0%`, `%param1%`, … も同様に引数の型になる。
+番号は `local.get` と同じで、self があれば 0 が self)。
+`get_unchecked` の `ref.cast %ret%` がこれである。
 
 ---
 
@@ -168,11 +189,38 @@ std を書く / std を使うときに踏むもの。回避方法つき。
 | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | 関数の中で一度も型が決まらないジェネリック引数は決まらない (`let v = Vec::new();` で終わり)     | 使うか、戻り値の型かエイリアスで決める                                               |
 | `if cond { 式 }` は if **式**なので `else` が要る                                               | 文にするなら最後に `;` を付ける                                                      |
+| `if` を式として `let` の右辺に置けない (`match` は置ける)                                       | 文の形に崩すか、`match` を使う                                                       |
+| パターンを入れ子にできない (`Some(Rgb(r, g, b))`)                                               | いったん束縛して、もう一度 `match` する                                              |
+| `match` はノベルの `#` コード行では書けない                                                     | 関数に切り出して呼ぶ                                                                 |
 | `await_transitions` / `sleep` は wasm 専用                                                      | TypeScript では `yield` を任意の呼び出しに置けない (`docs/media-object-model.md`)    |
 | TypeScript 生成器に `while` / ブロック文 / ブロックを含む if **式** が無い (`todo!()` で落ちる) | tier 1 の wasm では動く。tier 2 では `if cond { return .. } ..` のように文の形に崩す |
 
 `scene` の `{{ }}` の中はノベルテキストなので、`//` から始まる行、
 または `//` 以降がコメントになる。
+
+### enum と match
+
+`Option` は enum になった。`docs/enum-and-match.md` を参照。
+
+```biwa
+enum Color {
+  Red,
+  Rgb(Int, Int, Int),
+  Named { name: String, alpha: Int },
+}
+
+let n = match c {
+  Color::Red => 0,
+  Color::Rgb(r, g, b) => r + g + b,
+  Color::Named { name = s, alpha } => alpha,
+};
+```
+
+- バリアントは単体で `import` できる (`import package::palette::Light::Red;`)
+- 網羅していないと弾かれる。`_` か束縛のアームで残りをまとめられる
+- 構造体形式のパターンは `=` を使い、`{ alpha }` は同名への束縛の省略形
+- `match` の対象には、`if` / `while` の条件と同じく構造体リテラルを置けない
+- タプル形式のフィールドは `_0`, `_1` という名前を持ち、生成コードにもその名前で出る
 
 `library/std` の `character.biwa` には
 「ジェネリックな型の関連関数・メソッドを呼び出し側のジェネリック引数で呼べない」

@@ -1,5 +1,5 @@
 import package::types::string::String;
-import package::types::option::Option;
+import package::option::Option;
 import image::Image;
 import image::CanvasObject;
 import window::Window;

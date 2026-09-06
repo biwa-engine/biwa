@@ -1,4 +1,6 @@
 import package::types::option::Option;
+import package::types::option::Option::Some;
+import package::types::option::Option::None;
 
 // 可変長の配列。
 //
@@ -8,7 +10,8 @@ import package::types::option::Option;
 //
 // 制約: wasm では要素が anyref として渡るため、
 // **要素の型は参照型 (struct) に限る**。`Vec[Int]` や `Vec[String]` は
-// バックエンドがエラーにする。Option[T] と同じ制約である。
+// バックエンドがエラーにする。
+// (`Option[T]` はこの制約から外れた。enum になったため)
 [[native(arch="typescript")]]
 type Vec[T] = {{
   Array<T>
@@ -72,17 +75,31 @@ impl[T] Vec[T] {
     call $sys_vec_len
   }}
 
-  // index指定した位置の値を取得。範囲外なら none。
+  // index指定した位置の値を取得。範囲外なら None。
+  //
+  // Option は enum なので、native から直接は組み立てられない。
+  // 範囲の検査と Option の構築は biwa 側で書き、
+  // native は「範囲内であることが分かっている取り出し」だけを担う。
+  fn get(self, index: Uint) -> Option[T] {
+    if index < self.len() {
+      Some(self.get_unchecked(index))
+    } else {
+      None
+    }
+  }
+
+  // 範囲を検査しない取り出し。範囲外を渡してはならない。
   [[native(arch="typescript")]]
-  fn get(self, index: Uint) -> Option[T] {{
-    return index < self.length ? self[index] : null;
+  fn get_unchecked(self, index: Uint) -> T {{
+    return self[index];
   }}
 
   [[native(arch="wasm")]]
-  fn get(self, index: Uint) -> Option[T] {{
+  fn get_unchecked(self, index: Uint) -> T {{
     local.get 0
     local.get 1
     call $sys_vec_get
+    ref.cast %ret%
   }}
 }
 
@@ -110,23 +127,45 @@ impl[K, V] Map[K, V] {
     call $sys_map_insert
   }}
 
-  // T? ( Option[T] ) のtypescript実装では None は null として扱われる
-  // Map.prototype.get(key)は値がなければundefinedを返すので、nullに変換
-  [[native(arch="typescript")]]
-  fn get(self, key: K) -> Option[V] {{
-    let value = self.get(key);
-    if(value) {
-      return value;
+  // Option は enum なので、Vec と同じく構築は biwa 側で書く。
+  fn get(self, key: K) -> Option[V] {
+    if self.has(key) {
+      Some(self.get_unchecked(key))
     } else {
-      return null;
+      None
     }
+  }
+
+  [[native(arch="typescript")]]
+  fn has(self, key: K) -> Bool {{
+    return self.has(key);
   }}
 
   [[native(arch="wasm")]]
-  fn get(self, key: K) -> Option[V] {{
+  fn has(self, key: K) -> Bool {{
     local.get 0
     local.get 1
     call $sys_map_get
+    ref.is_null
+    i32.eqz
+  }}
+
+  // キーがあることが分かっている取り出し。
+  //
+  // `Map.prototype.get` の戻りは `V | undefined` なので、
+  // キーの存在を先に確かめてある前提で押し込む。
+  [[native(arch="typescript")]]
+  fn get_unchecked(self, key: K) -> V {{
+    // 型引数の名前はマングルされるので、native の中では書けない。
+    return self.get(key) as any;
+  }}
+
+  [[native(arch="wasm")]]
+  fn get_unchecked(self, key: K) -> V {{
+    local.get 0
+    local.get 1
+    call $sys_map_get
+    ref.cast %ret%
   }}
 }
 

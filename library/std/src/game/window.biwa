@@ -4,7 +4,7 @@
 import package::types::string::String;
 import package::game::font::Font;
 import package::game::image::Image;
-import package::types::option::Option;
+import package::option::Option;
 
 struct Window {
   canvas: Canvas,
