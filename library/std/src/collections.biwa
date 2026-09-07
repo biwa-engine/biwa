@@ -1,6 +1,6 @@
-import package::types::option::Option;
-import package::types::option::Option::Some;
-import package::types::option::Option::None;
+import package::option::Option;
+import package::option::Option::Some;
+import package::option::Option::None;
 
 // 可変長の配列。
 //
