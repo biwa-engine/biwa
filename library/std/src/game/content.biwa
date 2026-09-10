@@ -9,6 +9,7 @@ import package::string::String;
 import package::convert::Into;
 import package::game::color::Color;
 import package::game::font::TextWeight;
+import package::game::Game;
 
 // [[lang="content"]]
 enum Content {
@@ -89,7 +90,10 @@ impl String: Into[Content] {
 
 // ---- lang item APIs for compiler ----
 // [[lang="content_push"]]
-// fn content_push[C: Into[Content], T, U](game: Game[T, U], content: C) {}
+fn content_push[C: Into[Content], T, U](game: Game[T, U], content: C) {
+  let c: Content = content.into();
+  game.window.message_window.push_content(c);
+}
 //
 // [[lang="content_flush_and_wait"]]
 // fn content_flush_and_wait[T, U](game: Game[T, U]) {

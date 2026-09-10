@@ -2,9 +2,11 @@
 // 描画の単位はピクセル
 
 import package::string::String;
+import package::option::Option;
 import package::game::font::Font;
 import package::game::image::Image;
-import package::option::Option;
+import package::game::content::Content;
+import package::game::content::ContentSpeed;
 
 struct Window {
   canvas: Canvas,
@@ -32,7 +34,17 @@ impl Canvas {
 struct MessageWindow {}
 
 impl MessageWindow {
-  // fn push(self, text: String, font: Font, size: Uint, speed: Uint);
+  fn push_content(self, content: Content) {
+    match content {
+      Content::Text(text) => {
+        // TODO
+        // self.push_text(text.text, ...);
+      }
+    }
+  }
+  
+  // private
+  // fn push_text(self, text: String, font: Font, size: Uint, speed: ContentSpeed);
   // fn flush(self);
   // fn clear(self);
   
