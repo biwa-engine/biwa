@@ -58,7 +58,8 @@
   (import "biwa:engine" "sys_map_get" (func $sys_map_get (param externref anyref) (result anyref)))
 }}
 
-import package::types::string::String;
+import package::string::String;
+import package::game::window::Size;
 
 // syscall の記述子。中身はエンジンとの規約であり、Biwa 側からは不透明。
 [[lang="syscall"]]
@@ -96,7 +97,7 @@ type Syscall = {{
 // 読み込みは非同期だが、この呼び出しは待たない。
 // 読み込みに失敗しても id は返る (ゲーム側にできることが無いため)。
 [[native(arch="typescript")]]
-fn create_object(
+fn sys_create_object(
   path: String, layer: Uint,
   x: Int, y: Int, w: Int, h: Int, alpha: Int, theta: Int,
 ) -> Uint {{
@@ -106,7 +107,7 @@ fn create_object(
 }}
 
 [[native(arch="wasm")]]
-fn create_object(
+fn sys_create_object(
   path: String, layer: Uint,
   x: Int, y: Int, w: Int, h: Int, alpha: Int, theta: Int,
 ) -> Uint {{
@@ -120,6 +121,33 @@ fn create_object(
   local.get 7
   call $sys_create_object
 }}
+
+struct X {
+  x: Size,
+}
+
+impl X {
+  fn vw(vw: Float) -> Self {
+    Self { x = Size::Vw(vw) }
+  }
+}
+
+struct Y {
+  y: Size,
+}
+
+impl Y {
+  fn vh(vh: Float) -> Self {
+    Self { y = Size::Vh(vh) }
+  }
+}
+
+fn create_object(
+  path: String, layer: Uint,
+  x: Int, y: Int, w: Int, h: Int, alpha: Int, theta: Int,
+) -> Uint {
+  sys_create_object(path, layer, x, y, w, h, alpha, theta)
+}
 
 // `after` ミリ秒後にオブジェクトを消す。
 //

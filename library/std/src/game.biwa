@@ -1,4 +1,4 @@
-import package::types::string::String;
+import package::string::String;
 import package::option::Option;
 import image::Image;
 import image::CanvasObject;

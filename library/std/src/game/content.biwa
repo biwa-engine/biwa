@@ -1,0 +1,122 @@
+// Novel message area に表示される、
+// テキストを始めとした内容物を content と呼称する。
+// 取りうるメディアの形態は以下の通りである:
+// - テキスト
+// - 画像 (将来的に対応)
+// 将来的に拡張される可能性はある。
+
+import package::string::String;
+import package::convert::Into;
+import package::game::color::Color;
+import package::game::font::TextWeight;
+
+// [[lang="content"]]
+enum Content {
+  Text(TextContent),
+}
+
+// 最も標準的な、テキストのcontent
+// The basic text `content`.
+struct TextContent {
+  text: String,
+  speed: ContentSpeedLevel,
+  size: ContentSizeLevel,
+  weight: TextWeight,
+  color: ContentColor,
+}
+
+// 文字(content)の速度
+struct ContentSpeed {
+  // 秒間何文字出るか
+  text_per_sec: Float,
+}
+
+struct ContentSpeedLevel {
+  // 設定された値(ContentSpeed)の何倍か
+  // A multiple of the value configured for `std::game::config::Config.user.content_speed`.
+  //
+  // mul > 0
+  mul: Float,
+}
+
+impl ContentSpeedLevel {
+  fn normal() -> Self {
+    Self { mul = 1.0 }
+  }
+}
+
+struct ContentSizeLevel {
+  // 設定された値の何倍か
+  // テキスト以外のcontentは行の高さが合うように調整される
+  // A multiple of the value configured for `std::game::config::Config.user.content_size`.
+  // Any other media kind content than text will be adjusted to fit the line height.
+  //
+  // mul > 0
+  mul: Float,
+}
+
+impl ContentSizeLevel {
+  fn normal() -> Self {
+    Self { mul = 1.0 }
+  }
+}
+
+enum ContentColor {
+  // 設定された値
+  // The value configured for `std::game::config::Config.dev.default_text_color`.
+  Configured,
+  
+  // 設定した値
+  Value(Color),
+}
+
+// impl[T] T: Into[T] { ... } が可能になったら廃止
+impl Content: Into[Content] {
+  fn into(self) -> Content { self }
+}
+
+impl String: Into[Content] {
+  fn into(self) -> Content {
+    Content::Text(TextContent {
+      text = self,
+      speed = ContentSpeedLevel::normal(),
+      size = ContentSizeLevel::normal(),
+      weight = TextWeight::normal(),
+      color = ContentColor::Configured,
+    })
+  }
+}
+
+// ---- lang item APIs for compiler ----
+// [[lang="content_push"]]
+// fn content_push[C: Into[Content], T, U](game: Game[T, U], content: C) {}
+//
+// [[lang="content_flush_and_wait"]]
+// fn content_flush_and_wait[T, U](game: Game[T, U]) {
+//   game.window.message_window.flush();
+//   game.window.wait_event();
+// }
+
+// ---- user APIs ----
+// scene の埋め込み式記法において、
+// 平易な表現を可能にする。
+// 
+// These APIs provide us to simple and easy-to-use expression
+// in scene embeded expression form.
+// 
+// ## Example:
+// 
+// ```biwa
+// scene foo(g: MyGame) -> MyGame {{
+//     Hello! 私の名前は$blue(bold(italic("琵琶")))です。>>
+// }}
+// ```
+// 
+// fn red[C: Into[Content]](content: C) -> Content {
+//   match content {
+//     Content::Text(text) => {
+//       text.color = ContentColor::Value(Color::red());
+//       Content::Text(text)
+//     }
+//   }
+// }

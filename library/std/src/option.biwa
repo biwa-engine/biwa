@@ -27,7 +27,7 @@ impl[T] Option[T] {
     }
   }
 
-  // 中身を取り出す。none なら失敗する。
+  // 中身を取り出す。None なら失敗する。
   fn unwrap(self) -> T {
     match self {
       Option::Some(value) => value,

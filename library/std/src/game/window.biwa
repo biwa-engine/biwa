@@ -1,7 +1,7 @@
 // もっともプリミティブなAPIを提供する
 // 描画の単位はピクセル
 
-import package::types::string::String;
+import package::string::String;
 import package::game::font::Font;
 import package::game::image::Image;
 import package::option::Option;
@@ -19,100 +19,48 @@ impl Window {
     }
   }
   
-  [[native(arch="typescript")]]
-  fn width(self) -> Uint {{
-    // TODO:
-    return 0;
-  }}
-
-  [[native(arch="wasm")]]
-  fn width(self) -> Uint {{
-    ;; TODO:
-    i32.const 0
-  }}
-
-  [[native(arch="typescript")]]
-  fn height(self) -> Uint {{
-    // TODO:
-    return 0;
-  }}
-
-  [[native(arch="wasm")]]
-  fn height(self) -> Uint {{
-    ;; TODO:
-    i32.const 0
-  }}
+  // fn width(self) -> Uint;
+  // fn height(self) -> Uint;
 }
 
 struct Canvas {}
 
 impl Canvas {
-  [[native(arch="typescript")]]
-  fn create_image(self, image: Image, x: Int, y: Int, width: Option[Uint], height: Option[Uint]) {{
-    console.log("TODO");
-  }}
-
-  [[native(arch="wasm")]]
-  fn create_image(self, image: Image, x: Int, y: Int, width: Option[Uint], height: Option[Uint]) {{
-    ;; TODO:
-  }}
+  // fn create_image(self, image: Image, x: Int, y: Int, width: Option[Uint], height: Option[Uint]);
 }
 
 struct MessageWindow {}
 
 impl MessageWindow {
-  [[native(arch="typescript")]]
-  fn append(self, text: String, font: Font, size: Uint, speed: Uint) {{
-    console.log("TODO");
-  }}
-
-  [[native(arch="wasm")]]
-  fn append(self, text: String, font: Font, size: Uint, speed: Uint) {{
-    ;; TODO:
-  }}
+  // fn push(self, text: String, font: Font, size: Uint, speed: Uint);
+  // fn flush(self);
+  // fn clear(self);
   
-  [[native(arch="typescript")]]
-  fn clear(self) {{
-    console.log("TODO");
-  }}
-
-  [[native(arch="wasm")]]
-  fn clear(self) {{
-    ;; TODO:
-  }}
-  
-  [[native(arch="typescript")]]
-  fn flush(self) {{
-    console.log("TODO");
-  }}
-
-  [[native(arch="wasm")]]
-  fn flush(self) {{
-    ;; TODO:
-  }}
-  
-  [[native(arch="typescript")]]
-  fn set_talker_name(self, name: String) {{
-    console.log("TODO");
-  }}
-
-  [[native(arch="wasm")]]
-  fn set_talker_name(self, name: String) {{
-    ;; TODO:
-  }}
-  
-  [[native(arch="typescript")]]
-  fn set_talker_image(self, image: Image) {{
-    console.log("TODO");
-  }}
-
-  [[native(arch="wasm")]]
-  fn set_talker_image(self, image: Image) {{
-    ;; TODO:
-  }}
+  // fn set_talker_name(self, name: String);
+  // fn set_talker_image(self, image: Image);
 }
 
 struct Position {
   x: Int,
   y: Int,
+}
+
+enum Size {
+  // All of these `Float` value must be positive.
+  Vw(Float), // 100.0 means 100 % of viewport width.
+  Vh(Float), // 100.0 means 100 % of viewport height.
+  
+  // vw, vh との相互変換が難しいため保留
+  // エンジン側に処理させる必要があるかもしれない
+  // Px(Float),
+}
+
+impl Size {
+  fn mul(self, mul: Float) -> Self {
+    match self {
+      Size::Vw(vw) => Size::Vw(vw * mul),
+      Size::Vh(vh) => Size::Vh(vh * mul),
+      // Size::Px(px) => Size::Px(px * mul),
+    }
+  }
 }
