@@ -861,19 +861,8 @@ HIR から単相化する仕組みが無いので新規に作ることになる�
 
 ### 第 2 段
 
-| #   | 段                              | 内容                                                                                                                             |
-| --- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | `biwac_lexer`                   | `MarkAndAnd`                                                                                                                     |
-| 2   | `biwac_span`                    | `TraitAssocDefId`、`DefIdKind::TraitAssoc`                                                                                       |
-| 3   | `biwac_ast` / `biwac_parser`    | `GenArgDeclItem::bounds`                                                                                                         |
-| 4   | `biwac_hir`                     | `TraitCond` / `TraitCondList`、`Hir::trait_assoc_owners`、`Callee::TraitAssocFn`、`MethodTarget::Trait`、`FnDef::call_witnesses` |
-| 5   | `biwac_trait_solver`            | `Gen` / `LocGen` の枝、`Solved::Deferred`                                                                                        |
-| 6   | `biwac_name_resolver`           | 制限の解決、`T::foo()` のフォールバック                                                                                          |
-| 7   | `biwac_type_inferrer`           | 呼び出し位置での制限の検査、`ImplSource` の記録                                                                                  |
-| 8   | `biwac_mir` / `biwac_mir_build` | `Callee::TraitAssoc`、codec、`validate`                                                                                          |
-| 9   | `biwac_mir_transform`           | 単相化で実装を決める                                                                                                             |
-| 10  | `biwac_generator` (TS)          | witness 型 / witness 定数 / 引数渡し                                                                                             |
-| 11  | 試験                            | 両ターゲットで同じ値が出ることを確認する                                                                                         |
+**「第 2 段の実装計画」を参照。**
+第 1 段を実装したうえで調べ直し、方針を 7 点訂正してある。
 
 ## 実装して変わったところ (第 1 段)
 
@@ -1045,6 +1034,489 @@ impl Shade: Level { .. }                  // どちらも自分
 バックエンドには一切手を入れていない (マングリングを除く)。
 trait impl の中の関数は、名前解決の見え方が違うだけで、
 HIR から先は今までの関連関数とまったく同じである。
+
+## 第 2 段の実装計画
+
+第 1 段を実装したうえでコードを当たり直し、方針を具体化したもの。
+**調査の結果、方針を訂正した点が 7 つある**ので先に挙げる。
+
+### 訂正 1 — 制限の検査は `call_unify` の直後にはできない
+
+方針にはこう書いてあった。
+
+> これは `call_unify` で `LocalGenDefId → Ty` の割り当てが決まった直後に行える。
+
+これは誤りである。`FnTyCtx::record_call_genargs` は割り当てをその場で記録するが、
+値はまだ型変数のことがある。確定するのは関数本体を推論し終えたあと、
+`infer_fn_body` の末尾で `resolve_ty` を通した時点である。
+
+```rust
+let call_genargs = fctx.call_genargs.iter()
+    .map(|(id, assigns)| (*id, assigns.iter().map(|(l, t)| (*l, fctx.resolve_ty(t))).collect()))
+    .collect();
+```
+
+呼び出し位置で検査すると、あとの文で決まる型引数を「未確定」と誤って弾く。
+
+```biwa
+let v = Vec::new();   // ここでは T が未確定
+v.push(x);            // ここで初めて T := X が決まる
+```
+
+そこで **obligation を溜めて、本体を推論し終えてから解く**。
+rustc の fulfillment と同じ形である。
+
+```rust
+/// 呼び出し位置で積まれた「この型がこの trait を満たすこと」という宿題。
+struct Obligation {
+    expr_id: Option<ExprId>,
+    /// 呼び先のジェネリック引数と、そこに割り当てられた型。
+    /// 本体を推論し終えてから `resolve_ty` を通す。
+    param: LocalGenDefId,
+    ty: Ty,
+    cond: TraitCond,
+    /// 呼び先の制限の並びでの位置。witness の引数の順序に対応する。
+    slot: usize,
+    span: Span,
+}
+```
+
+`FnTyCtx` に `obligations: Vec<Obligation>` を持たせ、
+`infer_fn_body` の末尾で解いて `call_witnesses` を作る。
+
+### 訂正 2 — ジェネリック引数の宣言を struct にする
+
+`FnSignature::genargs` も `FnDef::impl_genargs` も
+`Vec<(Ident, LocalGenDefId)>` というタプルの列である。
+ここに制限を足すには、名前と id と制限を持つ struct に変えるのが素直である。
+
+```rust
+/// ジェネリック引数の**宣言**。
+///
+/// `Vec<(Ident, LocalGenDefId)>` を置き換える。
+/// 名前・id・制限が 1 か所にまとまるので、
+/// 制限を運ぶために別の側テーブルを持たずに済む。
+pub struct GenArgDef {
+    pub name: Ident,
+    pub def_id: LocalGenDefId,
+    /// この引数に付いた制限。無ければ空。
+    pub bounds: Vec<TraitCond>,
+}
+```
+
+`...Def` は HIR で「宣言」を表す既存の呼び方
+(`StructDef` / `VariantDef` / `TraitItemDef`) に合わせてある。
+
+タプルを分解している箇所はすべて `.name` / `.def_id` に直す。
+`TraitCond` には span を足す (制限が満たされないときの下線に要る)。
+`TraitCondList` は使わないので削除する。
+
+### 訂正 3 — `TraitEnv` に問い合わせを戻す
+
+第 1 段では `TraitEnv` を 2 つのメソッドに削ったが、第 2 段では戻す必要がある。
+
+```rust
+pub trait TraitEnv {
+    fn trait_impls_of(&self, ty: TyDefId) -> Vec<TyTraitImpl>;
+    fn traits_in_scope(&self) -> &[TraitDefId];
+
+    /// この trait がこの名前の項目を宣言していれば、その id。
+    /// `T::guee()` の解決に要る。
+    fn trait_item(&self, trait_def_id: TraitDefId, name: InternedIdent)
+        -> Option<TraitAssocDefId>;
+
+    /// ジェネリック引数に付いた制限。
+    fn bounds_of_local_gen(&self, def_id: LocalGenDefId) -> Vec<TraitCond>;
+}
+```
+
+`bounds_of_gen` (型定義側の `GenDefId`) は訂正 4 のとおり要らない。
+
+### 訂正 4 — 型定義のジェネリクスへの制限は入れない
+
+`struct Foo[T: A] { .. }` の制限は、**使い道がディスパッチではなく検査だけ**である。
+struct の本体にコードは無く、`impl[T] Foo[T]` の中の `T` は
+型定義の `GenDefId` ではなく impl ブロックの `LocalGenDefId` だからである。
+
+効かせるには「型が現れるすべての位置で制限を検査する」
+well-formedness のパスが要る。第 2 段の目的 (呼び先の決定) とは別の仕事なので入れない。
+
+構文としてはすべてのジェネリック引数宣言で同じ文法を受け、
+型定義に書かれたものは名前解決が
+`TraitBoundOnTypeDefUnsupported` で弾く。黙って無視するより良い。
+
+### 訂正 5 — `Callee::TraitAssoc` はジェネリック引数も運ぶ
+
+方針の形では足りない。trait の項目が自分のジェネリック引数を持てるからである。
+
+```rust
+Callee::TraitAssoc {
+    assoc: TraitAssocDefId,
+    /// 呼び出し位置に書かれた型。単相化で具体になる。
+    self_ty: Ty,
+    /// **trait が宣言した項目**のジェネリック引数への割り当て。
+    genargs: GenArgs,
+}
+```
+
+単相化が実装を決めたあと、この `genargs` を **実装側の** ジェネリック引数に
+移し替える必要がある。対応は**宣言順の位置**で取る
+(シグニチャの一致検査が同じ形であることを保証している)。
+
+実装側にはさらに impl ブロックのジェネリック引数が前に付く
+(`impl[T] Vec[T]: Iter[T]` の `T`)。
+これは impl の対象型 (`Vec[T]`) を具体のレシーバ型 (`Vec[Int]`) と
+突き合わせて決める。rustc の `Instance::resolve` と同じ手順である。
+
+### 訂正 6 — `.biwameta` は版 7 → 8
+
+`DiskGenArg` に制限の一覧を足す。
+
+```rust
+pub struct DiskGenArg {
+    pub name: DiskStringOffset,
+    pub name_span: DiskSpan,
+    /// この引数に付いた制限。trait への参照は型と同じく `DiskTy` で運ぶ。
+    pub bounds: DiskVec<DiskTy>,
+}
+```
+
+`DiskVec` は可変長の要素を扱えるので問題ない
+(`DiskGenArg::BYTE_SIZE` は固定長を前提にした定数なので消す。
+どこからも使われていないことは確認済み)。
+
+`DiskFnData::genargs` は既に「impl ブロックのぶん + 関数自身のぶん」を
+この順で並べているので、そこに乗せれば `genarg_bounds` を復元できる。
+
+### 訂正 7 — TypeScript は第 2 段では対応しない
+
+TypeScript は tier 2 である。
+ジェネリクスを保ったまま 1 回だけ出力する設計なので、
+実行時に型引数が残らず、`T::guee()` の呼び先を型からは決められない。
+対応するには witness (辞書) を引数で渡す仕組みが要る。
+
+**今回は入れない。** 代わりに、TypeScript ターゲットで
+「呼び先が単相化まで決まらない呼び出し」に出会ったら、
+codegen の前にはっきりしたエラーで止める。
+
+これに伴い、方針にあった `FnDef::call_witnesses` と `ImplSource` は**要らなくなる**。
+wasm は単相化のときに `subst` から `self_ty` を具体化して impl を引き直せるので、
+呼び出し位置に根拠を記録しておく必要が無い。
+
+検査は driver で行う。MIR は TypeScript でも組み立てているので、
+`Callee::TraitAssoc` を含む本体があればそこで弾ける。
+MIR の terminator は span を持つので、使用箇所を指せる。
+
+### `T::guee()` のパス解決
+
+いまの `FnResolveCtx::resolve_path` / `ImplResolveCtx::resolve_path` は、
+ジェネリック引数を `segments.len() == 1` のときしか見ていない。
+
+```rust
+if path.abs_header.is_none()
+    && path.segments.len() == 1
+    && let Some(def_id) = self.genargs.get(&path.segments[0].ident.id)
+```
+
+2 セグメント目がある場合を足す。
+
+1. セグメント 0 が制限つきのジェネリック引数なら `DefIdKind::LocalGen` を書き込む
+2. セグメント 1 を、その引数の制限にある trait から探す (`TraitEnv::trait_item`)
+3. ちょうど 1 つ見つかれば `DefIdKind::TraitAssoc(TraitAssocDefId)`
+4. 0 個なら `TraitAssocNotFound`、2 つ以上なら `AmbiguousTraitAssoc`
+
+`DefIdKind` に `TraitAssoc(TraitAssocDefId)` が増える。
+`DefIdKind` を触っている箇所は名前解決の 10 ファイルに閉じているので、
+第 1 段で `Trait` を足したときと同じ手順で追える。
+
+### メソッド解決 (`t.gyao()` で `t: T`)
+
+`TyCtx::get_method_def_id` の `TyKind::Gen` / `LocGen` の枝を、
+いまの `NotFound` から「その引数の制限にある trait を探す」に変える。
+
+制限は **いま推論している関数のシグニチャ** (`genarg_bounds`) から引く。
+`FnTyCtx` に持たせる。
+
+戻り値が `ValDefId` では足りなくなるので、`MethodCall` の解決先を変える。
+
+```rust
+pub enum MethodTarget {
+    Direct(ValDefId),
+    Trait { assoc: TraitAssocDefId, self_ty: Ty },
+}
+
+pub struct MethodCall {
+    ...
+    pub target: OnceCell<MethodTarget>,   // いまの def_id: OnceCell<ValDefId> を置き換える
+}
+```
+
+### 呼び先のシグニチャ
+
+`T::guee(aaa)` の型付けには `guee` の宣言のシグニチャが要る。
+`TraitDef::items[i].signature` は `Self` を `TyKind::Gen(self_gen)` として持っているので、
+
+- `self_gen := TyKind::LocGen(T)`
+- trait のジェネリック引数 := 制限に書かれた型 (`T: Conv[Int]` なら `[Int]`)
+
+を `Ty::embody_by_gen_ty_id` で置き換えれば、あとは普通の呼び出しと同じ経路に乗る。
+
+### 制限の照合
+
+obligation を解くとき、割り当てられた型 `X` で場合分けする。
+
+| `X`                                            | 結果                                                             |
+| ---------------------------------------------- | ---------------------------------------------------------------- |
+| 具体の型                                       | `solve` して `ImplSource::Impl`                                  |
+| `LocGen(P)` (呼び出し元自身のジェネリック引数) | `P` の制限に同じものがあれば `ImplSource::Param`、無ければエラー |
+| `Infer` のまま                                 | `InsufficientContext`                                            |
+
+`LocGen` の照合は、制限のジェネリック引数を呼び出し位置の割り当てで置換してから
+構造的に比較する。blanket impl を禁じてあるので、
+部分的に重なる制限どうしを解く必要は無い。
+
+### wasm の出力
+
+単相化で潰すので、出てくるのは普通の直接呼び出しである。実行時のコストはゼロ。
+
+`monomorphize.rs` に `resolve_trait_assoc(assoc, concrete_self_ty) -> (ValDefId, GenArgs)` を足す。
+trait impl の表は自パッケージが `hir.tys[..].trait_impls`、
+依存が `DepMetadata::trait_impls_for` で、どちらも既にある。
+**impl は対象の型のパッケージにあるとは限らない**ので、依存すべてを見る
+(第 1 段の `TraitEnv` と同じ理由)。
+
+## 第 2 段の実装の順序
+
+| #   | 段                              | 内容                                                                                          |
+| --- | ------------------------------- | --------------------------------------------------------------------------------------------- |
+| 1   | `biwac_lexer`                   | `MarkAndAnd` (`&&`)。2 文字表に `('&', '&')` を足す                                           |
+| 2   | `biwac_span`                    | `DefIdKind::TraitAssoc(TraitAssocDefId)`                                                      |
+| 3   | `biwac_ast` / `biwac_parser`    | `GenArgDeclItem::bounds: Vec<TypRepr>`、`opt_consume_generic_argument_declaration` の書き直し |
+| 4   | `biwac_hir`                     | `GenArgDef` (タプルの置き換え)、`TraitCond::span`、`Callee::TraitAssoc`、`MethodTarget`       |
+| 5   | `biwac_name_resolver`           | 制限の解決、型定義での拒否、`T::foo()` のパス解決                                             |
+| 6   | `biwac_trait_solver`            | `TraitEnv` の拡張、`Solved::Deferred`、制限どうしの照合                                       |
+| 7   | `biwac_type_inferrer`           | obligation の積み方と解き方、メソッド解決の `Deferred`、trait 項目のシグニチャ具体化          |
+| 8   | `biwac_dependency_metadata`     | `DiskGenArg::bounds`、版 8                                                                    |
+| 9   | `biwac_mir` / `biwac_mir_build` | `Callee::TraitAssoc`、codec、`validate`                                                       |
+| 10  | `biwac_mir_transform`           | `resolve_trait_assoc`、`subst_terminator` の腕                                                |
+| 11  | `biwac_driver`                  | TypeScript ターゲットでの拒否                                                                 |
+| 12  | 試験                            | `assets/tests` に 3 形 (具体、自分の制限の転送、ジェネリックな impl) を足し、wasm で値を確認  |
+
+1〜4 は機械的で、5〜7 が設計の中心である。
+
+### 第 2 段でもやらないこと
+
+- 既定実装、関連型、スーパートレイト、blanket impl
+- **TypeScript ターゲット** (訂正 7)。第 3 段で witness 渡しを入れる
+- 型定義のジェネリクスへの制限 (訂正 4)。第 3 段で入れる
+- `[T as Gyao]::guee()` の曖昧さ解消構文
+- 制限の推移的な導出 (`T: A` かつ `impl[U: A] U: B` から `T: B` を導く)。
+  blanket impl を入れないので、そもそも起きない
+- ノベル `#` コード行での trait 関連の構文
+
+## 第 2 段を実装して変わったところ
+
+### 訂正 2 は `GenArgDef` に置き換わった
+
+側テーブルではなく、`Vec<(Ident, LocalGenDefId)>` を struct の列にした。
+あわせて `FnDef::impl_genargs` / `NativeFnDef::impl_genargs` を
+`FnSignature::impl_genargs` に移した。
+
+呼び出し位置から見えるのはシグニチャだけなので、
+impl ブロックの制限を検査するにはそこから辿れる必要がある。
+`.biwameta` が両方を 1 本に並べて書いていたのと同じ形に、HIR も揃った。
+
+```rust
+impl FnSignature {
+    /// この関数から見えるジェネリック引数の宣言。impl ブロックのぶんが先。
+    pub fn all_genargs(&self) -> impl Iterator<Item = &GenArgDef>;
+}
+```
+
+### `fresh_loc_gen_ty` が呼び出し元のジェネリック引数を壊していた
+
+第 2 段の試験で最初に踏んだのはこれで、**trait とは無関係の既存のバグ**である。
+
+```biwa
+fn forwarded[V: Level](v: V) -> Int {
+  Wrapper::wrap(v).score()
+}
+```
+
+`Wrapper::wrap(v)` の戻り値は `Wrapper[V]` になる。
+呼び出しの後処理で走る `fresh_loc_gen_ty` は
+「戻り値にしか現れないジェネリック引数に型変数を割り当てる」ものだが、
+**呼び出し元自身の `V` まで型変数に置き換えていた**。
+
+結果、
+
+- `V` が型変数に化けて、以降どこからも決まらず `InsufficientContext` になる
+- `call_genargs` に「呼び先が宣言していない引数」が記録され、
+  `.biwamir` の書き出しで `is not declared by symbol` で落ちる
+
+`fresh_loc_gen_ty` に「呼び先が宣言したもの」の許可リストを渡すようにした。
+`impl[T] Foo[T]` を呼ぶ側がジェネリックでなければ起きないので、
+これまで踏まれていなかった。
+
+あわせて、使われていなかった `fresh_gen_ty` を削除した。
+
+### trait 項目の呼び出しは専用の経路にした
+
+`Self` を `T` に置き換えたシグニチャには、
+**呼び出し元自身のジェネリック引数**が混ざる。
+それを呼び先のものと取り違えると同じ壊れ方をするので、
+
+- 恒等の割り当てを先に置いて呼び出し元の引数を固定する
+- 記録するのは呼び先が宣言したぶんだけに絞る
+
+を行う `FnTyCtx::infer_trait_assoc_call` を用意し、
+`T::guee(..)` と `t.gyao()` の両方をそこに通した。
+
+### MIR のテキスト形式
+
+`call <場所> = t <シンボル> <型索引> ga<n> <被演算子>... -> <bb>`
+
+型の索引は接頭辞を付けずにそのまま書く (既存の型参照と同じ)。
+
+### `.biwameta` の版は 8
+
+`DiskGenArg` に制限の一覧が増えた。固定長ではなくなったので
+`BYTE_SIZE` は消した。
+
+## 第 2 段の実装後の状態
+
+動くもの。
+
+```biwa
+trait Level {
+  fn level2(self) -> Int;
+  fn from_level(n: Int) -> Self;
+}
+
+impl[T: Level] Wrapper[T] {
+  fn score(self) -> Int { self.inner.level2() }        // レシーバがジェネリック引数
+  fn rebuilt(self, n: Int) -> Int { T::from_level(n).level2() }  // 引数越しの関連関数
+}
+
+fn score_of[U: Level](v: U) -> Int { v.level2() }
+
+fn forwarded[V: Level](v: V) -> Int {
+  score_of(v) + Wrapper::wrap(v).score()               // 自分の制限を転送する
+}
+```
+
+- `fn` と `impl` のジェネリック引数への制限 (`T: A && B[Int]`)
+- 制限越しの関連関数 (`T::guee()`) とメソッド (`t.gyao()`)
+- 呼び出し位置での制限の検査 (本体を推論し終えてから解く)
+- 単相化での実装の決定 (impl ブロックの引数は対象型の突き合わせで決める)
+- パッケージを跨いだ制限 (`.biwameta` 版 8)
+
+検証。
+
+- コンパイラのテスト全通過、`cargo fmt` 済み
+- `assets/tests` に 4 形 (自パッケージの型、外部パッケージの型、
+  ジェネリックな impl、自分の制限の転送) を足し、
+  wasm で 1414 を返すことを Node で確認
+- 生成物は普通の直接呼び出しになっている (実行時のコストはゼロ)
+- 診断 4 種を確認 (制限を満たさない / 制限に無い名前 /
+  制限の無いジェネリクス / 型定義への制限)
+
+**TypeScript ターゲットは未対応。**
+制限つきの呼び出しがあるパッケージは、codegen の手前で driver が弾く。
+弾くのはパッケージ単位なので、
+**std が制限を使い始めると TypeScript の出力が丸ごと止まる**ことに注意。
+
+## 第 3 段 (これから)
+
+第 2 段で見送ったもののうち、方針が定まっているものをここに残す。
+
+### TypeScript の witness 渡し
+
+TypeScript はジェネリクスを保ったまま 1 回だけ出力するので、
+実行時に型引数が残らない。`T::guee()` の呼び先を決めるには、
+制限ごとに witness (辞書) を引数で渡す。GHC の辞書渡しと同じである。
+
+```ts
+// trait ごとに 1 つ、witness の型
+type _ZN3pkg4GyaoE$w<Self> = {
+  gyao: (self: Self) => Gyoe;
+  guee: (aaa: Aaa) => Self;
+};
+
+// trait impl ごとに 1 つ、witness の値
+//
+// 型注釈は付けない。ジェネリックな impl (`impl[T] Vec[T]: Iter[T]`) では
+// 書き下せる型にならないためで、呼び出し位置の引数の型から TS に合わせてもらう。
+const _ZN3pkg5NyoeeE$for$_ZN3pkg4GyaoE = {
+  gyao: _ZN3pkg5NyoeeER3pkg4Gyao4gyaoE,
+  guee: _ZN3pkg5NyoeeER3pkg4Gyao4gueeE,
+};
+
+// 制限のある関数は witness を先頭で受ける
+function _ZN3pkg3Bbb3newE<T>(__w0: _ZN3pkg4GyaoE$w<T>, aaa: Aaa): Bbb<T> {
+  const t = __w0.guee(aaa);
+  const g = __w0.gyao(t);
+}
+
+// 呼び出し側は「どの impl が満たしたか」から決めて渡す
+_ZN3pkg3Bbb3newE(_ZN3pkg5NyoeeE$for$_ZN3pkg4GyaoE, aaa);
+// 自分の制限で満たしたなら、受け取った witness をそのまま前に渡す
+_ZN3pkg3Bbb3newE(__w0, aaa);
+```
+
+witness の引数位置は次の順で数える。
+
+1. impl ブロックのジェネリック引数 (宣言順)
+2. 関数自身のジェネリック引数 (宣言順)
+
+それぞれの中では制限の宣言順。`__w0`, `__w1`, ... と並べる。
+定義側と呼び出し側で同じ規則を使う。
+
+「どの impl が満たしたか」は型推論が記録する必要がある。
+第 2 段では要らなかったので入れていない。
+
+```rust
+pub enum ImplSource {
+    /// 具体の impl が満たした。
+    Impl { ty: TyDefId, trait_def_id: TraitDefId },
+    /// 呼び出し元自身の制限が満たした (自分の witness をそのまま渡す)。
+    Param { param: LocalGenDefId, slot: usize },
+}
+
+pub struct FnDef {
+    ...
+    /// 呼び出し式ごとの、呼び先の各制限を満たした根拠。
+    /// **TypeScript のためだけにある** (wasm は単相化で引き直せる)。
+    pub call_witnesses: HashMap<ExprId, Vec<ImplSource>>,
+}
+```
+
+第 2 段の obligation は解いた時点でこの情報を持っているので、
+記録するフィールドを足して埋めるだけでよい。
+
+TS のジェネリクスの推論が渋ったときの逃げ道として、
+**witness の実引数にだけ** `as any` を付ける手がある
+(第 1 段で enum の payload に対して使ったのと同じ、局所的な緩め方)。
+
+### 型定義のジェネリクスへの制限
+
+`struct Foo[T: A] { .. }` / `enum` / `type` のジェネリック引数への制限。
+
+第 2 段で入れなかったのは、**使い道がディスパッチではなく検査だけ**だからである
+(訂正 4)。struct の本体にコードは無く、`impl[T] Foo[T]` の中の `T` は
+型定義の `GenDefId` ではなく impl ブロックの `LocalGenDefId` である。
+
+効かせるには「型が現れるすべての位置で制限を検査する」
+well-formedness のパスが要る。
+
+- `TypRepr` を `Ty` に落とすすべての位置で、
+  ジェネリック引数への割り当てが制限を満たすかを見る
+- 型推論の中で型が具体化された時点でも見る必要がある
+  (`Foo[?1]` の `?1` があとで決まる)。第 2 段の obligation と同じ仕組みに乗せられる
+- `TraitEnv::bounds_of_gen(GenDefId)` を足す
+
+第 2 段では構文だけ受けて、名前解決が
+`TraitBoundOnTypeDefUnsupported` で弾いている。
 
 ## 落とし穴
 
