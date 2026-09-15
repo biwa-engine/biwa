@@ -26,9 +26,10 @@ await renderer.init(WIDTH, HEIGHT);
 renderer.layers.defineDom(MESSAGE_LAYER_ID, 20);
 
 const components = new ComponentRegistry();
+const messageBox = new TextBox(0, 460, WIDTH, 260);
 components.register(
   MESSAGE_BOX_ID,
-  new TextBox(0, 460, WIDTH, 260),
+  messageBox,
   renderer.layers.dom(MESSAGE_LAYER_ID),
 );
 
@@ -38,6 +39,9 @@ const objects = new CanvasObjects(renderer.layers, WIDTH, HEIGHT);
 // ポーズ・オート・スキップを 1 箇所の時間操作で効かせるためでもある。
 renderer.app.ticker.add((ticker) => {
   objects.update(ticker.deltaMS);
+  // 文字送りも同じ時計で進める。倍率を `objects` から借りるのは、
+  // ポーズ・オート・スキップが 1 箇所の時間操作で効くようにするためである。
+  messageBox.update(ticker.deltaMS * objects.timeScale);
 });
 
 // 以降、syscall の実装はこのコンテキストを通してエンジンを触る。

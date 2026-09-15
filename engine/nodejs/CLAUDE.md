@@ -30,11 +30,21 @@
     また、コンパイラが `yield` を置くのは novel statement の展開先だけなので、
     **任意の呼び出しを中断させることは今できない**
     (`await_transitions` / `sleep` が wasm 専用なのはこのため)。
+- Message Window に出るものは `src/components/TextBox.ts` が持つ。
+  規約と設計は `docs/content-api.md`。
+  - **エンジンは設定を持たない。** 速度・大きさ・色は `Game` の `Config` にあり、
+    std が絶対値に潰してから syscall で渡す。エンジン側に既定値を置かないこと。
+  - **エンジンは自分の判断で枠をクリアしない。** `sys_content_clear` が来たときだけ消す。
+    いつ消えるかを決めるのは std である (「待つが消さない」API を足すときに
+    変更がエンジンまで波及しないようにするため)。
+  - 文字送りの途中の文字は `visibility: hidden` で隠す。`textContent` を
+    伸ばす形にすると折り返しが変わって行がずれる。
 - canvas に置くものは `src/engine/canvas/CanvasObjects.ts` が持つ。
   biwa 側のパラメータを正とし、PixiJS へは毎フレーム射影する
   (座標系も単位も両者で違う: 中央原点・y は上が正・alpha は 0-255・theta は度)。
   規約と設計は `docs/media-object-model.md`。
-  - **Ticker に登録するコールバックを増やさないこと。** `main.ts` の 1 つだけである。
+  - **Ticker に登録するコールバックを増やさないこと。** `main.ts` の 1 つだけである
+    (`CanvasObjects` も `TextBox` もそこから駆動されている)。
     オブジェクトごとに生やすとリークするし、
     ポーズ・オート・スキップが 1 箇所で効かなくなる。
   - 時間は `performance.now()` ではなくエンジン時計 (Ticker の差分の累積) で測る。

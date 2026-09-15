@@ -213,10 +213,29 @@ src/
     LayerManager.ts     # canvas / DOM レイヤーの生成・参照管理
   components/
     ComponentRegistry.ts
-    TextBox.ts          # メッセージウィンドウ
+    TextBox.ts          # メッセージウィンドウ。断片の列と文字送り。Ticker で回る
   game/
     entry.ts            # `biwa dev` が生成して上書きする (リポジトリのものはプレースホルダ)
 ```
+
+## Message Window と Content API
+
+scene の生テキストと `$` の埋め込み式は、std の `Content` を経て
+`sys_content_push_text` としてエンジンに届く。
+設計と決めごとは [`docs/content-api.md`](../../docs/content-api.md) にある。
+
+- 届く値は**すべて解決済みの絶対値**である。速度・大きさ・色の設定は
+  `Game` が持ち、std が潰してから渡す。**エンジンは設定を知らない**
+- `push` は積むだけで何も起きない。`flush` で初めて文字送りが始まる
+- **枠をクリアするのはエンジンの判断ではない。** `sys_content_clear` が来たときだけ消す。
+  いまは std の `content_flush_and_wait()` がクリック待ちから戻った直後に呼ぶ
+- 断片は最初から全文を DOM に入れ、まだ出ていない分を `visibility: hidden` で隠す。
+  `textContent` を伸ばす形にすると、折り返しが変わって既に出ている行までずれる
+- クリックは**進行中のものをまず畳む**。文字送りの途中なら残りを全部出し、
+  sync 印の演出が走っていれば終端へ飛ばす。両方を 1 回のクリックで畳むので、
+  テキストが進むのは次のクリックである
+- 文字送りは `main.ts` の唯一の Ticker コールバックから駆動する。
+  倍率は `CanvasObjects.timeScale` を借りている
 
 ## canvas オブジェクトと遷移
 

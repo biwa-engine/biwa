@@ -71,7 +71,7 @@ impl DeveloperConfig {
   fn default() -> Self {
     Self {
       mode = WindowMode::Both,
-      default_content_speed = ContentSpeed { text_per_sec = 5.0 },
+      default_content_speed = ContentSpeed { text_per_sec = 30.0 },
       default_content_size = Size::Vh(2.0),
       default_text_color = Color::white(),
     }

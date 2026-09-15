@@ -55,18 +55,26 @@ export function clearContent(): void {
  * syscall `sys_wait` の実装。Promise を返すので kernel はこれを await し、
  * 解決するまで scene を再開しない (= VM は止まったまま)。
  *
- * **進行中の sync 印の演出があれば、クリックはまずそれを完了させる。**
+ * **進行中のものがあれば、クリックはまずそれを完了させる。**
+ * 文字送りの途中なら残りを全部出し、sync 印の演出が走っていれば終端へ飛ばす。
  * テキストを進めるにはもう一度クリックが要る。
  * 独立に走らせている演出 (背景のパン、常時のゆらぎ) はこれに巻き込まれない。
  *
- * TODO(段 4): 文字送り中のクリックは、まず送りを最後まで飛ばす。
+ * 2 つを 1 回のクリックで畳むのは、両方が走っているときに
+ * 3 回クリックさせないためである。利用者から見た規則は
+ * 「進行中のものがあれば 1 回目で畳み、次で進む」で一貫する。
  */
 export function waitForClick(): Promise<void> {
-  const { host, objects } = engine();
+  const { host, components, messageBoxId, objects } = engine();
+  const box = components.getTextBox(messageBoxId);
 
   return new Promise((resolve) => {
     const onClick = (): void => {
-      if (objects.skipSync()) return;
+      // 短絡させない。どちらも必ず試す。
+      const skippedText = box.skip();
+      const skippedSync = objects.skipSync();
+      if (skippedText || skippedSync) return;
+
       host.removeEventListener("click", onClick);
       resolve();
     };
