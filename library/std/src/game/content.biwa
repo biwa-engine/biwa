@@ -8,10 +8,13 @@
 import package::string::String;
 import package::convert::Into;
 import package::game::color::Color;
+import package::game::config::Config;
 import package::game::font::TextWeight;
+import package::game::window::Size;
+import package::game::base_engine::int_to_string;
+import package::game::base_engine::float_to_string;
 import package::game::Game;
 
-// [[lang="content"]]
 enum Content {
   Text(TextContent),
 }
@@ -24,6 +27,19 @@ struct TextContent {
   size: ContentSizeLevel,
   weight: TextWeight,
   color: ContentColor,
+}
+
+impl TextContent {
+  // 装飾をいっさい付けないテキスト。すべて設定どおりに出る。
+  fn plain(text: String) -> Self {
+    Self {
+      text = text,
+      speed = ContentSpeedLevel::normal(),
+      size = ContentSizeLevel::normal(),
+      weight = TextWeight::normal(),
+      color = ContentColor::Configured,
+    }
+  }
 }
 
 // 文字(content)の速度
@@ -78,13 +94,24 @@ impl Content: Into[Content] {
 
 impl String: Into[Content] {
   fn into(self) -> Content {
-    Content::Text(TextContent {
-      text = self,
-      speed = ContentSpeedLevel::normal(),
-      size = ContentSizeLevel::normal(),
-      weight = TextWeight::normal(),
-      color = ContentColor::Configured,
-    })
+    Content::Text(TextContent::plain(self))
+  }
+}
+
+// 埋め込み式が数値を返すことは多い (`$(player.hp)` など) ので、
+// プリミティブにも当てておく。
+//
+// 孤児規則は「impl 対象か trait 自身のいずれかが自分の package のもの」なので、
+// `Into` を定義している std でだけこれが書ける。
+impl Int: Into[Content] {
+  fn into(self) -> Content {
+    Content::Text(TextContent::plain(int_to_string(self)))
+  }
+}
+
+impl Float: Into[Content] {
+  fn into(self) -> Content {
+    Content::Text(TextContent::plain(float_to_string(self)))
   }
 }
 
@@ -97,15 +124,51 @@ impl String: Into[Content] {
 [[lang="content_push"]]
 fn content_push[C: Into[Content], T, U](game: Game[T, U], content: C) {
   let c: Content = content.into();
-  game.window.message_window.push_content(c);
+  match c {
+    Content::Text(text) => {
+      game.window.message_window.push_text(
+        text.text,
+        resolved_speed(game.config, text.speed),
+        resolved_size(game.config, text.size),
+        text.weight,
+        resolved_color(game.config, text.color),
+      );
+    }
+  }
 }
 
 [[lang="content_flush_and_wait"]]
 fn content_flush_and_wait[T, U](game: Game[T, U]) {
-  // TODO(段 3): flush と clear を足す。
-  // game.window.message_window.flush();
+  game.window.message_window.flush();
+  // 将来的に各種イベントを受け取る機構が検討されている。
+  // 共通のイベントハンドラをエンジン側が呼び、種類ごとに振り分ける形などが考えられる。
+  // game.window.wait_event(Event::MouseClickLeft);
   game.window.wait();
-  // game.window.message_window.clear();
+  // **クリアするのはここである。** エンジンは自分の判断で消さない。
+  // 「待つが消さない」API を将来足すときに、
+  // 変更がコンパイラと std に閉じるようにするための切り分けである。
+  game.window.message_window.clear();
+}
+
+// ---- 設定の解決 ----
+//
+// `Content` が持つのは「設定の何倍か」という相対値である。
+// syscall には絶対値しか渡さないので、ここで設定と突き合わせて潰す。
+// エンジンが設定を持たないのはこのためである。
+
+fn resolved_speed(config: Config, level: ContentSpeedLevel) -> Float {
+  config.user.content_speed.text_per_sec * level.mul
+}
+
+fn resolved_size(config: Config, level: ContentSizeLevel) -> Size {
+  config.user.content_size.mul(level.mul)
+}
+
+fn resolved_color(config: Config, color: ContentColor) -> Color {
+  match color {
+    ContentColor::Configured => config.dev.default_text_color,
+    ContentColor::Value(c) => c,
+  }
 }
 
 // ---- user APIs ----

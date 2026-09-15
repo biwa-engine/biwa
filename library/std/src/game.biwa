@@ -4,6 +4,7 @@ import image::Image;
 import image::CanvasObject;
 import window::Window;
 import window::Position;
+import config::Config;
 
 // 進行中のノベルゲームを表す構造体
 // C: キャラクター構造体Character[V]のみをいくつもメンバに含む構造体
@@ -19,15 +20,22 @@ struct Game[C, S] {
   characters: C,
   states: S,
   window: Window,
+
+  // 文字速度・サイズ・色などの設定。
+  //
+  // **エンジンは設定を持たない。** std がここを読んで絶対値に直してから
+  // syscall に渡す。
+  config: Config,
 }
 
 impl[C, S] Game[C, S] {
-  fn new(name: String, characters: C, states: S) -> Self {
+  fn new(name: String, characters: C, states: S, config: Config) -> Self {
     Self {
       name = name,
       characters = characters,
       states = states,
       window = Window::new(),
+      config = config,
     }
   }
 }

@@ -68,8 +68,12 @@ export type SyscallKind =
  * その名前を挙げて失敗する (不透明な LinkError にはしない)。
  */
 export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
-  /** メッセージウィンドウにテキストを書く。積んで返る。 */
-  sys_write: "cast",
+  /** Message Window に content を積む。描画は始まらない。 */
+  sys_content_push_text: "cast",
+  /** 積まれた content を出し始める。 */
+  sys_content_flush: "cast",
+  /** 枠を空にする。時機を決めるのは std であってエンジンではない。 */
+  sys_content_clear: "cast",
   /** クリックが来るまで止まる。 */
   sys_wait: "call",
 
@@ -91,6 +95,9 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   // 持っているので、その実体は JS 側にしか無い。
   /** 文字列の連結。 */
   sys_string_concat: "local",
+  /** 数値から文字列を作る。`String` の実体はホスト側にしか無い。 */
+  sys_int_to_string: "local",
+  sys_float_to_string: "local",
   /** 可変長配列。中身は wasm の値なので Worker 側に置く。 */
   sys_vec_new: "local",
   sys_vec_of: "local",
@@ -115,3 +122,7 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
 export const FLUSH_AFTER_CAST: ReadonlySet<string> = new Set([
   "sys_start_transitions",
 ]);
+
+// NOTE: `sys_content_flush` はここに要らない。直後に `sys_wait` が来て、
+// `call` は必ず溜めてある cast を先に流すためである (`bridge.ts`)。
+// 「flush はするが待たない」API を std が持ったら、ここに足すこと。

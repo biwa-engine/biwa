@@ -5,9 +5,11 @@ import package::string::String;
 import package::option::Option;
 import package::game::font::Font;
 import package::game::image::Image;
-import package::game::content::Content;
-import package::game::content::ContentSpeed;
-import package::game::base_engine::write;
+import package::game::color::Color;
+import package::game::font::TextWeight;
+import package::game::base_engine::sys_content_push_text;
+import package::game::base_engine::sys_content_flush;
+import package::game::base_engine::sys_content_clear;
 import package::game::base_engine::wait;
 
 struct Window {
@@ -41,21 +43,36 @@ impl Canvas {
 struct MessageWindow {}
 
 impl MessageWindow {
-  fn push_content(self, content: Content) {
-    match content {
-      // TODO(段 3): 設定を解決して sys_content_push_text() に渡す。
-      // いまは装飾を落として素のテキストだけを出している。
-      Content::Text(text) => {
-        write(text.text);
+  // テキストを 1 つ積む。まだ描画されない。
+  //
+  // 引数はすべて**解決済みの絶対値**である。設定を読んで
+  // ここに渡す形にするのは `std::game::content` の仕事で、
+  // Window API は設定を知らない。
+  //
+  // `Size` は enum なので、syscall には (単位, 値) の 2 つに割って渡す。
+  fn push_text(self, text: String, speed: Float, size: Size, weight: TextWeight, color: Color) {
+    match size {
+      Size::Vw(v) => {
+        sys_content_push_text(
+          text, speed, 0, v, weight.weight, color.r, color.g, color.b, color.a);
+      }
+      Size::Vh(v) => {
+        sys_content_push_text(
+          text, speed, 1, v, weight.weight, color.r, color.g, color.b, color.a);
       }
     }
   }
-  
-  // private
-  // fn push_text(self, text: String, font: Font, size: Uint, speed: ContentSpeed);
-  // fn flush(self);
-  // fn clear(self);
-  
+
+  // 積まれたものをまとめて出し始める。
+  fn flush(self) {
+    sys_content_flush();
+  }
+
+  // 枠を空にする。呼ぶ時機を決めるのは std であってエンジンではない。
+  fn clear(self) {
+    sys_content_clear();
+  }
+
   // fn set_talker_name(self, name: String);
   // fn set_talker_image(self, image: Image);
 }

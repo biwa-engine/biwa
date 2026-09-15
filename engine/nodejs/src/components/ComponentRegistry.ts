@@ -22,7 +22,7 @@ export class ComponentRegistry {
 
   getTextBox(id: string): TextBox {
     const c = this.get(id);
-    if (!("setText" in c)) throw new Error(`Component "${id}" is not a TextBox`);
+    if (!("push" in c)) throw new Error(`Component "${id}" is not a TextBox`);
     return c as TextBox;
   }
 }

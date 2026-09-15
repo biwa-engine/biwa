@@ -6,7 +6,12 @@
  * syscall の実装そのもの (`api/*`) は両者で共有している。
  */
 
-import { waitForClick, writeMessage } from "../../api/message";
+import {
+  clearContent,
+  flushContent,
+  pushContentText,
+  waitForClick,
+} from "../../api/message";
 import {
   addTransition,
   awaitTransitions,
@@ -41,7 +46,22 @@ type SyscallHandler = (...args: never[]) => unknown;
  */
 function createHandlers(): Record<string, SyscallHandler> {
   return {
-    sys_write: (text: string) => writeMessage(text),
+    sys_content_push_text: (
+      text: string,
+      speed: number,
+      sizeUnit: number,
+      sizeValue: number,
+      weight: number,
+      r: number,
+      g: number,
+      b: number,
+      a: number,
+    ) =>
+      pushContentText(text, speed, sizeUnit, sizeValue, weight, r, g, b, a),
+
+    sys_content_flush: () => flushContent(),
+
+    sys_content_clear: () => clearContent(),
 
     sys_wait: () => waitForClick(),
 

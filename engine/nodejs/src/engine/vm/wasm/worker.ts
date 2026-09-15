@@ -188,6 +188,13 @@ function runtimeImports(
 const LOCAL_SYSCALLS: Record<string, (...args: never[]) => unknown> = {
   sys_string_concat: (a: string, b: string): string => a + b,
 
+  sys_int_to_string: (value: number): string => String(value),
+
+  // f32 として渡ってくるので、そのまま文字列にすると
+  // `0.30000001192092896` のような桁が出る。f32 が表せる精度で丸める。
+  sys_float_to_string: (value: number): string =>
+    String(Number(value.toPrecision(9))),
+
   sys_vec_new: (): unknown[] => [],
 
   sys_vec_of: (value: unknown): unknown[] => [value],

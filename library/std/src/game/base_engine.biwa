@@ -21,6 +21,11 @@
     deleteObject,
     startTransitions,
   } from "@biwa/engine/api/object";
+  import {
+    clearContent,
+    flushContent,
+    pushContentText,
+  } from "@biwa/engine/api/message";
   import { Sys, type BiwaSyscall } from "@biwa/engine/vm/syscall";
 }}
 
@@ -35,7 +40,11 @@
 // したがって typescript 版と違い syscall の記述子を返さない。
 [[native(arch="wasm")]]
 {{
-  (import "biwa:engine" "sys_write" (func $sys_write (param externref)))
+  (import "biwa:engine" "sys_content_push_text"
+    (func $sys_content_push_text
+      (param externref f32 i32 f32 i32 i32 i32 i32 i32)))
+  (import "biwa:engine" "sys_content_flush" (func $sys_content_flush))
+  (import "biwa:engine" "sys_content_clear" (func $sys_content_clear))
   (import "biwa:engine" "sys_wait" (func $sys_wait))
   (import "biwa:engine" "sys_create_object"
     (func $sys_create_object
@@ -48,6 +57,10 @@
   (import "biwa:engine" "sys_sleep" (func $sys_sleep (param i32)))
   (import "biwa:engine" "sys_string_concat"
     (func $sys_string_concat (param externref externref) (result externref)))
+  (import "biwa:engine" "sys_int_to_string"
+    (func $sys_int_to_string (param i32) (result externref)))
+  (import "biwa:engine" "sys_float_to_string"
+    (func $sys_float_to_string (param f32) (result externref)))
   (import "biwa:engine" "sys_vec_new" (func $sys_vec_new (result externref)))
   (import "biwa:engine" "sys_vec_of" (func $sys_vec_of (param anyref) (result externref)))
   (import "biwa:engine" "sys_vec_push" (func $sys_vec_push (param externref anyref)))
@@ -222,26 +235,81 @@ fn sleep(ms: Uint) {{
 }}
 
 // --- ノベルテキスト --------------------------------------------------------
-
-// Message Window へテキストを出す。
 //
-// `std::game::content` の Content API が使う低レベルの API である。
-// 段 3 で `sys_content_push_text` に置き換わる。
+// Content API (`std::game::content`) の下にある低レベルの API である。
+// **設定はすべて std 側で解決済み**で、ここに来るのは絶対値だけである
+// (`docs/content-api.md` の決めたこと 3)。エンジンは設定を持たない。
+
+// Content を 1 つ積む。まだ描画しない。
+//
+// - `speed` は秒間何文字出るか
+// - `size_unit` は 0 = vw, 1 = vh。`size_value` はその単位に対する値
+//   (`Size` は enum なので、wasm の引数に載せるために 2 つに割っている)
+// - `weight` は 100 〜 900
+// - 色は `r` / `g` / `b` / `a` の 4 つに割って渡す。
+//   1 語に詰めないのは、biwa にビット演算が無く、
+//   算術で詰めると `a` が i32 の符号を跨ぐためである
 [[native(arch="typescript")]]
-fn write(msg: String) -> Syscall {{
-  return { sys: Sys.Write, args: [msg] };
+fn sys_content_push_text(
+  text: String, speed: Float,
+  size_unit: Uint, size_value: Float,
+  weight: Uint,
+  r: Uint, g: Uint, b: Uint, a: Uint,
+) {{
+  pushContentText(text, speed, size_unit, size_value, weight, r, g, b, a);
 }}
 
-// arch ごとに native が選ばれるので、シグニチャがターゲット間で違ってよい。
-// wasm では記述子を返す必要が無いので戻り値なしにする。
 [[native(arch="wasm")]]
-fn write(msg: String) {{
+fn sys_content_push_text(
+  text: String, speed: Float,
+  size_unit: Uint, size_value: Float,
+  weight: Uint,
+  r: Uint, g: Uint, b: Uint, a: Uint,
+) {{
   local.get 0
-  call $sys_write
+  local.get 1
+  local.get 2
+  local.get 3
+  local.get 4
+  local.get 5
+  local.get 6
+  local.get 7
+  local.get 8
+  call $sys_content_push_text
+}}
+
+// 積まれた content をまとめて出し始める。
+[[native(arch="typescript")]]
+fn sys_content_flush() {{
+  flushContent();
+}}
+
+[[native(arch="wasm")]]
+fn sys_content_flush() {{
+  call $sys_content_flush
+}}
+
+// 枠を空にする。
+//
+// **エンジンは自分の判断でクリアしない。** いつ消えるかを決めるのは std である
+// (決めたこと 2)。待っても消したくない API を将来足すときに、
+// 変更がエンジンまで波及しないようにするための切り分けである。
+[[native(arch="typescript")]]
+fn sys_content_clear() {{
+  clearContent();
+}}
+
+[[native(arch="wasm")]]
+fn sys_content_clear() {{
+  call $sys_content_clear
 }}
 
 // クリックが来るまで待つ。
 // エンジンはクリックが来るまで scene を再開しない。
+//
+// NOTE: TypeScript ターゲットでは動かない。記述子を返しても、
+// これを呼ぶ `content_flush_and_wait` は普通の関数なので
+// コンパイラが `yield` を置かない (`docs/content-api.md` の段 2 を参照)。
 [[native(arch="typescript")]]
 fn wait() -> Syscall {{
   return { sys: Sys.Wait, args: [] };
@@ -250,4 +318,31 @@ fn wait() -> Syscall {{
 [[native(arch="wasm")]]
 fn wait() {{
   call $sys_wait
+}}
+
+// --- 値の変換 --------------------------------------------------------------
+//
+// エンジン呼び出しではなく、wasm の値に対する操作である。
+// `String` の実体はホスト側にしか無いので、数値から作るのもホストに頼む。
+
+[[native(arch="typescript")]]
+fn int_to_string(val: Int) -> String {{
+  return String(val);
+}}
+
+[[native(arch="wasm")]]
+fn int_to_string(val: Int) -> String {{
+  local.get 0
+  call $sys_int_to_string
+}}
+
+[[native(arch="typescript")]]
+fn float_to_string(val: Float) -> String {{
+  return String(val);
+}}
+
+[[native(arch="wasm")]]
+fn float_to_string(val: Float) -> String {{
+  local.get 0
+  call $sys_float_to_string
 }}

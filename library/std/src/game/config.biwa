@@ -48,6 +48,14 @@ enum WindowMode {
 }
 
 impl Config {
+  // 何も指定しないゲームのための設定。
+  //
+  // `Game::new()` が使う。値を変えたいゲームは
+  // `DeveloperConfig::new()` を組み立てて `Config::new()` を呼ぶ。
+  fn default() -> Self {
+    Config::new(DeveloperConfig::default())
+  }
+
   fn new(dev: DeveloperConfig) -> Self {
     Self {
       dev = dev,
@@ -60,6 +68,15 @@ impl Config {
 }
 
 impl DeveloperConfig {
+  fn default() -> Self {
+    Self {
+      mode = WindowMode::Both,
+      default_content_speed = ContentSpeed { text_per_sec = 5.0 },
+      default_content_size = Size::Vh(2.0),
+      default_text_color = Color::white(),
+    }
+  }
+
   fn new(
     mode: WindowMode,
     default_content_speed: ContentSpeed,

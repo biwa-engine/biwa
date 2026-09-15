@@ -10,7 +10,7 @@ trait (`docs/trait.md`) と enum (`docs/enum-and-match.md`) が入ったこと�
 
 ## いま何がどこまであるか
 
-以下は**着手前**の状態である。段 1 / 段 2 で変わったところは
+以下は**着手前**の状態である。段 1 〜 3 で変わったところは
 「段 N を実装して分かったこと」にまとめてある。
 
 | 層                   | 状態                                                                                                                           |
@@ -255,9 +255,12 @@ sys_content_push_text(
   size_unit: u32,   // 0 = vw, 1 = vh
   size_value: f32,  // 単位に対する値
   weight: u32,      // 100 ~ 900
-  color: u32,       // 0xRRGGBBAA
+  r: u32, g: u32, b: u32, a: u32,  // 各 0 ~ 255
 );
 // italic などの装飾はまだ運ばない (「装飾をどう運ぶか」を参照)。
+//
+// 色を 1 語 (0xRRGGBBAA) に詰めないのは、biwa にビット演算が無く、
+// 算術で詰めると `a` が i32 の符号を跨ぐためである (段 3 の項を参照)。
 
 // 将来
 sys_content_push_image(path: String, size_unit: u32, size_value: f32);
@@ -277,6 +280,10 @@ sys_wait();
 
 `ContentColor::Configured` は std の側で設定値に解決されるので、
 syscall には常に具体の色が渡る。フラグは要らない。
+
+数値から `String` を作るのも syscall である
+(`sys_int_to_string` / `sys_float_to_string`)。
+wasm の `String` は externref で、実体はホスト側にしか無い。
 
 `Size` を (単位, 値) の 2 つに割るのは、
 wasm の引数に enum をそのまま渡せないためである。
@@ -512,7 +519,7 @@ italic や影付けをビットで表していた。**今回は `flags` も入�
 | --- | --------------------------------------------------------------------------------------- |
 | 1   | `$` 埋め込み式のパース (AST まで)。既存の `write` にそのまま繋いで動作確認              |
 | 2   | `NovelStmt` を `ContentPush` / `ContentFlushAndWait` に置き換え、lang item を差し替える |
-| 3   | std の `Content` を完成させ、`MessageWindow::push_content` から syscall を呼ぶ          |
+| 3   | std の `Content` を完成させ、`MessageWindow` から syscall を呼ぶ                        |
 | 4   | エンジン: `TextBox` を断片の列 + 文字送りに作り直す                                     |
 | 5   | 装飾 API (`red` / `bold` / `italic` / `size` / `speed`) — 次の段                        |
 | 6   | 画像 content — 次の段                                                                   |
@@ -664,6 +671,127 @@ TypeScript は tier 2 で、trait の段 2 以降そもそも建たない
 (制限つきジェネリクスを含むため) ので今回は直していない。
 `statement.rs` に NOTE を置いてある。
 
+## 段 3 を実装して分かったこと
+
+### 設定を潰す場所は `content`、絶対値を運ぶのは `window`
+
+resolve の置き場所には 2 案あった。`MessageWindow::push_content(content, config)` と、
+`content_push` の中で潰してから Window に渡す形である。後者にした。
+
+```biwa
+[[lang="content_push"]]
+fn content_push[C: Into[Content], T, U](game: Game[T, U], content: C) {
+  let c: Content = content.into();
+  match c {
+    Content::Text(text) => {
+      game.window.message_window.push_text(
+        text.text,
+        resolved_speed(game.config, text.speed),
+        resolved_size(game.config, text.size),
+        text.weight,
+        resolved_color(game.config, text.color),
+      );
+    }
+  }
+}
+```
+
+こうすると **Window API は設定という概念を持たない**。
+`Window` はサードパーティも叩く低レベル層なので、
+そこに `Config` を通すと「設定を見る層」が 2 つになる。
+`Content` (相対値) を知るのは `std::game::content` だけ、
+`Window` から下は絶対値だけ、という切り分けにした。
+
+### 色は 4 引数で渡す
+
+計画では `color: u32 // 0xRRGGBBAA` の 1 語だった。4 つに割った。
+
+- **biwa にビット演算が無い** (`BinOperator` は算術と比較だけ)。
+  `r * 16777216 + ...` と書くしか無い
+- そう書くと `a` の最上位ビットが i32 の符号を跨ぐ。
+  ホスト側には負の数が届く
+
+`Size` を (単位, 値) に割ったのと同じ理由 — wasm の引数に載る形まで
+std が落としてから渡す — なので、規則としては一貫している。
+
+### `Int` / `Float` にも `Into[Content]` を当てた
+
+`$(player.hp)` のような式を通すためである。孤児規則は
+「impl 対象か trait 自身のいずれかが自分の package のもの」なので、
+`Into` を持つ std でだけプリミティブへの impl が書ける。
+
+`String` を数値から作るには syscall が要る
+(wasm の `String` は externref で、実体はホスト側にしか無い)。
+`sys_int_to_string` / `sys_float_to_string` を `local` として足した
+(エンジンには用が無く Worker 内で完結する。`sys_string_concat` と同じ区分)。
+
+f32 をそのまま `String()` に掛けると `0.30000001192092896` のような桁が出るので、
+`toPrecision(9)` で f32 が表せる精度に丸めてある。
+
+### `Game::new()` を通す形にした
+
+`Game` に `config` が増えたので、構造体リテラルで組み立てると
+ゲーム側が `Config` まで書くことになる。
+`Game::new(name, characters, states)` が `Config::default()` を入れる形にし、
+設定を変えたいゲームは `Game::with_config()` を呼ぶ。
+
+```biwa
+fn on_new_game() -> MyGame {
+  std::game::Game::new("test1", MyGameCharacters {}, MyGameState {})
+}
+```
+
+### `Self::assoc()` は名前解決が未対応だった
+
+`Game::new()` の中身を `Self::with_config(..)` と書いたら落ちた。
+
+```
+compiler bug: path was not resolved before lowering:
+  Path { abs_header: Some(SelfTyp(..)), segments: [PathSegment { .. }] }
+```
+
+`ImplResolveCtx::resolve_path` は `Self` ヘッダの `resolved_id` は埋めるが、
+**その後ろのセグメントを解決していない**。
+`Self` 単体 (`-> Self`、`Self { .. }`) は segments が空なので通っていて、
+これまで誰も `Self::` を書いていなかったので露出していなかった。
+
+いまは具体の型名 (`Game::with_config(..)`、`Config::new(..)`) で回避してある。
+Content API とは別の話なので直していない。
+
+### 枠をクリアするのは std である
+
+```
+flush()  → 出し始める
+wait()   → クリックを待つ
+clear()  → 枠を空にする
+```
+
+エンジンの `waitForClick()` から `box.clear()` を外した。
+「待つが消さない」API を将来足すときに、
+変更がコンパイラと std に閉じるようにするための切り分けである (決めたこと 2)。
+
+wasm 経路では `sys_content_flush` を `FLUSH_AFTER_CAST` に入れる必要は無い。
+直後の `sys_wait` が `call` で、`call` は溜めてある cast を必ず先に流すからである。
+flush だけして待たない API が出てきたら足すこと。
+
+### 段 3 の時点で出ているもの
+
+`TextBox` は断片の列を持つようになり、
+色・大きさ・太さが `<span>` の style として実際に効く。
+**文字送りはまだ無い** (`flush()` で一度に全部出る)。段 4 で入る。
+
+wasm の実行を覗くと、設定が解決された絶対値が届いているのが見える。
+
+```
+push "Hello, Biwa World!\n" speed=30 size=vh(3) weight=400 color=255,255,255,255
+push "こんにちは、Biwaの世界。\n" speed=30 size=vh(3) weight=400 color=255,255,255,255
+flush
+wait
+clear
+```
+
+`$native_add(40, 2)` は `"42"`、`$float_demo()` は `"3.25"` として押される。
+
 ## 落とし穴
 
 - **式の範囲の測り方**。文字列リテラルの中の括弧を数えないこと。
@@ -671,7 +799,8 @@ TypeScript は tier 2 で、trait の段 2 以降そもそも建たない
 - **`$` の直後が識別子でも `(` でもない場合**。エラーにするか、
   `$` をそのままテキストとして出すか。エスケープの決定と対になる
 - **1 つの型に `into` は 1 つ**。`Into[T]` を複数当てられないので、
-  std の中で `Into[String]` などを別に作りたくなったときに詰まる
+  std の中で `Into[String]` などを別に作りたくなったときに詰まる。
+  段 3 で `Int` / `Float` にも当てたので、この枠はもう埋まっている
 - **`Game` を毎回渡す**。`content_push(g, ..)` は scene の引数を毎回読むので、
   MIR では `_1` を何度も読むことになる。実害は無いはずだが、
   `Game` が値型なのでコピーの扱いを確認しておく

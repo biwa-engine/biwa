@@ -67,7 +67,7 @@ src/engine/vm/
   handlers.ts  # syscall 番号 → 実装の対応表
 src/engine/api/
   context.ts    # 現在のエンジン実体 (syscall の実装が参照する)
-  message.ts    # writeMessage / waitForClick
+  message.ts    # Content API (push / flush / clear) と waitForClick
   object.ts     # canvas オブジェクトの生成・遷移・削除
   transition.ts # param / kind の番号と曲線 (std との合意点)
 ```
@@ -76,14 +76,22 @@ kernel を通るのは**中断する syscall だけ**である。
 中断しない syscall (canvas オブジェクトの操作など) は
 std の native が `@biwa/engine/api/*` を直接呼ぶので、記述子にならない。
 
-| syscall     | 対応する std の関数              | ふるまい                 |
-| ----------- | -------------------------------- | ------------------------ |
-| `Sys.Write` | `base_engine::write` (lang item) | 中断しない               |
-| `Sys.Wait`  | `base_engine::wait` (lang item)  | クリックまで**中断する** |
+| syscall    | 対応する std の関数   | ふるまい                 |
+| ---------- | --------------------- | ------------------------ |
+| `Sys.Wait` | `base_engine::wait`   | クリックまで**中断する** |
+
+Content API (`sys_content_push_text` / `sys_content_flush` /
+`sys_content_clear`) は中断しないので番号を持たない。
+std の native が `@biwa/engine/api/message` を直接呼ぶ。
 
 `await_transitions` / `sleep` は TypeScript ターゲットには無い。
 コンパイラが `yield` を置くのは今のところ novel statement の展開先だけで、
 任意の関数呼び出しを中断させる手段が無いためである (wasm ターゲット専用)。
+
+**その `Sys.Wait` すら、いまは TypeScript 経路では届かない。**
+`sys_wait` を呼ぶのは std の `content_flush_and_wait()` という普通の関数で、
+statement の位置には無いので `yield` が置かれない
+(`docs/content-api.md` の段 2)。TypeScript は tier 2 なので当面このままである。
 
 実装が Promise を返せばブロッキング syscall で、解決するまで scene を再開しない。
 値をそのまま返せば非ブロッキング syscall で、scene はそのまま走り続ける。
@@ -108,8 +116,8 @@ kernel が `next()` を呼ばない限り VM は止まったままなので、
 生成物は WasmGC を使った 1 つのモジュールで、エンジン API はホスト関数の import になる。
 
 ```wat
-(import "biwa:engine" "sys_write" (func $sys_write (param externref)))
-(import "biwa:engine" "sys_wait"  (func $sys_wait))
+(import "biwa:engine" "sys_content_flush" (func $sys_content_flush))
+(import "biwa:engine" "sys_wait"          (func $sys_wait))
 ```
 
 wasm 自身には中断の仕組みが無いので、**wasm を Worker で走らせ、
@@ -128,13 +136,14 @@ src/engine/vm/wasm/
 | import                                          | 区分         | 実行される場所                    |
 | ----------------------------------------------- | ------------ | --------------------------------- |
 | `biwa:runtime` `string_const`                   | -            | Worker (memory から UTF-8 を復号) |
-| `biwa:engine` `sys_write`                       | 積んで返る   | Main                              |
+| `biwa:engine` `sys_content_push_text` ほか      | 積んで返る   | Main                              |
 | `biwa:engine` `sys_wait`                        | **中断する** | Main                              |
 | `biwa:engine` `sys_create_object`               | 積んで返る   | Main (id の採番のみ Worker)       |
 | `biwa:engine` `sys_add_transition` ほか         | 積んで返る   | Main                              |
 | `biwa:engine` `sys_await_transitions`           | **中断する** | Main                              |
 | `biwa:engine` `sys_sleep`                       | **中断する** | Main                              |
 | `biwa:engine` `sys_string_concat` / `sys_map_*` | -            | Worker                            |
+| `biwa:engine` `sys_int_to_string` ほか          | -            | Worker                            |
 
 `sys_create_object` は戻り値 (オブジェクト id) を持つが**中断しない**。
 採番だけを Worker 内で行い、本体はメインスレッドへ投げるからである

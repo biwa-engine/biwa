@@ -7,11 +7,16 @@
  * 実際に制御を渡す `yield` は、コンパイラが scene の中に置く。
  */
 export const Sys = {
-  /** メッセージウィンドウにテキストを書く。中断しない。 */
-  Write: 1,
   /** クリックが来るまで scene を止める。中断する。 */
   Wait: 2,
 } as const;
+
+// NOTE: ここに載るのは**中断する syscall だけ**である。
+// Content API (`sys_content_push_text` / `sys_content_flush` /
+// `sys_content_clear`) は中断しないので、std の native が
+// `@biwa/engine/api/message` を直接呼ぶ。番号は要らない。
+//
+// 1 番は消えた `Sys.Write` が使っていた。欠番のままにしてある。
 
 export type SysNumber = (typeof Sys)[keyof typeof Sys];
 

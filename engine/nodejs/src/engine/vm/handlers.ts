@@ -1,4 +1,4 @@
-import { writeMessage, waitForClick } from "../api/message";
+import { waitForClick } from "../api/message";
 import { Sys } from "./syscall";
 import type { SyscallTable } from "./kernel";
 
@@ -13,14 +13,16 @@ import type { SyscallTable } from "./kernel";
  * std の native が `@biwa/engine/api/*` を直接呼ぶので kernel を通らない。
  *
  * NOTE: `await_transitions` / `sleep` はこの表に無い。
- * TypeScript ターゲットで `yield` を置けるのは今のところ
- * novel statement (`write` / `wait`) の展開先だけで、
- * 任意の関数呼び出しを中断させる手段がコンパイラに無いためである。
- * これらは当面 wasm ターゲット専用になる (`docs/media-object-model.md`)。
+ * コンパイラが `yield` を置くのは novel statement の展開先だけで、
+ * 任意の関数呼び出しを中断させる手段が無いためである。
+ *
+ * **その `Sys.Wait` すら、いまは TypeScript 経路では届かない。**
+ * `sys_wait` を呼ぶのは std の `content_flush_and_wait()` という普通の関数で、
+ * statement の位置には無いので `yield` が置かれない
+ * (`docs/content-api.md` の段 2)。TypeScript は tier 2 なので当面このままである。
  */
 export function createSyscallTable(): SyscallTable {
   return {
-    [Sys.Write]: (text: string) => writeMessage(text),
     [Sys.Wait]: () => waitForClick(),
   };
 }

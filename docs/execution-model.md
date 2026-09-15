@@ -300,8 +300,8 @@ wasm では scene も普通の関数として出力される。generator は Typ
 エンジン API は**ホスト関数の import**になる。
 
 ```wat
-(import "biwa:engine" "sys_write" (func $sys_write (param externref)))
-(import "biwa:engine" "sys_wait"  (func $sys_wait))
+(import "biwa:engine" "sys_content_flush" (func $sys_content_flush))
+(import "biwa:engine" "sys_wait"          (func $sys_wait))
 ```
 
 呼び出し規約が wasm の `call` そのものなので、B よりも syscall に近い。
@@ -346,10 +346,11 @@ E の後半 (JSPI) を採らなかった理由:
 | 名前空間       | 名前                             | 区分         | 実行される場所                    |
 | -------------- | -------------------------------- | ------------ | --------------------------------- |
 | `biwa:runtime` | `string_const`                   | -            | Worker (memory から UTF-8 を復号) |
-| `biwa:engine`  | `sys_write`                      | 積んで返る   | Main                              |
+| `biwa:engine`  | `sys_content_push_text` ほか     | 積んで返る   | Main                              |
 | `biwa:engine`  | `sys_wait`                       | **中断する** | Main                              |
 | `biwa:engine`  | `sys_create_image`               | 積んで返る   | Main                              |
 | `biwa:engine`  | `sys_string_concat`              | -            | Worker                            |
+| `biwa:engine`  | `sys_int_to_string` ほか         | -            | Worker                            |
 | `biwa:engine`  | `sys_map_insert` / `sys_map_get` | -            | Worker                            |
 
 `biwa:engine` の名前空間と名前は **std とエンジンの取り決め**であり、
@@ -379,7 +380,7 @@ src/engine/vm/wasm/
 ```
 
 syscall の実装 (`api/message.ts` / `api/image.ts`) は TypeScript 経路と共有している。
-違うのは輸送路だけで、`writeMessage` も `waitForClick` も両方から呼ばれる。
+違うのは輸送路だけで、`pushContentText` も `waitForClick` も両方から呼ばれる。
 
 `biwa dev --target <wasm|typescript>` で切り替わる。
 どちらで来ても、エンジンが見るのは `src/game/entry.ts` の default export だけである。
