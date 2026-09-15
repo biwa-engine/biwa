@@ -10,7 +10,7 @@ trait (`docs/trait.md`) と enum (`docs/enum-and-match.md`) が入ったこと�
 
 ## いま何がどこまであるか
 
-以下は**着手前**の状態である。段 1 〜 4 で変わったところは
+以下は**着手前**の状態である。段 1 〜 5 で変わったところは
 「段 N を実装して分かったこと」にまとめてある。
 
 | 層                   | 状態                                                                                                                           |
@@ -521,7 +521,7 @@ italic や影付けをビットで表していた。**今回は `flags` も入�
 | 2   | `NovelStmt` を `ContentPush` / `ContentFlushAndWait` に置き換え、lang item を差し替える |
 | 3   | std の `Content` を完成させ、`MessageWindow` から syscall を呼ぶ                        |
 | 4   | エンジン: `TextBox` を断片の列 + 文字送りに作り直す                                     |
-| 5   | 装飾 API (`red` / `bold` / `italic` / `size` / `speed`) — 次の段                        |
+| 5   | 装飾 API (`red` / `bold` / `sized` / `paced`)。`italic` は syscall が運べないので除く   |
 | 6   | 画像 content — 次の段                                                                   |
 
 1 と 2 はコンパイラに閉じ、3 以降で std とエンジンが同時に動く。
@@ -878,6 +878,97 @@ renderer.app.ticker.add((ticker) => {
 `TextContent` は既に色・大きさ・太さ・速度を持ち、
 エンジンまで通っているので、次の段で足すのは
 **`Content` を受け取って `Content` を返す関数**だけになる。
+
+## 段 5 を実装して分かったこと
+
+### 装飾はコンパイラにも std の中核にも触らない
+
+段 3 で `TextContent` が色・大きさ・太さ・速度を持ち、
+段 4 でそれがエンジンまで通った。装飾 API はその上に乗るだけで、
+**足したのは `std::game::content` の関数だけ**である。
+lang item も syscall も増えていない。
+
+```biwa
+私は $blue(bold("言葉 琵琶")) (ことのは びわ)。
+$big(slow("ゆっくり大きく")) 話すこともできます。 >>
+```
+
+```
+push "私は "        speed=30 size=vh(2) weight=400 color=255,255,255,255
+push "言葉 琵琶"     speed=30 size=vh(2) weight=700 color=0,0,255,255
+push " (ことのは びわ)。\n" speed=30 size=vh(2) weight=400 color=255,255,255,255
+push "ゆっくり大きく"  speed=15 size=vh(4) weight=400 color=255,255,255,255
+```
+
+### 形は「`Into[Content]` を取って `Content` を返す」
+
+この形なので入れ子にできる。`bold(..)` が返す `Content` を
+`blue(..)` が受けられるのは、`impl Content: Into[Content]` があるからである。
+
+```biwa
+fn blue[C: Into[Content]](content: C) -> Content {
+  colored(content, Color::blue())
+}
+
+fn colored[C: Into[Content]](content: C, color: Color) -> Content {
+  set_color(content.into(), ContentColor::Value(color))
+}
+```
+
+**制限つきの型引数をそのまま別の制限つき関数へ渡せる**
+(`blue` の `C: Into[Content]` が `colored` の制限を満たす) のは、
+段 2 の obligation がそのまま働くからである。手を入れる必要は無かった。
+
+`Int` / `Float` にも `Into[Content]` があるので、
+`$bold(big(red(native_add(1, 2))))` のように数値にも掛かる。
+
+### ジェネリクスは入口で剥がす
+
+書き換えの実体は `Content` を取る非ジェネリック関数 4 つ
+(`set_color` / `set_weight` / `scale_size` / `scale_speed`) に寄せた。
+
+```biwa
+fn scale_size(content: Content, mul: Float) -> Content {
+  match content {
+    Content::Text(text) => {
+      text.size = ContentSizeLevel { mul = text.size.mul * mul };
+      Content::Text(text)
+    }
+  }
+}
+```
+
+`Content` のバリアントが増えたとき、`match` を足すのはこの 4 つだけで済む。
+`red` / `blue` / `bold` / ... を全部直すことにはならない。
+
+### 大きさと速度は掛け合わせる、色と太さは上書きする
+
+`ContentSizeLevel` / `ContentSpeedLevel` は「設定の何倍か」なので、
+入れ子にすると掛かる (`big(big(x))` は 4 倍)。絶対値にしないのは、
+プレイヤーが文字サイズを変えたときに追従させるためである。
+
+色と太さは倍率ではないので上書きになる。外側が勝つ。
+
+### `italic` はまだ出せない
+
+`sys_content_push_text` は italic を運んでいない。
+真偽値の装飾だけを `flags` で先に通すこともできるが、
+縁取りや影のような**引数を持つ装飾**がすぐ来るので、
+そこをまとめて決めるまで見送っている
+(「装飾をどう運ぶか」を参照)。運び方が決まれば、
+`italic` は他の装飾と同じ 3 行で足せる。
+
+### いま使える装飾
+
+| 分類   | 一般形                  | 糖衣                                   |
+| ------ | ----------------------- | -------------------------------------- |
+| 色     | `colored(c, Color)`     | `red` / `green` / `blue` / `white` / `black` |
+| 太さ   | `weighted(c, TextWeight)` | `bold` / `light`                      |
+| 大きさ | `sized(c, Float)`       | `big` (2 倍) / `small` (0.5 倍)        |
+| 速度   | `paced(c, Float)`       | `fast` (2 倍) / `slow` (0.5 倍)        |
+
+使う側が `import std::game::content::red;` のように取り込む。
+埋め込み式は普通の式なので、名前解決も普通に働く。
 
 ## 落とし穴
 
