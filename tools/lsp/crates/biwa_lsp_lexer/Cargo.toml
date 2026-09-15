@@ -1,0 +1,8 @@
+[package]
+name = "biwa_lsp_lexer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+logos = "0.15"
+rowan = "0.15"

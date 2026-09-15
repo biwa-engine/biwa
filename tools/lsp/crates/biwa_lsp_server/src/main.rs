@@ -1,0 +1,137 @@
+mod semantic_tokens;
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use tokio::sync::RwLock;
+use tower_lsp::jsonrpc::Result;
+use tower_lsp::lsp_types::*;
+use tower_lsp::{Client, LanguageServer, LspService, Server};
+
+use biwa_lsp_highlight::highlight;
+use semantic_tokens::{encode_semantic_tokens, TOKEN_TYPES_LEGEND};
+
+struct Backend {
+    client: Client,
+    // ファイル URI → テキスト内容
+    documents: Arc<RwLock<HashMap<Url, String>>>,
+}
+
+#[tower_lsp::async_trait]
+impl LanguageServer for Backend {
+    async fn initialize(&self, _params: InitializeParams) -> Result<InitializeResult> {
+        Ok(InitializeResult {
+            server_info: Some(ServerInfo {
+                name: "biwa-lsp".to_string(),
+                version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            }),
+            capabilities: ServerCapabilities {
+                // テキスト変更をフルで受け取る
+                text_document_sync: Some(TextDocumentSyncCapability::Kind(
+                    TextDocumentSyncKind::FULL,
+                )),
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            legend: SemanticTokensLegend {
+                                token_types: TOKEN_TYPES_LEGEND
+                                    .iter()
+                                    .map(|s| SemanticTokenType::new(s))
+                                    .collect(),
+                                token_modifiers: vec![],
+                            },
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                            range: None,
+                            work_done_progress_options: Default::default(),
+                        },
+                    ),
+                ),
+                ..Default::default()
+            },
+        })
+    }
+
+    async fn initialized(&self, _: InitializedParams) {
+        self.client
+            .log_message(MessageType::INFO, "biwa-lsp initialized")
+            .await;
+    }
+
+    async fn shutdown(&self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        let uri = params.text_document.uri;
+        let text = params.text_document.text;
+        self.documents.write().await.insert(uri.clone(), text.clone());
+        self.publish_diagnostics(&uri, &text).await;
+    }
+
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        let uri = params.text_document.uri;
+        // FULL sync なので常に最後の change がドキュメント全体
+        if let Some(change) = params.content_changes.into_iter().last() {
+            let text = change.text;
+            self.documents.write().await.insert(uri.clone(), text.clone());
+            self.publish_diagnostics(&uri, &text).await;
+        }
+    }
+
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        self.documents.write().await.remove(&params.text_document.uri);
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let docs = self.documents.read().await;
+        let Some(src) = docs.get(&params.text_document.uri) else {
+            return Ok(None);
+        };
+
+        let highlight_tokens = highlight(src);
+        let data = encode_semantic_tokens(src, &highlight_tokens);
+
+        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+            result_id: None,
+            data,
+        })))
+    }
+}
+
+impl Backend {
+    /// パースエラーを Diagnostics として publish する。
+    async fn publish_diagnostics(&self, uri: &Url, src: &str) {
+        let parse_result = biwa_lsp_highlight::parse_for_diagnostics(src);
+        let diagnostics: Vec<Diagnostic> = parse_result
+            .errors
+            .iter()
+            .map(|msg| Diagnostic {
+                range: Range::default(), // エラー位置が取れたら改善
+                severity: Some(DiagnosticSeverity::ERROR),
+                message: msg.clone(),
+                source: Some("biwa-lsp".to_string()),
+                ..Default::default()
+            })
+            .collect();
+
+        self.client
+            .publish_diagnostics(uri.clone(), diagnostics, None)
+            .await;
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let stdin = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
+
+    let (service, socket) = LspService::new(|client| Backend {
+        client,
+        documents: Arc::new(RwLock::new(HashMap::new())),
+    });
+
+    Server::new(stdin, stdout, socket).serve(service).await;
+}

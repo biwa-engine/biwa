@@ -1,0 +1,17 @@
+[package]
+name = "biwa_lsp_lower"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rowan = "0.15"
+biwa_lsp_lexer = { path = "../biwa_lsp_lexer" }
+biwa_lsp_parser = { path = "../biwa_lsp_parser" }
+
+# コンパイラ本体 (biwac) の意味解析クレートに合流するための土台。
+# tools/lsp は biwa リポジトリのサブディレクトリとして、submodule である
+# compiler/ を相対 path dependency で直接参照する
+# (biwa/cli/Cargo.toml が compiler/src/biwac_* を参照しているのと同じパターン)。
+biwac_base = { path = "../../../../compiler/src/biwac_base" }
+biwac_span = { path = "../../../../compiler/src/biwac_span" }
+biwac_ast = { path = "../../../../compiler/src/biwac_ast" }

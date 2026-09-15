@@ -1,0 +1,180 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Biwa",
+  "scopeName": "source.biwa",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#novel-mode" },
+    { "include": "#keywords" },
+    { "include": "#builtin-types" },
+    { "include": "#literals" },
+    { "include": "#strings" },
+    { "include": "#function-def-name" },
+    { "include": "#type-def-name" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "name": "comment.line.double-slash.biwa",
+      "match": "//.*$"
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.biwa",
+          "match": "\\b(if|else|while|for|in|return|scene)\\b"
+        },
+        {
+          "name": "keyword.declaration.biwa",
+          "match": "\\b(fn|struct|type|impl|let|import|as)\\b"
+        },
+        {
+          "name": "keyword.other.biwa",
+          "match": "\\b(self|package)\\b"
+        },
+        {
+          "name": "constant.language.biwa",
+          "match": "\\b(TRUE|FALSE|NONE)\\b"
+        }
+      ]
+    },
+    "builtin-types": {
+      "name": "support.type.primitive.biwa",
+      "match": "\\b(Void|Int|Uint|Float|Bool)\\b"
+    },
+    "literals": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.biwa",
+          "match": "\\b0x[0-9a-fA-F]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.biwa",
+          "match": "\\b0b[01]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.biwa",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.biwa",
+          "match": "\\b[0-9]+u?\\b"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.biwa",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.biwa",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "function-def-name": {
+      "match": "\\b(fn)\\s+([_a-zA-Z][_a-zA-Z0-9]*)",
+      "captures": {
+        "1": { "name": "keyword.declaration.biwa" },
+        "2": { "name": "entity.name.function.biwa" }
+      }
+    },
+    "type-def-name": {
+      "patterns": [
+        {
+          "match": "\\b(struct)\\s+([A-Z][_a-zA-Z0-9]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.biwa" },
+            "2": { "name": "entity.name.type.biwa" }
+          }
+        },
+        {
+          "match": "\\b(type)\\s+([A-Z][_a-zA-Z0-9]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.biwa" },
+            "2": { "name": "entity.name.type.biwa" }
+          }
+        },
+        {
+          "match": "\\b(impl(?:\\s*\\[[^\\]]*\\])?)\\s+([A-Z][_a-zA-Z0-9]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.biwa" },
+            "2": { "name": "entity.name.type.biwa" }
+          }
+        },
+        {
+          "match": "\\b(scene)\\s+([_a-zA-Z][_a-zA-Z0-9]*)",
+          "captures": {
+            "1": { "name": "keyword.control.biwa" },
+            "2": { "name": "entity.name.function.biwa" }
+          }
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.biwa",
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.path.biwa",
+          "match": "::"
+        },
+        {
+          "name": "keyword.operator.comparison.biwa",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.logical.biwa",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.arithmetic.biwa",
+          "match": "[+\\-*/%]"
+        },
+        {
+          "name": "keyword.operator.assignment.biwa",
+          "match": "="
+        }
+      ]
+    },
+    "novel-mode": {
+      "comment": "ノベルモード: {{ から行頭の }} まで",
+      "begin": "\\{\\{",
+      "end": "^(\\s*\\}\\})",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.novel.begin.biwa" }
+      },
+      "endCaptures": {
+        "1": { "name": "punctuation.section.novel.end.biwa" }
+      },
+      "name": "meta.novel-mode.biwa",
+      "patterns": [
+        { "include": "#comments" },
+        {
+          "name": "entity.name.tag.character.biwa",
+          "match": "^\\s*(@[^\\n]*)$"
+        },
+        {
+          "name": "keyword.control.command.biwa",
+          "match": "^\\s*(#[^\\n]*)$"
+        },
+        {
+          "name": "string.interpolated.novel.biwa",
+          "begin": "\\$\\{",
+          "end": "\\}",
+          "patterns": [
+            { "include": "$self" }
+          ]
+        },
+        {
+          "comment": "プレーンなテキスト行 (@ や # で始まらない行)",
+          "name": "string.unquoted.novel-text.biwa",
+          "match": "^(?!\\s*[@#\\}]).*[^\\s].*$"
+        }
+      ]
+    }
+  }
+}

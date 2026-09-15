@@ -1,0 +1,8 @@
+[package]
+name = "biwa_lsp_parser"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rowan = "0.15"
+biwa_lsp_lexer = { path = "../biwa_lsp_lexer" }

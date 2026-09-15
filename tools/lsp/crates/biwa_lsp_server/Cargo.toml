@@ -1,0 +1,13 @@
+[package]
+name = "biwa_lsp_server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tower-lsp        = "0.20"
+tokio            = { version = "1", features = ["rt-multi-thread", "macros", "io-std"] }
+biwa_lsp_highlight = { path = "../biwa_lsp_highlight" }
+
+[[bin]]
+name = "biwa-lsp"
+path = "src/main.rs"

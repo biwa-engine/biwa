@@ -1,0 +1,9 @@
+[package]
+name = "biwa_lsp_highlight"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+biwa_lsp_parser = { path = "../biwa_lsp_parser" }
+biwa_lsp_lexer = { path = "../biwa_lsp_lexer" }
+rowan = "0.15"

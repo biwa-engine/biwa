@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "crates/biwa_lsp_lexer",
+    "crates/biwa_lsp_parser",
+    "crates/biwa_lsp_highlight",
+    "crates/biwa_lsp_server",
+    "crates/biwa_lsp_lower",
+]
+resolver = "2"

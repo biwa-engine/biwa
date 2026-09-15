@@ -1,0 +1,70 @@
+{
+  "name": "biwa-lang",
+  "displayName": "Biwa Language",
+  "description": "Syntax highlighting and language support for the Biwa novel game language",
+  "version": "0.1.0",
+  "publisher": "biwa",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/biwa-engine/biwa-lsp"
+  },
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "biwa",
+        "aliases": ["Biwa", "biwa"],
+        "extensions": [".biwa"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "biwa",
+        "scopeName": "source.biwa",
+        "path": "./syntaxes/biwa.tmLanguage.json"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "biwa",
+        "scopes": {
+          "keyword":        ["keyword.control.biwa", "keyword.declaration.biwa", "keyword.other.biwa"],
+          "type":           ["entity.name.type.biwa", "support.type.primitive.biwa"],
+          "function":       ["entity.name.function.biwa"],
+          "variable":       ["variable.other.biwa"],
+          "parameter":      ["variable.parameter.biwa"],
+          "property":       ["variable.other.property.biwa"],
+          "number":         ["constant.numeric.integer.biwa"],
+          "string":         ["string.quoted.double.biwa"],
+          "comment":        ["comment.line.double-slash.biwa"],
+          "operator":       ["keyword.operator.biwa"],
+          "namespace":      ["entity.name.namespace.biwa"],
+          "novelText":      ["string.unquoted.novel-text.biwa"],
+          "novelCommand":   ["keyword.control.command.biwa"],
+          "novelCharacter": ["entity.name.tag.character.biwa"]
+        }
+      }
+    ],
+    "configurationDefaults": {
+      "editor.semanticHighlighting.enabled": true
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.24.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

@@ -1,0 +1,36 @@
+import bar::Bar;
+
+fn add(x: Int, y: Int) -> Int {
+  x + y
+}
+
+struct Foo[T] {
+  a: Int,
+  b: Bar,
+  c: T,
+}
+
+impl[T] Foo[T] {
+  fn new(b: Bar, c: T) -> Self {
+    // returns new Foo[T] instance.
+    Self {
+      a = 0,
+      b = b,
+      c = c,
+    }
+  }
+
+  fn set_c(self, c: T) {
+    self.c = c;
+  }
+}
+
+scene foo(g: MyGame) -> MyGame {{
+  Hello!
+  #hoge()
+
+  // プレイヤーのセリフ
+  @player
+  I'm ${player.name}.
+}}
+
