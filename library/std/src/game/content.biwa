@@ -89,17 +89,24 @@ impl String: Into[Content] {
 }
 
 // ---- lang item APIs for compiler ----
-// [[lang="content_push"]]
+//
+// scene の生テキストと `$` の埋め込み式、`>>` の展開先である。
+// コンパイラのみが呼び出すことを想定しており、
+// ゲーム開発者やサードパーティが直接呼ぶことは想定していない。
+
+[[lang="content_push"]]
 fn content_push[C: Into[Content], T, U](game: Game[T, U], content: C) {
   let c: Content = content.into();
   game.window.message_window.push_content(c);
 }
-//
-// [[lang="content_flush_and_wait"]]
-// fn content_flush_and_wait[T, U](game: Game[T, U]) {
-//   game.window.message_window.flush();
-//   game.window.wait_event();
-// }
+
+[[lang="content_flush_and_wait"]]
+fn content_flush_and_wait[T, U](game: Game[T, U]) {
+  // TODO(段 3): flush と clear を足す。
+  // game.window.message_window.flush();
+  game.window.wait();
+  // game.window.message_window.clear();
+}
 
 // ---- user APIs ----
 // scene の埋め込み式記法において、

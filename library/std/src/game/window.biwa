@@ -7,6 +7,8 @@ import package::game::font::Font;
 import package::game::image::Image;
 import package::game::content::Content;
 import package::game::content::ContentSpeed;
+import package::game::base_engine::write;
+import package::game::base_engine::wait;
 
 struct Window {
   canvas: Canvas,
@@ -20,7 +22,12 @@ impl Window {
       message_window = MessageWindow{},
     }
   }
-  
+
+  // クリックが来るまでシーンを止める。
+  fn wait(self) {
+    wait();
+  }
+
   // fn width(self) -> Uint;
   // fn height(self) -> Uint;
 }
@@ -36,9 +43,10 @@ struct MessageWindow {}
 impl MessageWindow {
   fn push_content(self, content: Content) {
     match content {
+      // TODO(段 3): 設定を解決して sys_content_push_text() に渡す。
+      // いまは装飾を落として素のテキストだけを出している。
       Content::Text(text) => {
-        // TODO
-        // self.push_text(text.text, ...);
+        write(text.text);
       }
     }
   }

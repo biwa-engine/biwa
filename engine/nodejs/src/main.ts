@@ -2,7 +2,7 @@ import { ComponentRegistry } from "./components/ComponentRegistry";
 import { TextBox } from "./components/TextBox";
 import { setEngineContext } from "./engine/api/context";
 import { CanvasObjects } from "./engine/canvas/CanvasObjects";
-import { createInitialGame, type BiwaBackend } from "./engine/game";
+import type { BiwaBackend } from "./engine/game";
 import { Renderer } from "./engine/Renderer";
 import { Kernel } from "./engine/vm/kernel";
 import { createSyscallTable } from "./engine/vm/handlers";
@@ -65,9 +65,7 @@ async function runGame(backend: BiwaBackend): Promise<void> {
       // scene は generator なので、呼んだだけでは何も起きない。
       // kernel が next() で駆動し、yield された syscall を処理して結果を書き戻す。
       const kernel = new Kernel(createSyscallTable());
-      await kernel.run(
-        backend.entrypoint(createInitialGame(backend.packageName)),
-      );
+      await kernel.run(backend.entrypoint(backend.onNewGame()));
       return;
     }
     case "wasm": {

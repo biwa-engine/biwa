@@ -40,6 +40,9 @@ const scope = globalThis as unknown as WorkerScope;
 /** コンパイラがエントリポイントに付ける固定の名前。 */
 const ENTRYPOINT = "__biwa_entrypoint";
 
+/** コンパイラが初期 `Game` の組み立てに付ける固定の名前。 */
+const NEW_GAME = "__biwa_on_new_game";
+
 const decoder = new TextDecoder();
 
 scope.addEventListener(
@@ -88,17 +91,26 @@ async function run(url: string, channel: SyscallChannel): Promise<void> {
   const imports = buildImports(module, channel, memory);
   instance = await WebAssembly.instantiate(module, imports);
 
-  const entrypoint = instance.exports[ENTRYPOINT];
-  if (typeof entrypoint !== "function") {
-    throw new Error(`the generated module does not export \`${ENTRYPOINT}\``);
-  }
+  const entrypoint = exported(instance, ENTRYPOINT);
+  const newGame = exported(instance, NEW_GAME);
 
   channel.report({ kind: "ready" });
 
-  // 引数は `Game` である。wasm の struct を JS から作る手段がまだ無いので
-  // null を渡している。scene が `g` のフィールドを読むとここで trap する。
-  // TODO: 初期 `Game` を wasm 側で組み立てる入口をコンパイラに用意する。
-  (entrypoint as (game: unknown) => unknown)(null);
+  // `Game` は WasmGC の struct なので JS からは組み立てられない。
+  // ゲーム側の `fn on_new_game()` に作らせて、そのまま参照を渡す。
+  entrypoint(newGame());
+}
+
+/** 固定名の export を取り出す。無ければ名前を添えて叱る。 */
+function exported(
+  instance: WebAssembly.Instance,
+  name: string,
+): (...args: unknown[]) => unknown {
+  const value = instance.exports[name];
+  if (typeof value !== "function") {
+    throw new Error(`the generated module does not export \`${name}\``);
+  }
+  return value as (...args: unknown[]) => unknown;
 }
 
 /**

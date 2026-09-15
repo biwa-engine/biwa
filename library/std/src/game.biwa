@@ -21,6 +21,16 @@ struct Game[C, S] {
   window: Window,
 }
 
+impl[C, S] Game[C, S] {
+  fn new(name: String, characters: C, states: S) -> Self {
+    Self {
+      name = name,
+      characters = characters,
+      states = states,
+      window = Window::new(),
+    }
+  }
+}
 
 // キャラクターを表す構造体
 // P: 個々のキャラクターが持つ特有のプロパティを格納するcustom properties

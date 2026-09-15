@@ -28,23 +28,14 @@ export type BiwaEntrypoint = (
 ) => Generator<unknown, BiwaGame, unknown>;
 
 /**
- * ゲーム開始時の `Game` を組み立てる。
+ * `__biwa_on_new_game` の型。
  *
- * `Window` / `Canvas` / `MessageWindow` は std 側では空の構造体で、
- * 実体はすべて syscall の向こうにある。
- * `characters` と `states` はゲーム側が初期化する手段がまだ無いので空で渡す。
+ * ゲーム開始時の `Game` はゲーム側の `fn on_new_game() -> Game[..]` が組み立てる。
+ * エンジンが組み立てられないのは、`characters` と `states` の型を
+ * ゲーム開発者が決めるからである
+ * (wasm ではさらに、`Game` が JS から作れない WasmGC の struct でもある)。
  */
-export function createInitialGame(name: string): BiwaGame {
-  return {
-    name,
-    characters: {},
-    states: {},
-    window: {
-      canvas: {},
-      message_window: {},
-    },
-  };
-}
+export type BiwaOnNewGame = () => BiwaGame;
 
 /**
  * ゲーム本体の受け渡し方。`biwa dev` が生成する `src/game/entry.ts` の形である。
@@ -59,6 +50,7 @@ export type BiwaBackend =
     kind: "typescript";
     packageName: string;
     entrypoint: BiwaEntrypoint;
+    onNewGame: BiwaOnNewGame;
   }
   | {
     /** 生成物が wasm。Worker で走らせ、syscall はスレッドを跨ぐ。 */
