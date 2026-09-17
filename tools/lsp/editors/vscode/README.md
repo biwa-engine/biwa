@@ -1,6 +1,6 @@
 ```
 # 1. Rust バイナリをビルド・配置 (変更のたびに必要)
-cargo build --release -p biwa-lsp-server
+cargo build --release -p biwa_lsp_server
 cp target/release/biwa-lsp editors/vscode/bin/biwa-lsp
 
 # 2. VSCode で editors/vscode/ フォルダを開く

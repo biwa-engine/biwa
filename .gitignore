@@ -38,3 +38,8 @@ lerna-debug.log*
 *.sw?
 
 /test
+
+tools/lsp/editors/vscode/node_modules/
+tools/lsp/editors/vscode/out/
+tools/lsp/editors/vscode/*.vsix
+tools/lsp/editors/vscode/bin/

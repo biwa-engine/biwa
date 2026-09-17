@@ -22,11 +22,11 @@
       "patterns": [
         {
           "name": "keyword.control.biwa",
-          "match": "\\b(if|else|while|for|in|return|scene)\\b"
+          "match": "\\b(if|else|while|for|in|return)\\b"
         },
         {
           "name": "keyword.declaration.biwa",
-          "match": "\\b(fn|struct|type|impl|let|import|as)\\b"
+          "match": "\\b(fn|struct|enum|type|trait|impl|let|import|as|scene)\\b"
         },
         {
           "name": "keyword.other.biwa",
@@ -165,9 +165,7 @@
           "name": "string.interpolated.novel.biwa",
           "begin": "\\$\\{",
           "end": "\\}",
-          "patterns": [
-            { "include": "$self" }
-          ]
+          "patterns": [{ "include": "$self" }]
         },
         {
           "comment": "プレーンなテキスト行 (@ や # で始まらない行)",
