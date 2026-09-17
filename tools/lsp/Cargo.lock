@@ -80,6 +80,7 @@ dependencies = [
 name = "biwa_lsp_lexer"
 version = "0.1.0"
 dependencies = [
+ "biwac_base",
  "logos",
  "rowan",
 ]

@@ -33,6 +33,8 @@ fn parse_global_symbol(p: &mut Parser) {
         SyntaxKind::KwImport => parse_import_decl(p),
         SyntaxKind::KwFn => parse_function_def(p),
         SyntaxKind::KwStruct => parse_struct_def(p),
+        SyntaxKind::KwEnum => parse_enum_def(p),
+        SyntaxKind::KwTrait => parse_trait_def(p),
         SyntaxKind::KwType => parse_type_alias_def(p),
         SyntaxKind::KwImpl => parse_impl_block(p),
         SyntaxKind::KwScene => parse_scene_def(p),
@@ -171,6 +173,121 @@ fn parse_struct_def(p: &mut Parser) {
     p.finish_node();
 }
 
+// ── enum def ─────────────────────────────────────────────────────────────────
+// `docs/enum-and-match.md`
+
+fn parse_enum_def(p: &mut Parser) {
+    p.start_node(SyntaxKind::EnumDef);
+    p.skip_trivia();
+    p.expect(SyntaxKind::KwEnum);
+    p.skip_trivia();
+    p.expect(SyntaxKind::Ident);
+    if p.at(SyntaxKind::LBracket) {
+        parse_generics_arg_decl(p);
+    }
+    p.expect(SyntaxKind::LBrace);
+    while !p.at(SyntaxKind::RBrace) && p.current_non_trivia() != SyntaxKind::Eof {
+        parse_variant_decl(p);
+        if p.at(SyntaxKind::Comma) {
+            p.skip_trivia();
+            p.bump();
+        } else {
+            break;
+        }
+    }
+    p.expect(SyntaxKind::RBrace);
+    p.finish_node();
+}
+
+/// `Red` (unit) / `Rgb(Int, Int, Int)` (tuple) / `Named { name: String }` (struct)
+fn parse_variant_decl(p: &mut Parser) {
+    p.start_node(SyntaxKind::VariantDecl);
+    p.skip_trivia();
+    p.expect(SyntaxKind::Ident);
+    if p.at(SyntaxKind::LParen) {
+        p.skip_trivia();
+        p.bump(); // (
+        while !p.at(SyntaxKind::RParen) && p.current_non_trivia() != SyntaxKind::Eof {
+            parse_type_repr(p);
+            if p.at(SyntaxKind::Comma) {
+                p.skip_trivia();
+                p.bump();
+            } else {
+                break;
+            }
+        }
+        p.expect(SyntaxKind::RParen);
+    } else if p.at(SyntaxKind::LBrace) {
+        p.skip_trivia();
+        p.bump(); // {
+        while !p.at(SyntaxKind::RBrace) && p.current_non_trivia() != SyntaxKind::Eof {
+            p.skip_trivia();
+            p.expect(SyntaxKind::Ident);
+            p.expect(SyntaxKind::Colon);
+            parse_type_repr(p);
+            if p.at(SyntaxKind::Comma) {
+                p.skip_trivia();
+                p.bump();
+            } else {
+                break;
+            }
+        }
+        p.expect(SyntaxKind::RBrace);
+    }
+    p.finish_node();
+}
+
+// ── trait def ────────────────────────────────────────────────────────────────
+// `docs/trait.md`
+
+fn parse_trait_def(p: &mut Parser) {
+    p.start_node(SyntaxKind::TraitDef);
+    p.skip_trivia();
+    p.expect(SyntaxKind::KwTrait);
+    p.skip_trivia();
+    p.expect(SyntaxKind::Ident);
+    if p.at(SyntaxKind::LBracket) {
+        parse_generics_arg_decl(p);
+    }
+    p.expect(SyntaxKind::LBrace);
+    while !p.at(SyntaxKind::RBrace) && p.current_non_trivia() != SyntaxKind::Eof {
+        if p.current_non_trivia() == SyntaxKind::KwFn {
+            parse_trait_item_decl(p);
+        } else {
+            p.start_node(SyntaxKind::Error);
+            p.skip_trivia();
+            p.bump();
+            p.finish_node();
+        }
+    }
+    p.expect(SyntaxKind::RBrace);
+    p.finish_node();
+}
+
+/// trait の項目。本体を持たず `;` で終わる。`self` を取ればメソッド形式、
+/// 取らなければ関連関数形式になる (`is_method_def` で先読みして判定)。
+fn parse_trait_item_decl(p: &mut Parser) {
+    p.start_node(SyntaxKind::TraitItemDecl);
+    // `fn` の手前で先読みする。関数/メソッド定義の判定と同じ仕組み。
+    let is_method = is_method_def(p);
+    p.skip_trivia();
+    p.expect(SyntaxKind::KwFn);
+    p.skip_trivia();
+    p.expect(SyntaxKind::Ident);
+    if p.at(SyntaxKind::LBracket) {
+        parse_generics_arg_decl(p);
+    }
+    if is_method {
+        parse_method_arg_decl(p);
+    } else {
+        parse_function_arg_decl(p);
+    }
+    p.expect(SyntaxKind::Arrow);
+    parse_type_repr(p);
+    p.expect(SyntaxKind::Semi);
+    p.finish_node();
+}
+
 // ── type alias ───────────────────────────────────────────────────────────────
 
 fn parse_type_alias_def(p: &mut Parser) {
@@ -196,6 +313,13 @@ fn parse_impl_block(p: &mut Parser) {
         parse_generics_arg_decl(p);
     }
     parse_type_repr(p);
+    // `impl Ty: Trait { .. }` (`docs/trait.md`)。直後が `{` か `:` かの
+    // 1トークンで決まるので曖昧さは無い。
+    if p.at(SyntaxKind::Colon) {
+        p.skip_trivia();
+        p.bump(); // :
+        parse_type_repr(p);
+    }
     p.expect(SyntaxKind::LBrace);
     while !p.at(SyntaxKind::RBrace) && p.current_non_trivia() != SyntaxKind::Eof {
         p.skip_trivia();
@@ -301,23 +425,23 @@ fn parse_scene_def(p: &mut Parser) {
     p.finish_node();
 }
 
+/// ノベルモードの本体。`#` コマンドと `$` 埋め込み式の中身は、字句解析の段階
+/// (`biwa_lsp_lexer::lex_novel_segment`) で既に通常コードのトークン列として
+/// 切り出されている。ここではそれを平らに並べるだけで、`#`/`$` の中身を
+/// 構造化した CST ノード (`NovelIfStmt` 相当) には組み立てない
+/// (`docs/enum-and-match.md` が言う「ノベル `#` コード行での match」と同じ理由で、
+/// 行継続を含む文の並びを組む設計がまだ無いため)。
+///
+/// 字句解析が `Error` として弾いたトークンだけ、目立つように `Error` ノードで包む。
 fn parse_novel_mode_body(p: &mut Parser) {
     p.start_node(SyntaxKind::NovelModeBody);
     while !p.at(SyntaxKind::DoubleRBrace) && p.current() != SyntaxKind::Eof {
-        match p.current() {
-            SyntaxKind::NovelText
-            | SyntaxKind::NovelAt
-            | SyntaxKind::NovelHash
-            | SyntaxKind::NovelDollarBrace
-            | SyntaxKind::NovelCloseBrace
-            | SyntaxKind::Newline
-            | SyntaxKind::Whitespace
-            | SyntaxKind::LineComment => p.bump(),
-            _ => {
-                p.start_node(SyntaxKind::Error);
-                p.bump();
-                p.finish_node();
-            }
+        if p.current() == SyntaxKind::Error {
+            p.start_node(SyntaxKind::Error);
+            p.bump();
+            p.finish_node();
+        } else {
+            p.bump();
         }
     }
     p.finish_node();
@@ -331,7 +455,7 @@ fn parse_generics_arg_decl(p: &mut Parser) {
     p.expect(SyntaxKind::LBracket);
     while !p.at(SyntaxKind::RBracket) && p.current_non_trivia() != SyntaxKind::Eof {
         p.skip_trivia();
-        p.expect(SyntaxKind::Ident);
+        parse_generics_arg_item(p);
         if p.at(SyntaxKind::Comma) {
             p.skip_trivia();
             p.bump();
@@ -340,6 +464,24 @@ fn parse_generics_arg_decl(p: &mut Parser) {
         }
     }
     p.expect(SyntaxKind::RBracket);
+    p.finish_node();
+}
+
+/// `T` または `T: A && B` (`docs/trait.md` の第2段)。
+fn parse_generics_arg_item(p: &mut Parser) {
+    p.start_node(SyntaxKind::GenericsArgItem);
+    p.skip_trivia();
+    p.expect(SyntaxKind::Ident);
+    if p.at(SyntaxKind::Colon) {
+        p.skip_trivia();
+        p.bump(); // :
+        parse_type_repr(p);
+        while p.at(SyntaxKind::AmpAmp) {
+            p.skip_trivia();
+            p.bump(); // &&
+            parse_type_repr(p);
+        }
+    }
     p.finish_node();
 }
 
@@ -437,6 +579,7 @@ fn parse_statement_or_expr(p: &mut Parser) {
         SyntaxKind::KwIf => parse_if_stmt(p),
         SyntaxKind::KwWhile => parse_while_stmt(p),
         SyntaxKind::KwFor => parse_for_stmt(p),
+        SyntaxKind::KwMatch => parse_match_stmt(p),
         SyntaxKind::Eof | SyntaxKind::RBrace => {}
         _ => parse_expr_or_assign_stmt(p),
     }
@@ -463,7 +606,7 @@ fn parse_if_stmt(p: &mut Parser) {
     p.start_node(SyntaxKind::IfStmt);
     p.skip_trivia();
     p.expect(SyntaxKind::KwIf);
-    parse_expression(p);
+    parse_condition_expression(p);
     parse_block(p);
     while p.at(SyntaxKind::KwElse) {
         p.skip_trivia();
@@ -471,7 +614,7 @@ fn parse_if_stmt(p: &mut Parser) {
         if p.at(SyntaxKind::KwIf) {
             p.skip_trivia();
             p.bump(); // if
-            parse_expression(p);
+            parse_condition_expression(p);
             parse_block(p);
         } else {
             parse_block(p);
@@ -481,11 +624,153 @@ fn parse_if_stmt(p: &mut Parser) {
     p.finish_node();
 }
 
+// ── match / pattern ──────────────────────────────────────────────────────────
+// `docs/enum-and-match.md`
+//
+// `if` と同じく、この文法では「文位置の match」と「式位置の match」を
+// 呼び出し位置 (statement vs expression) で分けている。本来は最初のアームの
+// 本体の形 (ブロックか裸の式か) で決まる (`ExprOrStmt`) が、`if` の側が
+// 既にその単純化を採っているので揃えてある (`parse_if_stmt` / `parse_if_expr`
+// と同じ限界。`fn f() -> T { match .. { .. } }` のように tail 式として
+// 裸で置く形は式として読まれない)。
+
+fn parse_match_stmt(p: &mut Parser) {
+    p.start_node(SyntaxKind::MatchStmt);
+    p.skip_trivia();
+    p.expect(SyntaxKind::KwMatch);
+    parse_condition_expression(p);
+    p.expect(SyntaxKind::LBrace);
+    while !p.at(SyntaxKind::RBrace) && p.current_non_trivia() != SyntaxKind::Eof {
+        parse_match_arm_stmt(p);
+    }
+    p.expect(SyntaxKind::RBrace);
+    p.finish_node();
+}
+
+fn parse_match_arm_stmt(p: &mut Parser) {
+    p.start_node(SyntaxKind::MatchArm);
+    parse_pattern(p);
+    p.skip_trivia();
+    p.expect(SyntaxKind::FatArrow);
+    parse_block(p);
+    if p.at(SyntaxKind::Comma) {
+        p.skip_trivia();
+        p.bump();
+    }
+    p.finish_node();
+}
+
+fn parse_match_expr(p: &mut Parser) {
+    p.start_node(SyntaxKind::MatchExpr);
+    p.skip_trivia();
+    p.expect(SyntaxKind::KwMatch);
+    parse_condition_expression(p);
+    p.expect(SyntaxKind::LBrace);
+    while !p.at(SyntaxKind::RBrace) && p.current_non_trivia() != SyntaxKind::Eof {
+        parse_match_arm_expr(p);
+    }
+    p.expect(SyntaxKind::RBrace);
+    p.finish_node();
+}
+
+/// アームの本体。`{ .. }` か、`,` で終わる裸の式 (`docs/enum-and-match.md`)。
+fn parse_match_arm_expr(p: &mut Parser) {
+    p.start_node(SyntaxKind::MatchArm);
+    parse_pattern(p);
+    p.skip_trivia();
+    p.expect(SyntaxKind::FatArrow);
+    if p.at(SyntaxKind::LBrace) {
+        parse_block_expr(p);
+    } else {
+        parse_expression(p);
+    }
+    if p.at(SyntaxKind::Comma) {
+        p.skip_trivia();
+        p.bump();
+    }
+    p.finish_node();
+}
+
+// <pattern> ::= "_" | <identifier> | <qualified-identifier> ( "(" <pattern>* ")" | "{" .. "}" )?
+fn parse_pattern(p: &mut Parser) {
+    p.start_node(SyntaxKind::Pattern);
+    p.skip_trivia();
+    match p.current_non_trivia() {
+        SyntaxKind::KwUnderscore => {
+            p.skip_trivia();
+            p.bump();
+        }
+        SyntaxKind::Ident | SyntaxKind::KwPackage => {
+            parse_identifier_path(p);
+            if p.at(SyntaxKind::LParen) {
+                parse_pattern_tuple_fields(p);
+            } else if p.at(SyntaxKind::LBrace) {
+                parse_pattern_struct_fields(p);
+            }
+        }
+        _ => {
+            p.start_node(SyntaxKind::Error);
+            if p.current() != SyntaxKind::Eof {
+                p.skip_trivia();
+                p.bump();
+            }
+            p.finish_node();
+            p.errors.push("expected a pattern".to_string());
+        }
+    }
+    p.finish_node();
+}
+
+/// `Rgb(a, b, c)`
+fn parse_pattern_tuple_fields(p: &mut Parser) {
+    p.start_node(SyntaxKind::PatternTupleFields);
+    p.skip_trivia();
+    p.expect(SyntaxKind::LParen);
+    while !p.at(SyntaxKind::RParen) && p.current_non_trivia() != SyntaxKind::Eof {
+        parse_pattern(p);
+        if p.at(SyntaxKind::Comma) {
+            p.skip_trivia();
+            p.bump();
+        } else {
+            break;
+        }
+    }
+    p.expect(SyntaxKind::RParen);
+    p.finish_node();
+}
+
+/// `Named { name = n, alpha }`。`{ alpha }` は `{ alpha = alpha }` の省略形
+/// (lowering 側で展開する)。
+fn parse_pattern_struct_fields(p: &mut Parser) {
+    p.start_node(SyntaxKind::PatternStructFields);
+    p.skip_trivia();
+    p.expect(SyntaxKind::LBrace);
+    while !p.at(SyntaxKind::RBrace) && p.current_non_trivia() != SyntaxKind::Eof {
+        p.start_node(SyntaxKind::PatternField);
+        p.skip_trivia();
+        p.expect(SyntaxKind::Ident);
+        if p.at(SyntaxKind::Eq) {
+            p.skip_trivia();
+            p.bump();
+            parse_pattern(p);
+        }
+        p.finish_node();
+        if p.at(SyntaxKind::Comma) {
+            p.skip_trivia();
+            p.bump();
+        } else {
+            break;
+        }
+    }
+    p.expect(SyntaxKind::RBrace);
+    p.finish_node();
+}
+
 fn parse_while_stmt(p: &mut Parser) {
     p.start_node(SyntaxKind::WhileStmt);
     p.skip_trivia();
     p.expect(SyntaxKind::KwWhile);
-    parse_expression(p);
+    parse_condition_expression(p);
     parse_block(p);
     p.finish_node();
 }
@@ -497,7 +782,7 @@ fn parse_for_stmt(p: &mut Parser) {
     p.skip_trivia();
     p.expect(SyntaxKind::Ident);
     p.expect(SyntaxKind::KwIn);
-    parse_expression(p);
+    parse_condition_expression(p);
     parse_block(p);
     p.finish_node();
 }
@@ -538,16 +823,32 @@ pub(crate) fn parse_expression(p: &mut Parser) {
     p.skip_trivia();
     if p.current_non_trivia() == SyntaxKind::KwIf {
         parse_if_expr(p);
+    } else if p.current_non_trivia() == SyntaxKind::KwMatch {
+        parse_match_expr(p);
     } else {
         parse_logical_or(p);
     }
+}
+
+/// `if`/`while`/`for .. in`/`match` の対象式。構造体リテラルは認めない。
+fn parse_condition_expression(p: &mut Parser) {
+    let saved = std::mem::replace(&mut p.no_struct_literal, true);
+    parse_expression(p);
+    p.no_struct_literal = saved;
+}
+
+/// `(` `)` や引数リストの内側で読む式。制限はここで解ける。
+fn parse_delimited_expression(p: &mut Parser) {
+    let saved = std::mem::replace(&mut p.no_struct_literal, false);
+    parse_expression(p);
+    p.no_struct_literal = saved;
 }
 
 fn parse_if_expr(p: &mut Parser) {
     p.start_node(SyntaxKind::IfExpr);
     p.skip_trivia();
     p.expect(SyntaxKind::KwIf);
-    parse_expression(p);
+    parse_condition_expression(p);
     parse_block_expr(p);
     while p.at(SyntaxKind::KwElse) {
         p.skip_trivia();
@@ -555,7 +856,7 @@ fn parse_if_expr(p: &mut Parser) {
         if p.at(SyntaxKind::KwIf) {
             p.skip_trivia();
             p.bump();
-            parse_expression(p);
+            parse_condition_expression(p);
             parse_block_expr(p);
         } else {
             parse_block_expr(p);
@@ -657,7 +958,7 @@ fn parse_call_arg_list(p: &mut Parser) {
     p.skip_trivia();
     p.expect(SyntaxKind::LParen);
     while !p.at(SyntaxKind::RParen) && p.current_non_trivia() != SyntaxKind::Eof {
-        parse_expression(p);
+        parse_delimited_expression(p);
         if p.at(SyntaxKind::Comma) {
             p.skip_trivia();
             p.bump();
@@ -676,7 +977,7 @@ fn parse_primary(p: &mut Parser) {
             p.start_node(SyntaxKind::ParenExpr);
             p.skip_trivia();
             p.bump();
-            parse_expression(p);
+            parse_delimited_expression(p);
             p.expect(SyntaxKind::RParen);
             p.finish_node();
         }
@@ -699,7 +1000,7 @@ fn parse_primary(p: &mut Parser) {
             // ident path の直後に `{` が来れば struct literal
             let checkpoint = p.builder.checkpoint();
             parse_identifier_path(p);
-            if p.at(SyntaxKind::LBrace) {
+            if p.at(SyntaxKind::LBrace) && !p.no_struct_literal {
                 p.builder
                     .start_node_at(checkpoint, SyntaxKind::StructLiteral.into());
                 parse_struct_literal_fields(p);
@@ -847,5 +1148,87 @@ impl[T] Foo[T] {
 }
         "#,
         );
+    }
+
+    #[test]
+    fn parse_enum() {
+        no_errors(
+            r#"
+enum Color {
+  Red,
+  Rgb(Int, Int, Int),
+  Named { name: String, alpha: Int },
+}
+
+enum Option[T] {
+  None,
+  Some(T),
+}
+        "#,
+        );
+    }
+
+    #[test]
+    fn parse_match_statement_and_expression() {
+        no_errors(
+            r#"
+fn describe(c: Color) -> Int {
+  match c {
+    Color::Red => { }
+    Color::Rgb(r, g, b) => { }
+    Color::Named { name = n, alpha } => { }
+    _ => { }
+  }
+  let n = match c {
+    Color::Red => 0,
+    Color::Rgb(r, g, b) => r,
+    _ => 0,
+  };
+  n
+}
+        "#,
+        );
+    }
+
+    #[test]
+    fn parse_trait_and_impl_with_trait() {
+        no_errors(
+            r#"
+trait Gyao {
+  fn gyao(self) -> Int;
+  fn guee(aaa: Int) -> Self;
+}
+
+impl Nyoee: Gyao {
+  fn gyao(self) -> Int { 1 }
+  fn guee(aaa: Int) -> Self { Nyoee { x = aaa } }
+}
+        "#,
+        );
+    }
+
+    #[test]
+    fn parse_generics_bounds() {
+        no_errors("struct Bbb[T: Gyao] { t: T }");
+        no_errors("fn f[T: A && B](t: T) -> Int { 1 }");
+    }
+
+    #[test]
+    fn parse_scene_hash_command_with_args() {
+        no_errors("scene s(g: G) -> G {{\n#play_se(se1, 2)\n}}\n");
+    }
+
+    #[test]
+    fn parse_scene_hash_command_continuation() {
+        no_errors("scene s(g: G) -> G {{\n#play_se(\n  se1,\n  2,\n)\n}}\n");
+    }
+
+    #[test]
+    fn parse_scene_embedded_expression() {
+        no_errors(r#"scene s(g: G) -> G {{
+Hello! $blue(bold("a"))!
+}}
+"#);
+        no_errors("scene s(g: G) -> G {{\n$(player.hp)\n}}\n");
     }
 }

@@ -74,6 +74,14 @@ enum CodeToken {
     KwReturn,
     #[token("package")]
     KwPackage,
+    #[token("enum")]
+    KwEnum,
+    #[token("match")]
+    KwMatch,
+    #[token("trait")]
+    KwTrait,
+    #[token("_")]
+    KwUnderscore,
     #[token("Void")]
     KwVoid,
     #[token("Int")]
@@ -186,6 +194,10 @@ fn code_token_to_syntax_kind(t: &CodeToken) -> SyntaxKind {
         CodeToken::KwSelf => SyntaxKind::KwSelf,
         CodeToken::KwReturn => SyntaxKind::KwReturn,
         CodeToken::KwPackage => SyntaxKind::KwPackage,
+        CodeToken::KwEnum => SyntaxKind::KwEnum,
+        CodeToken::KwMatch => SyntaxKind::KwMatch,
+        CodeToken::KwTrait => SyntaxKind::KwTrait,
+        CodeToken::KwUnderscore => SyntaxKind::KwUnderscore,
         CodeToken::KwVoid => SyntaxKind::KwVoid,
         CodeToken::KwInt => SyntaxKind::KwInt,
         CodeToken::KwUint => SyntaxKind::KwUint,
@@ -226,69 +238,328 @@ fn code_token_to_syntax_kind(t: &CodeToken) -> SyntaxKind {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// ノベルモード用ロゴスレキサ
+// ノベルモード用の手書きスキャナ
 // ────────────────────────────────────────────────────────────────────────────
+//
+// `biwac_novel_parser` (`scan.rs`, `token.rs`) と同じく、ノベル DSL は
+// 正規表現 1 発では読めない (行ごとに「これはコード行か地の文か」が決まり、
+// `#` コマンド行は `(`/`[`/`,`/`.`/`::` で終わると次の行へ継続する)。
+// そのため logos ではなく手書きの行指向スキャナにしてある。
+//
+// `docs/lexical.md`, `docs/content-api.md` を参照。
 
-/// ノベルモード区間の字句解析。
-/// `{{` と行頭 `}}` トークンも含む (pre_scan が渡す区間には両端が入っている)。
-#[derive(Logos, Debug, Clone, PartialEq)]
-enum NovelToken {
-    /// {{ (ノベルモード開始)
-    #[token("{{")]
-    DoubleLBrace,
+/// `#` コマンド行の継続判定に使う。行の最後の非トリビアトークンがこれらなら、
+/// 次の行もまだ同じコマンドの続きである。
+fn continues_over_line(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::LParen | SyntaxKind::LBracket | SyntaxKind::Comma | SyntaxKind::Dot | SyntaxKind::ColonColon
+    )
+}
 
-    /// }} (ノベルモード終了; pre_scan により必ず行頭に来る)
-    #[token("}}")]
-    DoubleRBrace,
+fn is_trivia_kind(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::Whitespace | SyntaxKind::Newline | SyntaxKind::LineComment
+    )
+}
 
-    /// @identifier (キャラクター指定行)
-    #[regex(r"@[^\n]*")]
-    AtLine,
+/// `src[..limit]` の中で `begin` から続く識別子の終わり。識別子でなければ `begin`。
+fn novel_ident_end(src: &str, begin: usize, limit: usize) -> usize {
+    let mut i = begin;
+    for (off, c) in src[begin..limit].char_indices() {
+        let ok = if off == 0 {
+            c.is_ascii_alphabetic() || c == '_'
+        } else {
+            c.is_ascii_alphanumeric() || c == '_'
+        };
+        if !ok {
+            break;
+        }
+        i = begin + off + c.len_utf8();
+    }
+    i
+}
 
-    /// #... (コマンド行) - 行全体を1トークンとして扱う
-    #[regex(r"#[^\n]*")]
-    HashLine,
+/// 開き `"` の位置から、閉じ `"` の次の位置を返す。閉じが無ければ `limit`。
+/// エスケープの対応表は biwac_base のものを使う (`docs/lexical.md`)。
+fn skip_string_literal(src: &str, quote_pos: usize, limit: usize) -> usize {
+    let body_start = quote_pos + 1;
+    match biwac_base::string_body_end(&src[body_start..limit]) {
+        Some(body_len) => body_start + body_len + 1,
+        None => limit,
+    }
+}
 
-    /// ${ (値埋め込み開始)
-    #[token("${")]
-    DollarBrace,
+/// `(` から対応する `)` の次の位置。文字列リテラルの中の括弧は数えない。
+fn balanced_paren_end(src: &str, begin: usize, limit: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut i = begin;
+    while i < limit {
+        let c = src[i..limit].chars().next().expect("in range");
+        match c {
+            '"' => {
+                i = skip_string_literal(src, i, limit);
+                continue;
+            }
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i + c.len_utf8());
+                }
+            }
+            _ => {}
+        }
+        i += c.len_utf8();
+    }
+    None
+}
 
-    /// } (値埋め込み終了)
-    #[token("}")]
-    CloseBrace,
+/// `$` の直後 `begin` から、埋め込み式の終端を探す。見つかれば
+/// `$` そのものと式の中身 (通常コードのトークン列として) を `out` に積み、
+/// 終端位置を返す。文法が壊れていれば `None` (呼び出し側が `$` だけを
+/// エラーとして処理し、残りは地の文として読み進める)。
+///
+/// ```ebnf
+/// <embeded-expression> ::= `$` `(` <expression> `)`
+///   | `$` <identifier> ( <argument-list> | <member-access-or-method-calling>* <method-calling> )
+/// ```
+/// (`docs/content-api.md`)
+fn scan_embedded_expr(
+    src: &str,
+    offset: usize,
+    dollar_pos: usize,
+    limit: usize,
+    out: &mut Vec<Token>,
+) -> Option<usize> {
+    let after_dollar = dollar_pos + 1;
+    let mut i = after_dollar;
+    let mut ends_with_call;
 
-    /// 改行
-    #[token("\n")]
-    Newline,
+    match src[i..limit].chars().next() {
+        Some('(') => {
+            i = balanced_paren_end(src, i, limit)?;
+            ends_with_call = true;
+        }
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {
+            i = novel_ident_end(src, i, limit);
+            if src[i..limit].starts_with('(') {
+                i = balanced_paren_end(src, i, limit)?;
+                ends_with_call = true;
+            } else {
+                ends_with_call = false;
+            }
+        }
+        _ => return None,
+    }
 
-    /// // コメント行
-    #[regex(r"//[^\n]*")]
-    LineComment,
+    while src[i..limit].starts_with('.') {
+        let next = novel_ident_end(src, i + 1, limit);
+        if next == i + 1 {
+            return None;
+        }
+        i = next;
+        if src[i..limit].starts_with('(') {
+            i = balanced_paren_end(src, i, limit)?;
+            ends_with_call = true;
+        } else {
+            ends_with_call = false;
+        }
+    }
 
-    /// プレーンなテキスト (改行・特殊文字以外)
-    #[regex(r"[^\n@#${}]+")]
-    Text,
+    if !ends_with_call {
+        return None;
+    }
+
+    out.push(Token {
+        kind: SyntaxKind::NovelDollar,
+        start: offset + dollar_pos,
+        end: offset + after_dollar,
+    });
+    // 埋め込み式の中身は通常コードそのものなので、通常コードのレキサに委ねる。
+    lex_code_segment(&src[after_dollar..i], offset + after_dollar, out);
+
+    Some(i)
+}
+
+fn push_text(out: &mut Vec<Token>, offset: usize, from: usize, to: usize) {
+    if to > from {
+        out.push(Token {
+            kind: SyntaxKind::NovelText,
+            start: offset + from,
+            end: offset + to,
+        });
+    }
+}
+
+/// 地の文 (`@` 行の識別子より後ろも含む) を、`//` コメントと `$` 埋め込み式を
+/// 見分けながら `[start, limit)` の範囲で読む。
+fn scan_novel_text(src: &str, offset: usize, start: usize, limit: usize, out: &mut Vec<Token>) {
+    let mut i = start;
+    let mut text_start = start;
+
+    while i < limit {
+        let rest = &src[i..limit];
+        let c = rest.chars().next().expect("in range");
+
+        if rest.starts_with("//") {
+            push_text(out, offset, text_start, i);
+            out.push(Token {
+                kind: SyntaxKind::LineComment,
+                start: offset + i,
+                end: offset + limit,
+            });
+            return;
+        }
+
+        // `\$` は `$` そのもの。埋め込み式を開かない (`docs/lexical.md`)。
+        if c == '\\' && rest[c.len_utf8()..].starts_with('$') {
+            i += c.len_utf8() + 1;
+            continue;
+        }
+
+        if c == '$' {
+            push_text(out, offset, text_start, i);
+            match scan_embedded_expr(src, offset, i, limit, out) {
+                Some(end) => {
+                    i = end;
+                }
+                None => {
+                    // 形が壊れている: `$` だけをエラーにして、残りは地の文として読み進める。
+                    // (本文の診断は上位のパーサが span 付きで出す。)
+                    out.push(Token {
+                        kind: SyntaxKind::Error,
+                        start: offset + i,
+                        end: offset + i + c.len_utf8(),
+                    });
+                    i += c.len_utf8();
+                }
+            }
+            text_start = i;
+            continue;
+        }
+
+        i += c.len_utf8();
+    }
+    push_text(out, offset, text_start, i);
+}
+
+/// `#` の位置から、継続する限り複数行にまたがるコマンドを読む。
+/// 戻り値は「論理的なコマンドが終わった位置」(まだ改行は消費していない)。
+fn scan_hash_command(src: &str, offset: usize, hash_pos: usize, len: usize, out: &mut Vec<Token>) -> usize {
+    out.push(Token {
+        kind: SyntaxKind::NovelHash,
+        start: offset + hash_pos,
+        end: offset + hash_pos + 1,
+    });
+    let mut pos = hash_pos + 1;
+
+    loop {
+        let mut line_end = pos;
+        while line_end < len && src.as_bytes()[line_end] != b'\n' {
+            line_end += 1;
+        }
+
+        let before = out.len();
+        lex_code_segment(&src[pos..line_end], offset + pos, out);
+        pos = line_end;
+
+        let continues = out[before..]
+            .iter()
+            .rev()
+            .find(|t| !is_trivia_kind(t.kind))
+            .is_some_and(|t| continues_over_line(t.kind));
+
+        if !continues || pos >= len {
+            return pos;
+        }
+
+        // 継続する: 改行だけ消費して次の行も同じコマンドとして読み続ける。
+        out.push(Token {
+            kind: SyntaxKind::Newline,
+            start: offset + pos,
+            end: offset + pos + 1,
+        });
+        pos += 1;
+    }
 }
 
 fn lex_novel_segment(src: &str, offset: usize, out: &mut Vec<Token>) {
-    let mut lexer = NovelToken::lexer(src);
-    while let Some(result) = lexer.next() {
-        let span = lexer.span();
-        let start = offset + span.start;
-        let end = offset + span.end;
-        let kind = match result {
-            Ok(NovelToken::DoubleLBrace) => SyntaxKind::DoubleLBrace,
-            Ok(NovelToken::DoubleRBrace) => SyntaxKind::DoubleRBrace,
-            Ok(NovelToken::AtLine) => SyntaxKind::NovelAt,
-            Ok(NovelToken::HashLine) => SyntaxKind::NovelHash,
-            Ok(NovelToken::DollarBrace) => SyntaxKind::NovelDollarBrace,
-            Ok(NovelToken::CloseBrace) => SyntaxKind::NovelCloseBrace,
-            Ok(NovelToken::Newline) => SyntaxKind::Newline,
-            Ok(NovelToken::LineComment) => SyntaxKind::LineComment,
-            Ok(NovelToken::Text) => SyntaxKind::NovelText,
-            Err(_) => SyntaxKind::Error,
-        };
-        out.push(Token { kind, start, end });
+    let bytes = src.as_bytes();
+    let len = bytes.len();
+
+    out.push(Token {
+        kind: SyntaxKind::DoubleLBrace,
+        start: offset,
+        end: offset + 2,
+    });
+    let mut pos = 2;
+
+    while pos < len {
+        let line_start = pos;
+        let mut line_end = pos;
+        while line_end < len && bytes[line_end] != b'\n' {
+            line_end += 1;
+        }
+        let has_newline = line_end < len;
+
+        // 行頭の空白 (インデント) は `#`/`@`/`}}` 行では読み捨ててよい。
+        // 生地の文では表示に反映されるので、こちらは触らない (下の分岐参照)。
+        let mut content_start = line_start;
+        while content_start < line_end
+            && (bytes[content_start] == b' ' || bytes[content_start] == b'\t')
+        {
+            content_start += 1;
+        }
+
+        let is_end_brace = content_start + 1 < len
+            && bytes[content_start] == b'}'
+            && bytes[content_start + 1] == b'}';
+
+        if is_end_brace {
+            out.push(Token {
+                kind: SyntaxKind::DoubleRBrace,
+                start: offset + content_start,
+                end: offset + content_start + 2,
+            });
+            let after = content_start + 2;
+            if after < line_end {
+                // `}}` の後ろに何か残っていれば (通常は起きない)、そのまま読み捨てる。
+                out.push(Token {
+                    kind: SyntaxKind::Error,
+                    start: offset + after,
+                    end: offset + line_end,
+                });
+            }
+            pos = line_end;
+        } else if content_start >= line_end {
+            // 空行
+            pos = line_end;
+        } else if bytes[content_start] == b'#' {
+            pos = scan_hash_command(src, offset, content_start, len, out);
+        } else if bytes[content_start] == b'@' {
+            out.push(Token {
+                kind: SyntaxKind::NovelAt,
+                start: offset + content_start,
+                end: offset + content_start + 1,
+            });
+            scan_novel_text(src, offset, content_start + 1, line_end, out);
+            pos = line_end;
+        } else {
+            // 生の地の文。行頭の空白も表示に反映される内容なので `line_start` から読む。
+            scan_novel_text(src, offset, line_start, line_end, out);
+            pos = line_end;
+        }
+
+        if has_newline && pos == line_end {
+            out.push(Token {
+                kind: SyntaxKind::Newline,
+                start: offset + pos,
+                end: offset + pos + 1,
+            });
+            pos += 1;
+        }
     }
 }
 
@@ -414,5 +685,107 @@ mod tests {
         let src = "scene s(g: G) -> G {{\n#play_se(se1)\n}}\n";
         let ks = kinds(src);
         assert!(ks.contains(&SyntaxKind::NovelHash));
+    }
+
+    #[test]
+    fn lex_novel_hash_command_contents_as_code_tokens() {
+        let src = "scene s(g: G) -> G {{\n#play_se(se1, 2)\n}}\n";
+        let ks = kinds(src);
+        assert!(ks.contains(&SyntaxKind::NovelHash));
+        assert!(ks.contains(&SyntaxKind::Ident));
+        assert!(ks.contains(&SyntaxKind::LParen));
+        assert!(ks.contains(&SyntaxKind::Comma));
+        assert!(ks.contains(&SyntaxKind::IntLiteral));
+        assert!(ks.contains(&SyntaxKind::RParen));
+        assert!(!ks.contains(&SyntaxKind::Error));
+    }
+
+    #[test]
+    fn lex_novel_hash_command_continues_over_line_on_open_paren() {
+        // `(` で終わっているので次の行も同じコマンドの続きとして読まれ、
+        // 2 行目の `foo` が (改めて `#` を待たずに) Ident として出る。
+        let src = "scene s(g: G) -> G {{\n#play_se(\n  foo\n)\n}}\n";
+        let toks = lex(src);
+        let hash_count = toks
+            .iter()
+            .filter(|t| t.kind == SyntaxKind::NovelHash)
+            .count();
+        assert_eq!(hash_count, 1, "continuation must not start a new command");
+        let kinds: Vec<SyntaxKind> = toks.iter().map(|t| t.kind).collect();
+        assert!(kinds.contains(&SyntaxKind::Ident));
+        assert!(!kinds.contains(&SyntaxKind::Error));
+    }
+
+    #[test]
+    fn lex_novel_hash_command_does_not_continue_without_trailing_mark() {
+        // 1行目が `)` で終わる (継続対象ではない) ので、2行目の `#` は
+        // 新しいコマンドとして数えられる。
+        let src = "scene s(g: G) -> G {{\n#foo()\n#bar()\n}}\n";
+        let toks = lex(src);
+        let hash_count = toks
+            .iter()
+            .filter(|t| t.kind == SyntaxKind::NovelHash)
+            .count();
+        assert_eq!(hash_count, 2);
+    }
+
+    #[test]
+    fn lex_embedded_expr_paren_call() {
+        let src = "scene s(g: G) -> G {{\n$blue(bold(\"a\"))text\n}}\n";
+        let toks = lex(src);
+        let kinds: Vec<SyntaxKind> = toks.iter().map(|t| t.kind).collect();
+        assert!(kinds.contains(&SyntaxKind::NovelDollar));
+        assert!(kinds.contains(&SyntaxKind::Ident));
+        assert!(kinds.contains(&SyntaxKind::StringLiteral));
+        assert!(kinds.contains(&SyntaxKind::NovelText)); // "text" のあと
+        assert!(!kinds.contains(&SyntaxKind::Error));
+    }
+
+    #[test]
+    fn lex_embedded_expr_bare_paren_expr() {
+        let src = "scene s(g: G) -> G {{\n$(player.hp)\n}}\n";
+        let toks = lex(src);
+        let kinds: Vec<SyntaxKind> = toks.iter().map(|t| t.kind).collect();
+        assert!(kinds.contains(&SyntaxKind::NovelDollar));
+        assert!(kinds.contains(&SyntaxKind::LParen));
+        assert!(kinds.contains(&SyntaxKind::Dot));
+        assert!(!kinds.contains(&SyntaxKind::Error));
+    }
+
+    #[test]
+    fn lex_embedded_expr_must_end_with_a_call() {
+        // `$foo.bar` はメソッド呼び出しで終わっていないので式として読めない。
+        // `$` だけがエラーになり、残りは地の文として読み進められる。
+        let src = "scene s(g: G) -> G {{\n$foo.bar\n}}\n";
+        let toks = lex(src);
+        let kinds: Vec<SyntaxKind> = toks.iter().map(|t| t.kind).collect();
+        assert!(kinds.contains(&SyntaxKind::Error));
+        assert!(kinds.contains(&SyntaxKind::NovelText));
+    }
+
+    #[test]
+    fn lex_escaped_dollar_is_plain_text() {
+        let src = "scene s(g: G) -> G {{\n100\\$\n}}\n";
+        let toks = lex(src);
+        let kinds: Vec<SyntaxKind> = toks.iter().map(|t| t.kind).collect();
+        assert!(!kinds.contains(&SyntaxKind::NovelDollar));
+        assert!(!kinds.contains(&SyntaxKind::Error));
+        assert!(kinds.contains(&SyntaxKind::NovelText));
+    }
+
+    #[test]
+    fn lex_new_keywords() {
+        let ks = kinds("enum match trait _");
+        assert!(ks.contains(&SyntaxKind::KwEnum));
+        assert!(ks.contains(&SyntaxKind::KwMatch));
+        assert!(ks.contains(&SyntaxKind::KwTrait));
+        assert!(ks.contains(&SyntaxKind::KwUnderscore));
+    }
+
+    #[test]
+    fn underscore_prefixed_ident_is_still_an_ident() {
+        let ks = kinds("_probe");
+        assert!(ks.contains(&SyntaxKind::Ident));
+        assert!(!ks.contains(&SyntaxKind::KwUnderscore));
     }
 }

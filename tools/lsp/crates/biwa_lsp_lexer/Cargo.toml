@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 logos = "0.15"
 rowan = "0.15"
+
+# 文字列リテラルのエスケープ対応表を biwac_lexer と共有するため。
+# `docs/lexical.md`: 「同じ文字列は両方で同じ意味にならなければならない」
+biwac_base = { path = "../../../../compiler/src/biwac_base" }

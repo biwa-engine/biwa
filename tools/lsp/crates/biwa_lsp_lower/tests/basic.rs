@@ -211,3 +211,140 @@ fn f() -> Int {
     assert_eq!(inner.args.len(), 1);
     assert!(matches!(*inner.left, Exprs::Primary(Primary::FnCall(_))));
 }
+
+#[test]
+fn lowers_enum_def() {
+    let (ast, errors) = lower(
+        r#"
+enum Color {
+  Red,
+  Rgb(Int, Int, Int),
+  Named { name: String, alpha: Int },
+}
+"#,
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    assert_eq!(ast.globals.len(), 1);
+    let Globals::TypeDef(TypeDef::Enum(e)) = &ast.globals[0] else {
+        panic!("expected an enum def, got {:?}", ast.globals[0]);
+    };
+    assert_eq!(e.variants.len(), 3);
+    assert!(matches!(
+        e.variants[0].fields,
+        biwac_ast::VariantFieldsDecl::Unit
+    ));
+    let biwac_ast::VariantFieldsDecl::Tuple(tuple_fields) = &e.variants[1].fields else {
+        panic!("expected tuple fields");
+    };
+    assert_eq!(tuple_fields.len(), 3);
+    let biwac_ast::VariantFieldsDecl::Struct(struct_fields) = &e.variants[2].fields else {
+        panic!("expected struct fields");
+    };
+    assert_eq!(struct_fields.len(), 2);
+}
+
+#[test]
+fn lowers_match_statement_and_expression() {
+    let (ast, errors) = lower(
+        r#"
+fn describe(c: Color) -> Int {
+  match c {
+    Color::Red => { }
+    Color::Rgb(r, g, b) => { }
+    Color::Named { name = n, alpha } => { }
+    _ => { }
+  }
+  let n = match c {
+    Color::Red => 0,
+    Color::Rgb(r, g, b) => r,
+    _ => 0,
+  };
+  n
+}
+"#,
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::FnDef(f) = &ast.globals[0] else {
+        panic!("expected fn def");
+    };
+    let Stmt::Match(match_stmt) = &f.stmts[0] else {
+        panic!("expected a match statement, got {:?}", f.stmts[0]);
+    };
+    assert_eq!(match_stmt.arms.len(), 4);
+    assert!(matches!(
+        match_stmt.arms[3].pattern,
+        biwac_ast::Pattern::Wildcard(_)
+    ));
+    let biwac_ast::Pattern::Variant(variant_pat) = &match_stmt.arms[1].pattern else {
+        panic!("expected a variant pattern");
+    };
+    assert!(matches!(
+        variant_pat.fields,
+        biwac_ast::PatternFields::Tuple(ref v) if v.len() == 3
+    ));
+    let biwac_ast::Pattern::Variant(named_pat) = &match_stmt.arms[2].pattern else {
+        panic!("expected a variant pattern");
+    };
+    let biwac_ast::PatternFields::Struct(struct_fields) = &named_pat.fields else {
+        panic!("expected struct fields");
+    };
+    assert_eq!(struct_fields.len(), 2);
+
+    let Stmt::VarDecl(v) = &f.stmts[1] else {
+        panic!("expected a var decl, got {:?}", f.stmts[1]);
+    };
+    let Exprs::Primary(Primary::Match(match_expr)) = &v.init else {
+        panic!("expected a match expression initializer");
+    };
+    assert_eq!(match_expr.arms.len(), 3);
+}
+
+#[test]
+fn lowers_trait_def_and_impl_with_trait() {
+    let (ast, errors) = lower(
+        r#"
+trait Gyao {
+  fn gyao(self) -> Int;
+  fn guee(aaa: Int) -> Self;
+}
+
+impl Nyoee: Gyao {
+  fn gyao(self) -> Int { 1 }
+  fn guee(aaa: Int) -> Self { Nyoee { x = aaa } }
+}
+"#,
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    assert_eq!(ast.globals.len(), 2);
+    let Globals::TraitDef(trait_def) = &ast.globals[0] else {
+        panic!("expected a trait def, got {:?}", ast.globals[0]);
+    };
+    assert_eq!(trait_def.items.len(), 2);
+    assert!(matches!(
+        trait_def.items[0].args,
+        biwac_ast::TraitItemArgs::Method(_)
+    ));
+    assert!(matches!(
+        trait_def.items[1].args,
+        biwac_ast::TraitItemArgs::Assoc(_)
+    ));
+
+    let Globals::ImplBlock(impl_block) = &ast.globals[1] else {
+        panic!("expected an impl block, got {:?}", ast.globals[1]);
+    };
+    assert!(impl_block.trait_typ.is_some());
+    assert_eq!(impl_block.methods.len(), 1);
+    assert_eq!(impl_block.assoc_fns.len(), 1);
+}
+
+#[test]
+fn lowers_generics_bounds() {
+    let (ast, errors) = lower("struct Bbb[T: Gyao] { t: T }");
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::TypeDef(TypeDef::Struct(s)) = &ast.globals[0] else {
+        panic!("expected a struct def");
+    };
+    let genargs = s.genargs.as_ref().expect("expected generics decl");
+    assert_eq!(genargs.genargs.len(), 1);
+    assert_eq!(genargs.genargs[0].bounds.len(), 1);
+}

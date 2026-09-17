@@ -9,6 +9,12 @@ pub struct Parser<'src> {
     pub(crate) pos: usize,
     pub(crate) builder: GreenNodeBuilder<'static>,
     pub(crate) errors: Vec<String>,
+    /// 構造体リテラルを式として認めない区間にいるか。
+    ///
+    /// `if`/`while`/`for .. in`/`match` の対象式は直後にブロックの `{` が来るため、
+    /// `if flag {` の `{` を構造体リテラルの開始と読むと必ず誤る
+    /// (biwac_parser の `TokenStream::no_struct_literal` と同じ)。
+    pub(crate) no_struct_literal: bool,
 }
 
 impl<'src> Parser<'src> {
@@ -20,6 +26,7 @@ impl<'src> Parser<'src> {
             pos: 0,
             builder: GreenNodeBuilder::new(),
             errors: Vec::new(),
+            no_struct_literal: false,
         }
     }
 

@@ -1,14 +1,16 @@
 use biwa_lsp_lexer::SyntaxKind;
 use biwac_ast::{
     BinOperator, BinaryExpr, BoolLiteral, Exprs, FloatLiteral, FnCall, IntegerLiteral, Literal,
-    MemberAccess, MethodCall, Primary, StringLiteral, StructLiteral, UnOperator, UnaryExpr,
-    Variable,
+    MatchExpr, MatchExprArm, MemberAccess, MethodCall, Primary, StringLiteral, StructLiteral,
+    UnOperator, UnaryExpr, Variable,
 };
 use biwac_base::{IdentInterner, ModId};
+use biwac_span::Span;
 
 use crate::cursor::{Children, SyntaxElement, SyntaxNode, intern_ident_token, node_span, token_span};
 use crate::error::LowerError;
 use crate::path_ty::lower_ident_path;
+use crate::pattern::lower_pattern;
 use crate::stmt::lower_block_expr_mandatory;
 
 /// `0x..`/`0b..` の基数つき整数と、末尾 `u` を許す biwa-lsp-lexer の
@@ -428,6 +430,64 @@ pub(crate) fn lower_if_expr(
     Some(acc)
 }
 
+/// `MatchExpr` (`docs/enum-and-match.md`)。すべてのアームが値を返す。
+/// アーム本体は `{ .. }` (`BlockExpr`) か、`,` で終わる裸の式のどちらか。
+fn lower_match_expr(
+    mod_id: ModId,
+    interner: &mut IdentInterner,
+    node: &SyntaxNode,
+    errors: &mut Vec<LowerError>,
+) -> Option<MatchExpr> {
+    let span = node_span(mod_id, node);
+    let mut children = Children::of(node);
+    children.eat_token(SyntaxKind::KwMatch);
+    let scrutinee_node = children.next_node()?;
+    let scrutinee = lower_expr(mod_id, interner, &scrutinee_node, errors)?;
+    children.eat_token(SyntaxKind::LBrace);
+
+    let mut arms = Vec::new();
+    while let Some(arm_node) = children.eat_node(SyntaxKind::MatchArm) {
+        let mut arm_children = Children::of(&arm_node);
+        let Some(pattern) = arm_children
+            .eat_node(SyntaxKind::Pattern)
+            .and_then(|n| lower_pattern(mod_id, interner, &n, errors))
+        else {
+            continue;
+        };
+        arm_children.eat_token(SyntaxKind::FatArrow);
+        let Some(body_node) = arm_children.next_node() else {
+            continue;
+        };
+        let body = if body_node.kind() == SyntaxKind::BlockExpr {
+            lower_block_expr_mandatory(mod_id, interner, &body_node, errors)
+        } else {
+            lower_expr(mod_id, interner, &body_node, errors).map(|e| {
+                let e_span = e.span();
+                biwac_ast::BlockExpr {
+                    stmts: vec![],
+                    expr: Box::new(e),
+                    span: e_span,
+                }
+            })
+        };
+        if let Some(body) = body {
+            let arm_span = Span::merge(&pattern.span(), &body.span);
+            arms.push(MatchExprArm {
+                pattern,
+                body,
+                span: arm_span,
+            });
+        }
+    }
+    children.eat_token(SyntaxKind::RBrace);
+
+    Some(MatchExpr {
+        scrutinee: Box::new(scrutinee),
+        arms,
+        span,
+    })
+}
+
 /// 式の位置に現れうる CST ノードを種類ごとに振り分ける。
 ///
 /// biwa-lsp-parser の文法は式ノードを `PrimaryExpr` で包まない
@@ -448,6 +508,8 @@ pub(crate) fn lower_expr(
             .map(|e| Exprs::Primary(Primary::IfExpr(e))),
         SyntaxKind::BlockExpr => lower_block_expr_mandatory(mod_id, interner, node, errors)
             .map(|b| Exprs::Primary(Primary::Block(b))),
+        SyntaxKind::MatchExpr => lower_match_expr(mod_id, interner, node, errors)
+            .map(|m| Exprs::Primary(Primary::Match(m))),
         SyntaxKind::ParenExpr => {
             let mut children = Children::of(node);
             children.eat_token(SyntaxKind::LParen);

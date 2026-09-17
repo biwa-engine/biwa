@@ -112,7 +112,11 @@ fn token_type_for(kind: SyntaxKind, parent: Option<SyntaxKind>) -> Option<TokenT
         | SyntaxKind::KwIn
         | SyntaxKind::KwSelf
         | SyntaxKind::KwReturn
-        | SyntaxKind::KwPackage => Some(TokenType::Keyword),
+        | SyntaxKind::KwPackage
+        | SyntaxKind::KwEnum
+        | SyntaxKind::KwMatch
+        | SyntaxKind::KwTrait
+        | SyntaxKind::KwUnderscore => Some(TokenType::Keyword),
 
         // ── built-in types ────────────────────────────────────────────────────
         SyntaxKind::KwVoid
@@ -142,9 +146,17 @@ fn token_type_for(kind: SyntaxKind, parent: Option<SyntaxKind>) -> Option<TokenT
 
             Some(SyntaxKind::StructDef)
             | Some(SyntaxKind::TypeAliasDef)
-            | Some(SyntaxKind::ImplBlock) => Some(TokenType::Type),
+            | Some(SyntaxKind::ImplBlock)
+            | Some(SyntaxKind::EnumDef)
+            | Some(SyntaxKind::TraitDef) => Some(TokenType::Type),
 
-            Some(SyntaxKind::StructLiteralField) => Some(TokenType::Property),
+            Some(SyntaxKind::VariantDecl) | Some(SyntaxKind::TraitItemDecl) => {
+                Some(TokenType::Function)
+            }
+
+            Some(SyntaxKind::StructLiteralField) | Some(SyntaxKind::PatternField) => {
+                Some(TokenType::Property)
+            }
 
             Some(SyntaxKind::PostfixExpr) => Some(TokenType::Property),
 
@@ -177,7 +189,7 @@ fn token_type_for(kind: SyntaxKind, parent: Option<SyntaxKind>) -> Option<TokenT
         SyntaxKind::NovelText => Some(TokenType::NovelText),
         SyntaxKind::NovelAt => Some(TokenType::NovelCharacter),
         SyntaxKind::NovelHash => Some(TokenType::NovelCommand),
-        SyntaxKind::NovelDollarBrace | SyntaxKind::NovelCloseBrace => Some(TokenType::Operator),
+        SyntaxKind::NovelDollar => Some(TokenType::Operator),
 
         _ => None,
     }

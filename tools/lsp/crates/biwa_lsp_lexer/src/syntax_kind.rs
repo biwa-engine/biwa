@@ -33,6 +33,12 @@ pub enum SyntaxKind {
     KwSelf,
     KwReturn,
     KwPackage,
+    KwEnum,
+    KwMatch,
+    KwTrait,
+    /// `_` 単体のみ。`_probe` のような識別子には影響しない
+    /// (biwac_lexer と同じ扱い。`docs/enum-and-match.md` 参照)。
+    KwUnderscore,
 
     // ── built-in types ───────────────────────────────────────────────────────
     KwVoid,
@@ -77,11 +83,10 @@ pub enum SyntaxKind {
     DoubleRBrace, // }}  (novel mode close, only valid at line-start)
 
     // ── novel mode tokens ────────────────────────────────────────────────────
-    NovelText,        // プレーンなテキスト行
-    NovelAt,          // @ (キャラクター指定)
-    NovelHash,        // # (コマンド行)
-    NovelDollarBrace, // ${ (値埋め込み開始)
-    NovelCloseBrace,  // } (値埋め込み終了)
+    NovelText,   // プレーンなテキスト行
+    NovelAt,     // @ (キャラクター指定)
+    NovelHash,   // # (コマンド行の導入記号。中身は通常コードのトークンで続く)
+    NovelDollar, // $ (埋め込み式の導入記号。中身は通常コードのトークンで続く)
 
     // ── special ─────────────────────────────────────────────────────────────
     Error,
@@ -94,14 +99,24 @@ pub enum SyntaxKind {
     FunctionDef,
     MethodDef,
     StructDef,
+    EnumDef,
+    VariantDecl,
+    TraitDef,
+    TraitItemDecl,
     TypeAliasDef,
     ImplBlock,
     SceneDef,
     NovelMode,
     NovelModeBody,
+    /// ノベルモードの `#` コマンド行。中身 (`#` の次から、継続が終わるまで) は
+    /// 通常コードの文と同じ子ノード/トークンで構成される。
+    NovelCommandLine,
+    /// ノベルモードの `$` 埋め込み式。`docs/content-api.md` の EBNF に対応する。
+    NovelEmbeddedExpr,
     FunctionArgDecl,
     MethodArgDecl,
     GenericsArgDecl,
+    GenericsArgItem,
     GenericsArgList,
     TypeRepr,
     BlockStmt,
@@ -113,6 +128,14 @@ pub enum SyntaxKind {
     WhileStmt,
     ForStmt,
     IfExpr,
+    MatchStmt,
+    MatchExpr,
+    MatchArm,
+    /// パターン。`_`、識別子/バリアントパス、`Path(..)`、`Path { .. }`。
+    Pattern,
+    PatternTupleFields,
+    PatternStructFields,
+    PatternField,
     BinaryExpr,
     UnaryExpr,
     PostfixExpr,

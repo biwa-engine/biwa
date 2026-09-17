@@ -1,7 +1,10 @@
 use std::cell::OnceCell;
 
 use biwa_lsp_lexer::SyntaxKind;
-use biwac_ast::{AssignStmt, BlockExpr, BlockStmt, ExprStmt, Exprs, Stmt, TypDecl, VarDecl, WhileStmt};
+use biwac_ast::{
+    AssignStmt, BlockExpr, BlockStmt, ExprStmt, Exprs, MatchStmt, MatchStmtArm, Stmt, TypDecl,
+    VarDecl, WhileStmt,
+};
 use biwac_base::{IdentInterner, ModId};
 use biwac_span::Span;
 
@@ -9,6 +12,7 @@ use crate::cursor::{Children, SyntaxNode, intern_ident_token, node_span};
 use crate::error::LowerError;
 use crate::expr::lower_expr;
 use crate::path_ty::lower_type_repr;
+use crate::pattern::lower_pattern;
 
 fn is_stmt_kind(kind: SyntaxKind) -> bool {
     matches!(
@@ -17,6 +21,7 @@ fn is_stmt_kind(kind: SyntaxKind) -> bool {
             | SyntaxKind::IfStmt
             | SyntaxKind::WhileStmt
             | SyntaxKind::ForStmt
+            | SyntaxKind::MatchStmt
             | SyntaxKind::ExprStmt
             | SyntaxKind::AssignStmt
             | SyntaxKind::BlockStmt
@@ -287,6 +292,51 @@ fn lower_if_stmt(
     Some(acc)
 }
 
+/// `MatchStmt` (`docs/enum-and-match.md`)。値を返さないので各アーム本体は
+/// 常に `{ .. }` (`BlockStmt`) で、末尾式は持たない。
+fn lower_match_stmt(
+    mod_id: ModId,
+    interner: &mut IdentInterner,
+    node: &SyntaxNode,
+    errors: &mut Vec<LowerError>,
+) -> Option<MatchStmt> {
+    let span = node_span(mod_id, node);
+    let mut children = Children::of(node);
+    children.eat_token(SyntaxKind::KwMatch);
+    let scrutinee_node = children.next_node()?;
+    let scrutinee = lower_expr(mod_id, interner, &scrutinee_node, errors)?;
+    children.eat_token(SyntaxKind::LBrace);
+
+    let mut arms = Vec::new();
+    while let Some(arm_node) = children.eat_node(SyntaxKind::MatchArm) {
+        let mut arm_children = Children::of(&arm_node);
+        let Some(pattern) = arm_children
+            .eat_node(SyntaxKind::Pattern)
+            .and_then(|n| lower_pattern(mod_id, interner, &n, errors))
+        else {
+            continue;
+        };
+        arm_children.eat_token(SyntaxKind::FatArrow);
+        let Some(body_node) = arm_children.eat_node(SyntaxKind::BlockStmt) else {
+            continue;
+        };
+        let body = lower_block_stmt_strict(mod_id, interner, &body_node, errors);
+        let arm_span = Span::merge(&pattern.span(), &body.span);
+        arms.push(MatchStmtArm {
+            pattern,
+            body,
+            span: arm_span,
+        });
+    }
+    children.eat_token(SyntaxKind::RBrace);
+
+    Some(MatchStmt {
+        scrutinee,
+        arms,
+        span,
+    })
+}
+
 pub(crate) fn lower_stmt(
     mod_id: ModId,
     interner: &mut IdentInterner,
@@ -304,6 +354,7 @@ pub(crate) fn lower_stmt(
             ));
             None
         }
+        SyntaxKind::MatchStmt => lower_match_stmt(mod_id, interner, node, errors).map(Stmt::Match),
         SyntaxKind::ExprStmt => lower_expr_stmt(mod_id, interner, node, errors).map(Stmt::Expr),
         SyntaxKind::AssignStmt => lower_assign_stmt(mod_id, interner, node, errors).map(Stmt::Assign),
         SyntaxKind::BlockStmt => Some(Stmt::Block(lower_block_stmt_strict(
