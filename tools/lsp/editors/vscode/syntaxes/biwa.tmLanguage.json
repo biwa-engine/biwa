@@ -22,7 +22,7 @@
       "patterns": [
         {
           "name": "keyword.control.biwa",
-          "match": "\\b(if|else|while|for|in|return)\\b"
+          "match": "\\b(if|else|while|for|in|return|match)\\b"
         },
         {
           "name": "keyword.declaration.biwa",
@@ -161,17 +161,51 @@
           "name": "keyword.control.command.biwa",
           "match": "^\\s*(#[^\\n]*)$"
         },
-        {
-          "name": "string.interpolated.novel.biwa",
-          "begin": "\\$\\{",
-          "end": "\\}",
-          "patterns": [{ "include": "$self" }]
-        },
+        { "include": "#novel-embedded-expr" },
         {
           "comment": "プレーンなテキスト行 (@ や # で始まらない行)",
           "name": "string.unquoted.novel-text.biwa",
           "match": "^(?!\\s*[@#\\}]).*[^\\s].*$"
         }
+      ]
+    },
+    "novel-embedded-expr": {
+      "comment": "`docs/content-api.md` の埋め込み式: `$(expr)` または `$ident(..)`/`.method(..)` の連鎖 (必ず呼び出しで終わる)。旧 `${ .. }` 形式ではない。",
+      "begin": "\\$(?=[_a-zA-Z(])",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.embedded.begin.biwa" }
+      },
+      "end": "(?<=\\))(?!\\s*[.(])|$",
+      "name": "meta.embedded.expression.biwa",
+      "patterns": [
+        {
+          "name": "entity.name.function.biwa",
+          "match": "[_a-zA-Z][_a-zA-Z0-9]*(?=\\s*\\()"
+        },
+        {
+          "name": "variable.other.property.biwa",
+          "match": "(?<=\\.)[_a-zA-Z][_a-zA-Z0-9]*"
+        },
+        {
+          "name": "keyword.operator.path.biwa",
+          "match": "\\."
+        },
+        { "include": "#embedded-expr-parens" }
+      ]
+    },
+    "embedded-expr-parens": {
+      "begin": "\\(",
+      "beginCaptures": { "0": { "name": "punctuation.paren.open.biwa" } },
+      "end": "\\)",
+      "endCaptures": { "0": { "name": "punctuation.paren.close.biwa" } },
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#keywords" },
+        { "include": "#builtin-types" },
+        { "include": "#literals" },
+        { "include": "#strings" },
+        { "include": "#operators" },
+        { "include": "#embedded-expr-parens" }
       ]
     }
   }

@@ -4,4 +4,4 @@ pub mod parser;
 
 pub use grammar::ParseResult;
 pub use language::BiwaLanguage;
-pub use parser::parse;
+pub use parser::{ParseError, parse};

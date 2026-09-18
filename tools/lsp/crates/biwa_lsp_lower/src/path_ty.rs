@@ -134,8 +134,7 @@ pub(crate) fn lower_type_repr(
         Some(SyntaxKind::IdentPath) => {
             let path_node = children.next_node()?;
             let path = lower_ident_path(mod_id, interner, &path_node)?;
-            let genargs = if let Some(list_node) = children.eat_node(SyntaxKind::GenericsArgList)
-            {
+            let genargs = if let Some(list_node) = children.eat_node(SyntaxKind::GenericsArgList) {
                 Some(lower_generics_arg_list(
                     mod_id, interner, &list_node, errors,
                 ))

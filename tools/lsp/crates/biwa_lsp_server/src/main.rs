@@ -9,7 +9,9 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use biwa_lsp_highlight::highlight;
-use semantic_tokens::{encode_semantic_tokens, TOKEN_TYPES_LEGEND};
+use semantic_tokens::{
+    TOKEN_TYPES_LEGEND, build_line_index, encode_semantic_tokens, offset_to_line_col,
+};
 
 struct Backend {
     client: Client,
@@ -64,7 +66,10 @@ impl LanguageServer for Backend {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri;
         let text = params.text_document.text;
-        self.documents.write().await.insert(uri.clone(), text.clone());
+        self.documents
+            .write()
+            .await
+            .insert(uri.clone(), text.clone());
         self.publish_diagnostics(&uri, &text).await;
     }
 
@@ -73,13 +78,19 @@ impl LanguageServer for Backend {
         // FULL sync なので常に最後の change がドキュメント全体
         if let Some(change) = params.content_changes.into_iter().last() {
             let text = change.text;
-            self.documents.write().await.insert(uri.clone(), text.clone());
+            self.documents
+                .write()
+                .await
+                .insert(uri.clone(), text.clone());
             self.publish_diagnostics(&uri, &text).await;
         }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        self.documents.write().await.remove(&params.text_document.uri);
+        self.documents
+            .write()
+            .await
+            .remove(&params.text_document.uri);
     }
 
     async fn semantic_tokens_full(
@@ -105,15 +116,23 @@ impl Backend {
     /// パースエラーを Diagnostics として publish する。
     async fn publish_diagnostics(&self, uri: &Url, src: &str) {
         let parse_result = biwa_lsp_highlight::parse_for_diagnostics(src);
+        let line_starts = build_line_index(src);
         let diagnostics: Vec<Diagnostic> = parse_result
             .errors
             .iter()
-            .map(|msg| Diagnostic {
-                range: Range::default(), // エラー位置が取れたら改善
-                severity: Some(DiagnosticSeverity::ERROR),
-                message: msg.clone(),
-                source: Some("biwa-lsp".to_string()),
-                ..Default::default()
+            .map(|e| {
+                let (start_line, start_col) = offset_to_line_col(&line_starts, src, e.start);
+                let (end_line, end_col) = offset_to_line_col(&line_starts, src, e.end);
+                Diagnostic {
+                    range: Range {
+                        start: Position::new(start_line, start_col),
+                        end: Position::new(end_line, end_col),
+                    },
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    message: e.message.clone(),
+                    source: Some("biwa-lsp".to_string()),
+                    ..Default::default()
+                }
             })
             .collect();
 

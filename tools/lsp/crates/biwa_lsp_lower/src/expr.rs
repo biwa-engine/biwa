@@ -7,7 +7,9 @@ use biwac_ast::{
 use biwac_base::{IdentInterner, ModId};
 use biwac_span::Span;
 
-use crate::cursor::{Children, SyntaxElement, SyntaxNode, intern_ident_token, node_span, token_span};
+use crate::cursor::{
+    Children, SyntaxElement, SyntaxNode, intern_ident_token, node_span, token_span,
+};
 use crate::error::LowerError;
 use crate::path_ty::lower_ident_path;
 use crate::pattern::lower_pattern;
@@ -37,10 +39,7 @@ fn lower_literal_node(
     let tok = match elem {
         rowan::NodeOrToken::Token(t) => t,
         rowan::NodeOrToken::Node(n) => {
-            errors.push(LowerError::new(
-                "malformed literal",
-                node_span(mod_id, &n),
-            ));
+            errors.push(LowerError::new("malformed literal", node_span(mod_id, &n)));
             return None;
         }
     };
@@ -153,7 +152,10 @@ fn lower_ident_path_as_variable(
     }
 
     let Some(path) = lower_ident_path(mod_id, interner, node) else {
-        errors.push(LowerError::new("malformed identifier path", node_span(mod_id, node)));
+        errors.push(LowerError::new(
+            "malformed identifier path",
+            node_span(mod_id, node),
+        ));
         return None;
     };
     Some(Exprs::Primary(Primary::Variable(Variable::Path(path))))
@@ -261,7 +263,10 @@ fn lower_postfix_expr(
         return None;
     }
 
-    errors.push(LowerError::new("unrecognized postfix expression shape", span));
+    errors.push(LowerError::new(
+        "unrecognized postfix expression shape",
+        span,
+    ));
     None
 }
 

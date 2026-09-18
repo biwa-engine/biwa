@@ -1,11 +1,11 @@
 use crate::language::BiwaLanguage;
-use crate::parser::Parser;
+use crate::parser::{ParseError, Parser};
 use biwa_lsp_lexer::SyntaxKind;
 use rowan::GreenNode;
 
 pub struct ParseResult {
     pub green_node: GreenNode,
-    pub errors: Vec<String>,
+    pub errors: Vec<ParseError>,
 }
 
 impl ParseResult {
@@ -40,11 +40,11 @@ fn parse_global_symbol(p: &mut Parser) {
         SyntaxKind::KwScene => parse_scene_def(p),
         _ => {
             // エラー回復: 不明なトークンを Error ノードとして消費
-            p.start_node(SyntaxKind::Error);
             p.skip_trivia();
+            p.push_error("unexpected token at top-level");
+            p.start_node(SyntaxKind::Error);
             p.bump();
             p.finish_node();
-            p.errors.push("unexpected token at top-level".into());
         }
     }
 }
@@ -709,13 +709,13 @@ fn parse_pattern(p: &mut Parser) {
             }
         }
         _ => {
+            p.skip_trivia();
+            p.push_error("expected a pattern");
             p.start_node(SyntaxKind::Error);
             if p.current() != SyntaxKind::Eof {
-                p.skip_trivia();
                 p.bump();
             }
             p.finish_node();
-            p.errors.push("expected a pattern".to_string());
         }
     }
     p.finish_node();
@@ -1009,13 +1009,13 @@ fn parse_primary(p: &mut Parser) {
             // else: IdentPath ノードのみ
         }
         _ => {
+            p.skip_trivia();
+            p.push_error("expected expression");
             p.start_node(SyntaxKind::Error);
             if p.current() != SyntaxKind::Eof {
-                p.skip_trivia();
                 p.bump();
             }
             p.finish_node();
-            p.errors.push("expected expression".to_string());
         }
     }
 }
@@ -1053,6 +1053,23 @@ mod tests {
             "unexpected errors: {:?}\nsrc: {}",
             r.errors,
             src
+        );
+    }
+
+    #[test]
+    fn parse_errors_carry_the_offending_token_span() {
+        // `let x = ;` の `;` (式が無い位置) を指すはず。
+        let src = "fn f() -> Int { let x = ; 1 }";
+        let r = parse(src);
+        assert!(!r.errors.is_empty(), "expected at least one error");
+        let e = &r.errors[0];
+        let semi = src.find(';').unwrap();
+        assert_eq!(
+            (e.start, e.end),
+            (semi, semi + 1),
+            "error span should point at `;`, got {:?} (text: {:?})",
+            e,
+            &src[e.start..e.end.min(src.len())]
         );
     }
 
@@ -1225,10 +1242,12 @@ impl Nyoee: Gyao {
 
     #[test]
     fn parse_scene_embedded_expression() {
-        no_errors(r#"scene s(g: G) -> G {{
+        no_errors(
+            r#"scene s(g: G) -> G {{
 Hello! $blue(bold("a"))!
 }}
-"#);
+"#,
+        );
         no_errors("scene s(g: G) -> G {{\n$(player.hp)\n}}\n");
     }
 }

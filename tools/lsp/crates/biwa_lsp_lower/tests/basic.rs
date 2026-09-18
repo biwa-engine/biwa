@@ -6,12 +6,7 @@ fn lower(src: &str) -> (biwac_ast::ModAst, Vec<biwa_lsp_lower::LowerError>) {
     let parse_result = parse(src);
     let root = parse_result.syntax();
     let mut interner = IdentInterner::new();
-    biwa_lsp_lower::lower_module(
-        ModId::new_in_self(0),
-        ModPath::Main,
-        &mut interner,
-        &root,
-    )
+    biwa_lsp_lower::lower_module(ModId::new_in_self(0), ModPath::Main, &mut interner, &root)
 }
 
 #[test]
@@ -88,7 +83,10 @@ impl Point {
         panic!("expected binary expr tail in `scale`");
     };
     let Exprs::Primary(Primary::MemberAccess(member_access)) = &*bin.left else {
-        panic!("expected `self.x` member access on the left of `*`, got {:?}", bin.left);
+        panic!(
+            "expected `self.x` member access on the left of `*`, got {:?}",
+            bin.left
+        );
     };
     assert!(matches!(
         *member_access.left,
@@ -118,10 +116,7 @@ fn f(x: Int) -> Int {
     assert_eq!(f.stmts.len(), 2);
     assert!(matches!(f.stmts[0], Stmt::VarDecl(_)));
     assert!(matches!(f.stmts[1], Stmt::If(_)));
-    assert!(matches!(
-        f.expr,
-        Some(Exprs::Primary(Primary::Variable(_)))
-    ));
+    assert!(matches!(f.expr, Some(Exprs::Primary(Primary::Variable(_)))));
 }
 
 #[test]
@@ -176,7 +171,10 @@ struct StillParses { a: Int }
         panic!("expected fn def");
     };
     assert!(f.expr.is_none());
-    assert!(matches!(ast.globals[1], Globals::TypeDef(TypeDef::Struct(_))));
+    assert!(matches!(
+        ast.globals[1],
+        Globals::TypeDef(TypeDef::Struct(_))
+    ));
 }
 
 #[test]

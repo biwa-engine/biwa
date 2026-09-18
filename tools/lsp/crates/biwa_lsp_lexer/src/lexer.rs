@@ -253,7 +253,11 @@ fn code_token_to_syntax_kind(t: &CodeToken) -> SyntaxKind {
 fn continues_over_line(kind: SyntaxKind) -> bool {
     matches!(
         kind,
-        SyntaxKind::LParen | SyntaxKind::LBracket | SyntaxKind::Comma | SyntaxKind::Dot | SyntaxKind::ColonColon
+        SyntaxKind::LParen
+            | SyntaxKind::LBracket
+            | SyntaxKind::Comma
+            | SyntaxKind::Dot
+            | SyntaxKind::ColonColon
     )
 }
 
@@ -447,7 +451,13 @@ fn scan_novel_text(src: &str, offset: usize, start: usize, limit: usize, out: &m
 
 /// `#` の位置から、継続する限り複数行にまたがるコマンドを読む。
 /// 戻り値は「論理的なコマンドが終わった位置」(まだ改行は消費していない)。
-fn scan_hash_command(src: &str, offset: usize, hash_pos: usize, len: usize, out: &mut Vec<Token>) -> usize {
+fn scan_hash_command(
+    src: &str,
+    offset: usize,
+    hash_pos: usize,
+    len: usize,
+    out: &mut Vec<Token>,
+) -> usize {
     out.push(Token {
         kind: SyntaxKind::NovelHash,
         start: offset + hash_pos,

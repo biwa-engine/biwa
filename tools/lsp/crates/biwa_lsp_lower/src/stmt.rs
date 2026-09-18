@@ -265,7 +265,9 @@ fn lower_if_stmt(
             continue;
         }
         let else_node = children.eat_node(SyntaxKind::BlockStmt)?;
-        final_else = Some(lower_block_stmt_strict(mod_id, interner, &else_node, errors));
+        final_else = Some(lower_block_stmt_strict(
+            mod_id, interner, &else_node, errors,
+        ));
         break;
     }
 
@@ -356,7 +358,9 @@ pub(crate) fn lower_stmt(
         }
         SyntaxKind::MatchStmt => lower_match_stmt(mod_id, interner, node, errors).map(Stmt::Match),
         SyntaxKind::ExprStmt => lower_expr_stmt(mod_id, interner, node, errors).map(Stmt::Expr),
-        SyntaxKind::AssignStmt => lower_assign_stmt(mod_id, interner, node, errors).map(Stmt::Assign),
+        SyntaxKind::AssignStmt => {
+            lower_assign_stmt(mod_id, interner, node, errors).map(Stmt::Assign)
+        }
         SyntaxKind::BlockStmt => Some(Stmt::Block(lower_block_stmt_strict(
             mod_id, interner, node, errors,
         ))),

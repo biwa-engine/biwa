@@ -2,13 +2,22 @@ use crate::grammar::{ParseResult, parse_root};
 use biwa_lsp_lexer::{SyntaxKind, Token, lex};
 use rowan::GreenNodeBuilder;
 
+/// 構文エラー1件。`start`/`end` はソース全体に対する byte offset で、
+/// LSP の `Range` (line/col) への変換は呼び出し側 (biwa_lsp_server) が行う。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseError {
+    pub message: String,
+    pub start: usize,
+    pub end: usize,
+}
+
 /// トークン列を保持しながら CST を構築するパーサ状態。
 pub struct Parser<'src> {
     src: &'src str,
     pub(crate) tokens: Vec<Token>,
     pub(crate) pos: usize,
     pub(crate) builder: GreenNodeBuilder<'static>,
-    pub(crate) errors: Vec<String>,
+    pub(crate) errors: Vec<ParseError>,
     /// 構造体リテラルを式として認めない区間にいるか。
     ///
     /// `if`/`while`/`for .. in`/`match` の対象式は直後にブロックの `{` が来るため、
@@ -63,6 +72,24 @@ impl<'src> Parser<'src> {
         self.current_non_trivia() == kind
     }
 
+    /// 現在位置のトークンの byte range。EOF ならソース末尾 (長さ0) を指す。
+    pub(crate) fn current_span(&self) -> (usize, usize) {
+        match self.tokens.get(self.pos) {
+            Some(t) => (t.start, t.end),
+            None => (self.src.len(), self.src.len()),
+        }
+    }
+
+    /// 現在位置を指すエラーを記録する。
+    pub(crate) fn push_error(&mut self, message: impl Into<String>) {
+        let (start, end) = self.current_span();
+        self.errors.push(ParseError {
+            message: message.into(),
+            start,
+            end,
+        });
+    }
+
     // ── トークン消費 ──────────────────────────────────────────────────────────
 
     /// 1トークンを CST に追加して進む。
@@ -90,7 +117,7 @@ impl<'src> Parser<'src> {
             self.bump();
         } else {
             let msg = format!("expected {:?} but found {:?}", kind, self.current());
-            self.errors.push(msg);
+            self.push_error(msg);
             // エラー回復: エラーノードとして現在トークンを消費
             if self.current() != SyntaxKind::Eof {
                 self.builder.start_node(SyntaxKind::Error.into());

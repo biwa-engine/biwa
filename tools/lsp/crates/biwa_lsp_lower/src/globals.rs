@@ -2,9 +2,9 @@ use std::cell::OnceCell;
 
 use biwa_lsp_lexer::SyntaxKind;
 use biwac_ast::{
-    ArgDecl, ArgDeclList, Attrs, EnumDef, FnDef, Globals, ImplBlock, ImportDecl,
-    MethodArgDeclList, MethodDef, ModAst, NovelScene, StructDef, TraitDef, TraitItemArgs,
-    TraitItemDecl, TypeDef, VariantDecl, VariantFieldsDecl,
+    ArgDecl, ArgDeclList, Attrs, EnumDef, FnDef, Globals, ImplBlock, ImportDecl, MethodArgDeclList,
+    MethodDef, ModAst, NovelScene, StructDef, TraitDef, TraitItemArgs, TraitItemDecl, TypeDef,
+    VariantDecl, VariantFieldsDecl,
     symbols::globals::{GenArgDeclItem, GenArgsDecl},
 };
 use biwac_base::{IdentInterner, ModId, ModPath};

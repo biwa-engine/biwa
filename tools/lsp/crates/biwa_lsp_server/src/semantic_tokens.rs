@@ -1,5 +1,5 @@
-use tower_lsp::lsp_types::SemanticToken;
 use biwa_lsp_highlight::{HighlightToken, TokenType};
+use tower_lsp::lsp_types::SemanticToken;
 
 /// LSP legend に渡すトークン型名の配列。インデックスが token type 番号になる。
 pub const TOKEN_TYPES_LEGEND: &[&str] = &[
@@ -21,26 +21,26 @@ pub const TOKEN_TYPES_LEGEND: &[&str] = &[
 
 fn token_type_index(tt: TokenType) -> u32 {
     match tt {
-        TokenType::Keyword        => 0,
-        TokenType::Type           => 1,
-        TokenType::Function       => 2,
-        TokenType::Variable       => 3,
-        TokenType::Parameter      => 4,
-        TokenType::Property       => 5,
-        TokenType::Number         => 6,
-        TokenType::String         => 7,
-        TokenType::Comment        => 8,
-        TokenType::Operator       => 9,
-        TokenType::Namespace      => 10,
-        TokenType::NovelText      => 11,
-        TokenType::NovelCommand   => 12,
+        TokenType::Keyword => 0,
+        TokenType::Type => 1,
+        TokenType::Function => 2,
+        TokenType::Variable => 3,
+        TokenType::Parameter => 4,
+        TokenType::Property => 5,
+        TokenType::Number => 6,
+        TokenType::String => 7,
+        TokenType::Comment => 8,
+        TokenType::Operator => 9,
+        TokenType::Namespace => 10,
+        TokenType::NovelText => 11,
+        TokenType::NovelCommand => 12,
         TokenType::NovelCharacter => 13,
     }
 }
 
 /// byte offset を (line, utf16_col) に変換するためのマッピングを構築する。
 /// line は 0-based、col は utf-16 code unit 単位 (LSP の規約)。
-fn build_line_index(src: &str) -> Vec<usize> {
+pub(crate) fn build_line_index(src: &str) -> Vec<usize> {
     // 各行の開始 byte offset を格納
     let mut line_starts = vec![0usize];
     for (i, b) in src.bytes().enumerate() {
@@ -51,7 +51,11 @@ fn build_line_index(src: &str) -> Vec<usize> {
     line_starts
 }
 
-fn offset_to_line_col(line_starts: &[usize], src: &str, byte_offset: usize) -> (u32, u32) {
+pub(crate) fn offset_to_line_col(
+    line_starts: &[usize],
+    src: &str,
+    byte_offset: usize,
+) -> (u32, u32) {
     // binary search で行を特定
     let line = line_starts.partition_point(|&start| start <= byte_offset) - 1;
     let line_start_byte = line_starts[line];
@@ -78,7 +82,10 @@ pub fn encode_semantic_tokens(src: &str, tokens: &[HighlightToken]) -> Vec<Seman
             // 複数行にまたがるトークンは最初の行分だけ長さを取る
             let first_line_len = text.find('\n').unwrap_or(text.len());
             // utf-16 length
-            text[..first_line_len].chars().map(|c| c.len_utf16()).sum::<usize>() as u32
+            text[..first_line_len]
+                .chars()
+                .map(|c| c.len_utf16())
+                .sum::<usize>() as u32
         };
 
         let delta_line = line - prev_line;
@@ -125,7 +132,10 @@ mod tests {
         let encoded = encode_semantic_tokens(src, &toks);
         // delta encoding: 2行目以降のトークンは delta_line > 0
         let has_multiline = encoded.iter().any(|t| t.delta_line > 0);
-        assert!(has_multiline, "multiline source must produce delta_line > 0");
+        assert!(
+            has_multiline,
+            "multiline source must produce delta_line > 0"
+        );
     }
 
     #[test]
