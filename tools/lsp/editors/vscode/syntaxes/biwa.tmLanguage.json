@@ -34,13 +34,13 @@
         },
         {
           "name": "constant.language.biwa",
-          "match": "\\b(TRUE|FALSE|NONE)\\b"
+          "match": "\\b(TRUE|FALSE)\\b"
         }
       ]
     },
     "builtin-types": {
       "name": "support.type.primitive.biwa",
-      "match": "\\b(Void|Int|Uint|Float|Bool)\\b"
+      "match": "\\b(Int|Uint|Float|Bool)\\b"
     },
     "literals": {
       "patterns": [

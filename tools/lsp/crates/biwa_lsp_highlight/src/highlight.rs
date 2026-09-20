@@ -120,10 +120,9 @@ fn token_type_for(kind: SyntaxKind, parent: Option<SyntaxKind>) -> Option<TokenT
 
         // ── built-in types ────────────────────────────────────────────────────
         // `Void` は無い (`biwa_lsp_lexer::SyntaxKind` のコメント参照)。
-        SyntaxKind::KwInt
-        | SyntaxKind::KwUint
-        | SyntaxKind::KwFloat
-        | SyntaxKind::KwBool => Some(TokenType::Type),
+        SyntaxKind::KwInt | SyntaxKind::KwUint | SyntaxKind::KwFloat | SyntaxKind::KwBool => {
+            Some(TokenType::Type)
+        }
 
         // ── literals ──────────────────────────────────────────────────────────
         SyntaxKind::TrueLiteral | SyntaxKind::FalseLiteral | SyntaxKind::NoneLiteral => {
@@ -136,9 +135,9 @@ fn token_type_for(kind: SyntaxKind, parent: Option<SyntaxKind>) -> Option<TokenT
 
         // ── identifiers: 親ノードによって種別を変える ─────────────────────────
         SyntaxKind::Ident => match parent {
-            Some(SyntaxKind::FunctionDef) | Some(SyntaxKind::MethodDef) => {
-                Some(TokenType::Function)
-            }
+            Some(SyntaxKind::FunctionDef)
+            | Some(SyntaxKind::MethodDef)
+            | Some(SyntaxKind::SceneDef) => Some(TokenType::Function),
 
             Some(SyntaxKind::FunctionArgDecl) | Some(SyntaxKind::MethodArgDecl) => {
                 Some(TokenType::Parameter)
@@ -189,7 +188,7 @@ fn token_type_for(kind: SyntaxKind, parent: Option<SyntaxKind>) -> Option<TokenT
         SyntaxKind::NovelText => Some(TokenType::NovelText),
         SyntaxKind::NovelAt => Some(TokenType::NovelCharacter),
         SyntaxKind::NovelHash => Some(TokenType::NovelCommand),
-        SyntaxKind::NovelDollar => Some(TokenType::Operator),
+        SyntaxKind::NovelDollar => Some(TokenType::NovelCommand),
         SyntaxKind::NovelWait => Some(TokenType::NovelCommand),
 
         _ => None,

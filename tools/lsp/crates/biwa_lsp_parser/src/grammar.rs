@@ -500,10 +500,7 @@ fn parse_type_repr(p: &mut Parser) {
     p.start_node(SyntaxKind::TypeRepr);
     p.skip_trivia();
     match p.current_non_trivia() {
-        SyntaxKind::KwInt
-        | SyntaxKind::KwUint
-        | SyntaxKind::KwFloat
-        | SyntaxKind::KwBool => {
+        SyntaxKind::KwInt | SyntaxKind::KwUint | SyntaxKind::KwFloat | SyntaxKind::KwBool => {
             p.skip_trivia();
             p.bump();
         }
@@ -1280,7 +1277,10 @@ Hello! $blue(bold("a"))!
     fn assert_lossless(src: &str) {
         let result = parse(src);
         let tree_text = result.syntax().text().to_string();
-        assert_eq!(tree_text, src, "parsed tree must reproduce the source exactly");
+        assert_eq!(
+            tree_text, src,
+            "parsed tree must reproduce the source exactly"
+        );
     }
 
     #[test]

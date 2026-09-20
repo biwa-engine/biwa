@@ -861,7 +861,10 @@ mod tests {
             }
             rebuilt.push_str(&src[t.start..t.end]);
         }
-        assert_eq!(rebuilt, src, "token concatenation must reproduce the source exactly");
+        assert_eq!(
+            rebuilt, src,
+            "token concatenation must reproduce the source exactly"
+        );
     }
 
     #[test]
@@ -897,8 +900,15 @@ mod tests {
     fn lex_wait_command() {
         let src = "scene s(g: G) -> G {{\nHello! >>\n}}\n";
         let toks = lex(src);
-        let wait: Vec<_> = toks.iter().filter(|t| t.kind == SyntaxKind::NovelWait).collect();
-        assert_eq!(wait.len(), 1, "expected exactly one NovelWait token, got {toks:?}");
+        let wait: Vec<_> = toks
+            .iter()
+            .filter(|t| t.kind == SyntaxKind::NovelWait)
+            .collect();
+        assert_eq!(
+            wait.len(),
+            1,
+            "expected exactly one NovelWait token, got {toks:?}"
+        );
         assert_eq!(&src[wait[0].start..wait[0].end], ">>");
         assert_lossless(src);
     }

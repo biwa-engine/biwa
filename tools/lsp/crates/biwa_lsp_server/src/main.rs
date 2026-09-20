@@ -71,7 +71,10 @@ impl LanguageServer for Backend {
         self.client
             .log_message(
                 MessageType::INFO,
-                format!("biwa-lsp v{} initialized, binary: {exe_info}", env!("CARGO_PKG_VERSION")),
+                format!(
+                    "biwa-lsp v{} initialized, binary: {exe_info}",
+                    env!("CARGO_PKG_VERSION")
+                ),
             )
             .await;
     }
