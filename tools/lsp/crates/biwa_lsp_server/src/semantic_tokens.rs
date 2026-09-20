@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn single_token() {
         // "fn" は offset 0..2
-        let src = "fn add() -> Void {}";
+        let src = "fn add() {}";
         let toks = biwa_lsp_highlight::highlight(src);
         let encoded = encode_semantic_tokens(src, &toks);
         // 最初のトークンの delta_line と delta_start は 0
@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn multiline_tokens() {
-        let src = "fn add(\n  x: Int\n) -> Void {}";
+        let src = "fn add(\n  x: Int\n) {}";
         let toks = biwa_lsp_highlight::highlight(src);
         let encoded = encode_semantic_tokens(src, &toks);
         // delta encoding: 2行目以降のトークンは delta_line > 0

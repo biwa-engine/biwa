@@ -119,8 +119,8 @@ fn token_type_for(kind: SyntaxKind, parent: Option<SyntaxKind>) -> Option<TokenT
         | SyntaxKind::KwUnderscore => Some(TokenType::Keyword),
 
         // ── built-in types ────────────────────────────────────────────────────
-        SyntaxKind::KwVoid
-        | SyntaxKind::KwInt
+        // `Void` は無い (`biwa_lsp_lexer::SyntaxKind` のコメント参照)。
+        SyntaxKind::KwInt
         | SyntaxKind::KwUint
         | SyntaxKind::KwFloat
         | SyntaxKind::KwBool => Some(TokenType::Type),
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn highlight_comment() {
-        let src = "// hello\nfn f() -> Void {}";
+        let src = "// hello\nfn f() {}";
         let ts = types(src);
         assert!(ts.contains(&TokenType::Comment));
     }
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn highlight_string() {
-        let src = r#"fn f() -> Void { let s = "hello"; }"#;
+        let src = r#"fn f() { let s = "hello"; }"#;
         let ts = types(src);
         assert!(ts.contains(&TokenType::String));
     }

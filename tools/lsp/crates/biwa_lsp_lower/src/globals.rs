@@ -3,8 +3,8 @@ use std::cell::OnceCell;
 use biwa_lsp_lexer::SyntaxKind;
 use biwac_ast::{
     ArgDecl, ArgDeclList, Attrs, EnumDef, FnDef, Globals, ImplBlock, ImportDecl, MethodArgDeclList,
-    MethodDef, ModAst, NovelScene, StructDef, TraitDef, TraitItemArgs, TraitItemDecl, TypeDef,
-    VariantDecl, VariantFieldsDecl,
+    MethodDef, ModAst, NovelScene, StructDef, TraitDef, TraitItemArgs, TraitItemDecl, TypeAlias,
+    TypeDef, VariantDecl, VariantFieldsDecl,
     symbols::globals::{GenArgDeclItem, GenArgsDecl},
 };
 use biwac_base::{IdentInterner, ModId, ModPath};
@@ -12,7 +12,7 @@ use biwac_span::{GenDefId, LocalGenDefId, Span};
 
 use crate::cursor::{Children, SyntaxNode, elem_kind, intern_ident_token, node_span, token_span};
 use crate::error::LowerError;
-use crate::path_ty::{lower_ident_path, lower_ret_type_repr, lower_type_repr};
+use crate::path_ty::{lower_ident_path, lower_optional_return_type, lower_type_repr};
 use crate::stmt::lower_fn_body;
 
 /// `[T, U: A && B]` (宣言。使用時の型引数指定 `GenericsArgList` とは別物)。
@@ -153,10 +153,7 @@ fn lower_fn_def(
 
     let args_node = children.eat_node(SyntaxKind::FunctionArgDecl)?;
     let args = lower_plain_arg_decl_list(mod_id, interner, &args_node, errors);
-
-    children.eat_token(SyntaxKind::Arrow);
-    let ret_node = children.eat_node(SyntaxKind::TypeRepr)?;
-    let rtype = lower_ret_type_repr(mod_id, interner, &ret_node, errors)?;
+    let rtype = lower_optional_return_type(mod_id, interner, &mut children, &args.span, errors)?;
 
     let body_node = children.eat_node(SyntaxKind::BlockStmt)?;
     let (stmts, expr, _) = lower_fn_body(mod_id, interner, &body_node, errors);
@@ -192,10 +189,7 @@ fn lower_method_def(
 
     let args_node = children.eat_node(SyntaxKind::MethodArgDecl)?;
     let args = lower_method_arg_decl_list(mod_id, interner, &args_node, errors)?;
-
-    children.eat_token(SyntaxKind::Arrow);
-    let ret_node = children.eat_node(SyntaxKind::TypeRepr)?;
-    let rtype = lower_ret_type_repr(mod_id, interner, &ret_node, errors)?;
+    let rtype = lower_optional_return_type(mod_id, interner, &mut children, &args.span, errors)?;
 
     let body_node = children.eat_node(SyntaxKind::BlockStmt)?;
     let (stmts, expr, _) = lower_fn_body(mod_id, interner, &body_node, errors);
@@ -249,6 +243,36 @@ fn lower_struct_def(
         def_id: OnceCell::new(),
         members,
         genargs,
+        attrs: Attrs::empty(),
+    })
+}
+
+/// `type X = <type>;` / `type X[T] = <type>;`
+fn lower_type_alias_def(
+    mod_id: ModId,
+    interner: &mut IdentInterner,
+    node: &SyntaxNode,
+    errors: &mut Vec<LowerError>,
+) -> Option<TypeAlias> {
+    let mut children = Children::of(node);
+    children.eat_token(SyntaxKind::KwType);
+    let id_tok = children.eat_token(SyntaxKind::Ident)?;
+    let ident = intern_ident_token(mod_id, interner, &id_tok);
+
+    let genargs = children
+        .eat_node(SyntaxKind::GenericsArgDecl)
+        .map(|n| lower_generics_arg_decl::<GenDefId>(mod_id, interner, &n, errors));
+
+    children.eat_token(SyntaxKind::Eq);
+    let right_node = children.eat_node(SyntaxKind::TypeRepr)?;
+    let right = lower_type_repr(mod_id, interner, &right_node, errors)?;
+    children.eat_token(SyntaxKind::Semi);
+
+    Some(TypeAlias {
+        ident,
+        def_id: OnceCell::new(),
+        genargs,
+        right,
         attrs: Attrs::empty(),
     })
 }
@@ -444,10 +468,12 @@ fn lower_trait_item_decl(
         ));
         return None;
     };
+    let args_span = match &args {
+        TraitItemArgs::Assoc(a) => a.span.clone(),
+        TraitItemArgs::Method(a) => a.span.clone(),
+    };
 
-    children.eat_token(SyntaxKind::Arrow);
-    let ret_node = children.eat_node(SyntaxKind::TypeRepr)?;
-    let rtype = lower_ret_type_repr(mod_id, interner, &ret_node, errors)?;
+    let rtype = lower_optional_return_type(mod_id, interner, &mut children, &args_span, errors)?;
     children.eat_token(SyntaxKind::Semi);
 
     Some(TraitItemDecl {
@@ -568,10 +594,7 @@ fn lower_scene_def(
 
     let args_node = children.eat_node(SyntaxKind::FunctionArgDecl)?;
     let args = lower_plain_arg_decl_list(mod_id, interner, &args_node, errors);
-
-    children.eat_token(SyntaxKind::Arrow);
-    let ret_node = children.eat_node(SyntaxKind::TypeRepr)?;
-    let rtype = lower_ret_type_repr(mod_id, interner, &ret_node, errors)?;
+    let rtype = lower_optional_return_type(mod_id, interner, &mut children, &args.span, errors)?;
 
     children.eat_token(SyntaxKind::DoubleLBrace);
     // ノベルモードの本体 (`NovelModeBody`) は今のところ構造を持たないトークンの
@@ -646,11 +669,9 @@ pub fn lower_module(
             }
             SyntaxKind::TypeAliasDef => {
                 let n = children.eat_node(SyntaxKind::TypeAliasDef).expect("peeked");
-                errors.push(LowerError::new(
-                    "type alias right-hand side (`= <type>`) is not parsed by \
-                     biwa-lsp-parser yet; this declaration was dropped",
-                    node_span(mod_id, &n),
-                ));
+                if let Some(t) = lower_type_alias_def(mod_id, interner, &n, &mut errors) {
+                    globals.push(Globals::TypeDef(TypeDef::TypeAlias(t)));
+                }
             }
             SyntaxKind::ImplBlock => {
                 let n = children.eat_node(SyntaxKind::ImplBlock).expect("peeked");

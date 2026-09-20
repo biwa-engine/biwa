@@ -178,12 +178,54 @@ struct StillParses { a: Int }
 }
 
 #[test]
-fn type_alias_is_dropped_with_an_error_until_cst_parses_its_rhs() {
-    // biwa-lsp-parser の TypeAliasDef は `type X;` までしか読まず
-    // `= <type>` を読まないため、biwac_ast::TypeAlias を組み立てられない。
-    let (ast, errors) = lower("type Foo;");
-    assert!(ast.globals.is_empty());
-    assert!(!errors.is_empty());
+fn lowers_type_alias_def() {
+    let (ast, errors) = lower("type MyInt = Int;");
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    assert_eq!(ast.globals.len(), 1);
+    let Globals::TypeDef(TypeDef::TypeAlias(alias)) = &ast.globals[0] else {
+        panic!("expected a type alias, got {:?}", ast.globals[0]);
+    };
+    assert!(matches!(
+        alias.right.val,
+        biwac_ast::TypReprVal::Primitive(biwac_ast::PrimTyp::Int)
+    ));
+}
+
+#[test]
+fn lowers_type_alias_with_generics_and_genarg_type() {
+    let (ast, errors) = lower("type Boxed[T] = Box[T];");
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::TypeDef(TypeDef::TypeAlias(alias)) = &ast.globals[0] else {
+        panic!("expected a type alias");
+    };
+    assert!(alias.genargs.is_some());
+    assert!(matches!(alias.right.val, biwac_ast::TypReprVal::Defined(_)));
+}
+
+#[test]
+fn omitted_arrow_lowers_to_void_return_type() {
+    let (ast, errors) = lower("fn nothing() {}");
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::FnDef(f) = &ast.globals[0] else {
+        panic!("expected a fn def");
+    };
+    assert!(matches!(f.rtype, biwac_ast::RetTypRepr::Void(_)));
+}
+
+#[test]
+fn explicit_void_named_type_is_a_defined_type_not_the_void_variant() {
+    // 実コンパイラに `Void` というキーワードは無いので、`-> Void` は
+    // 「`Void` という名前の型を参照する」普通の戻り値注釈になる
+    // (未解決な名前だが、それは名前解決の仕事であって構文エラーではない)。
+    let (ast, errors) = lower("fn f() -> Void { 1 }");
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::FnDef(f) = &ast.globals[0] else {
+        panic!("expected a fn def");
+    };
+    let biwac_ast::RetTypRepr::Typ(t) = &f.rtype else {
+        panic!("expected an explicit return type, got {:?}", f.rtype);
+    };
+    assert!(matches!(t.val, biwac_ast::TypReprVal::Defined(_)));
 }
 
 #[test]

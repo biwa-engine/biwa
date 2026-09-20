@@ -1,6 +1,7 @@
 use biwa_lsp_lexer::SyntaxKind;
 use biwac_ast::{Path, PathSegment, PrimTyp, RetTypRepr, TypRepr, TypReprVal};
 use biwac_base::{IdentInterner, ModId};
+use biwac_span::Span;
 
 use crate::cursor::{Children, SyntaxNode, intern_ident_token, node_span};
 use crate::error::LowerError;
@@ -82,9 +83,9 @@ fn lower_generics_arg_list(
 
 /// `TypeRepr` ノードを `biwac_ast::TypRepr` に直す。
 ///
-/// `Void` はここでは扱わない。実コンパイラにおいて `Void` は「型」ではなく
-/// 戻り値注釈を省略したときの意味でしかなく、`TypReprVal` に対応する
-/// バリアントを持たない。戻り値位置は [`lower_ret_type_repr`] を使うこと。
+/// 戻り値注釈 (`-> T`) の省略による void は、この関数の外
+/// (呼び出し側で `->` の有無を見て `RetTypRepr::Void`/`RetTypRepr::Typ` を
+/// 組み立てる形) で扱う。実コンパイラに `Void` というキーワードは無い。
 pub(crate) fn lower_type_repr(
     mod_id: ModId,
     interner: &mut IdentInterner,
@@ -123,14 +124,6 @@ pub(crate) fn lower_type_repr(
                 span,
             })
         }
-        Some(SyntaxKind::KwVoid) => {
-            errors.push(LowerError::new(
-                "`Void` is not a type here; the compiler AST only knows `Void` as \
-                 an omitted return type annotation",
-                span,
-            ));
-            None
-        }
         Some(SyntaxKind::IdentPath) => {
             let path_node = children.next_node()?;
             let path = lower_ident_path(mod_id, interner, &path_node)?;
@@ -150,20 +143,24 @@ pub(crate) fn lower_type_repr(
     }
 }
 
-/// 関数・シーンの戻り値注釈 (`TypeRepr` ノード、必ず 1 つ存在する) を
-/// `RetTypRepr` に直す。CST は必ず `->` を要求するため、
-/// 実コンパイラのような「`->` を省略したら Void」の形にはならない。
-/// その代わり明示的に `Void` キーワードを書く形を Void とみなす
-/// (biwa-lsp-lexer 独自の拡張。[`crate`] のドキュメントを参照)。
-pub(crate) fn lower_ret_type_repr(
+/// `(-> <type-repr>)?` を読んで `RetTypRepr` にする。省略時は void
+/// (`args_span` の終端を指す 0 幅の span を使う。biwac_parser の
+/// `consume_return_type` が引数リストの終端で作る span と同じ考え方)。
+/// 呼び出し側は `Arrow` の手前まで読み進めた `Children` を渡すこと。
+pub(crate) fn lower_optional_return_type(
     mod_id: ModId,
     interner: &mut IdentInterner,
-    node: &SyntaxNode,
+    children: &mut Children,
+    args_span: &Span,
     errors: &mut Vec<LowerError>,
 ) -> Option<RetTypRepr> {
-    let mut children = Children::of(node);
-    if let Some(tok) = children.eat_token(SyntaxKind::KwVoid) {
-        return Some(RetTypRepr::Void(crate::cursor::token_span(mod_id, &tok)));
+    if children.eat_token(SyntaxKind::Arrow).is_some() {
+        let ret_node = children.eat_node(SyntaxKind::TypeRepr)?;
+        Some(RetTypRepr::Typ(lower_type_repr(
+            mod_id, interner, &ret_node, errors,
+        )?))
+    } else {
+        let end = args_span.end();
+        Some(RetTypRepr::Void(Span::new(mod_id, end, end)))
     }
-    lower_type_repr(mod_id, interner, node, errors).map(RetTypRepr::Typ)
 }

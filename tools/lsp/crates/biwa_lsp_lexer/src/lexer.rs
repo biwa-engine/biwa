@@ -82,8 +82,6 @@ enum CodeToken {
     KwTrait,
     #[token("_")]
     KwUnderscore,
-    #[token("Void")]
-    KwVoid,
     #[token("Int")]
     KwInt,
     #[token("Uint")]
@@ -198,7 +196,6 @@ fn code_token_to_syntax_kind(t: &CodeToken) -> SyntaxKind {
         CodeToken::KwMatch => SyntaxKind::KwMatch,
         CodeToken::KwTrait => SyntaxKind::KwTrait,
         CodeToken::KwUnderscore => SyntaxKind::KwUnderscore,
-        CodeToken::KwVoid => SyntaxKind::KwVoid,
         CodeToken::KwInt => SyntaxKind::KwInt,
         CodeToken::KwUint => SyntaxKind::KwUint,
         CodeToken::KwFloat => SyntaxKind::KwFloat,

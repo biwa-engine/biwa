@@ -41,7 +41,9 @@ pub enum SyntaxKind {
     KwUnderscore,
 
     // ── built-in types ───────────────────────────────────────────────────────
-    KwVoid,
+    // `Void` は無い。実コンパイラに `Void` キーワードは存在せず、
+    // 戻り値注釈 (`-> T`) を省略することで void を表す
+    // (`parse_function_def` などの `->` 省略可能な扱いを参照)。
     KwInt,
     KwUint,
     KwFloat,

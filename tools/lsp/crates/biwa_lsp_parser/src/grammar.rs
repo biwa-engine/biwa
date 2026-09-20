@@ -79,10 +79,20 @@ pub(crate) fn parse_function_def(p: &mut Parser) {
         parse_generics_arg_decl(p);
     }
     parse_function_arg_decl(p);
-    p.expect(SyntaxKind::Arrow);
-    parse_type_repr(p);
+    parse_optional_return_type(p);
     parse_block(p);
     p.finish_node();
+}
+
+/// `(-> <type-repr>)?`。省略時は void を表す。実コンパイラに `Void` という
+/// キーワードは無く、`->` そのものを省略することで戻り値なしを表す
+/// (`fn f() { .. }` と `fn f() -> Int { .. }` の対比)。
+fn parse_optional_return_type(p: &mut Parser) {
+    if p.at(SyntaxKind::Arrow) {
+        p.skip_trivia();
+        p.bump();
+        parse_type_repr(p);
+    }
 }
 
 fn parse_method_def(p: &mut Parser) {
@@ -95,8 +105,7 @@ fn parse_method_def(p: &mut Parser) {
         parse_generics_arg_decl(p);
     }
     parse_method_arg_decl(p);
-    p.expect(SyntaxKind::Arrow);
-    parse_type_repr(p);
+    parse_optional_return_type(p);
     parse_block(p);
     p.finish_node();
 }
@@ -282,8 +291,7 @@ fn parse_trait_item_decl(p: &mut Parser) {
     } else {
         parse_function_arg_decl(p);
     }
-    p.expect(SyntaxKind::Arrow);
-    parse_type_repr(p);
+    parse_optional_return_type(p);
     p.expect(SyntaxKind::Semi);
     p.finish_node();
 }
@@ -299,6 +307,8 @@ fn parse_type_alias_def(p: &mut Parser) {
     if p.at(SyntaxKind::LBracket) {
         parse_generics_arg_decl(p);
     }
+    p.expect(SyntaxKind::Eq);
+    parse_type_repr(p);
     p.expect(SyntaxKind::Semi);
     p.finish_node();
 }
@@ -416,8 +426,7 @@ fn parse_scene_def(p: &mut Parser) {
     p.skip_trivia();
     p.expect(SyntaxKind::Ident);
     parse_function_arg_decl(p);
-    p.expect(SyntaxKind::Arrow);
-    parse_type_repr(p);
+    parse_optional_return_type(p);
     // novel mode: {{ ... }}
     p.expect(SyntaxKind::DoubleLBrace);
     parse_novel_mode_body(p);
@@ -491,8 +500,7 @@ fn parse_type_repr(p: &mut Parser) {
     p.start_node(SyntaxKind::TypeRepr);
     p.skip_trivia();
     match p.current_non_trivia() {
-        SyntaxKind::KwVoid
-        | SyntaxKind::KwInt
+        SyntaxKind::KwInt
         | SyntaxKind::KwUint
         | SyntaxKind::KwFloat
         | SyntaxKind::KwBool => {
@@ -1082,7 +1090,13 @@ mod tests {
     #[test]
     fn parse_fn() {
         no_errors("fn add(x: Int, y: Int) -> Int { x }");
-        no_errors("fn nothing() -> Void {}");
+        // `->` を省略すると戻り値なし (void)。実コンパイラに `Void`
+        // というキーワードは無い (`docs/lexical.md` 参照はしていないが
+        // biwac_parser の `consume_return_type` と同じ規則)。
+        no_errors("fn nothing() {}");
+        // `Void` は今やただの識別子として読める (未解決の型参照になるだけで、
+        // 構文上のエラーにはならない)。
+        no_errors("fn nothing_named_void() -> Void {}");
     }
 
     #[test]
@@ -1165,6 +1179,13 @@ impl[T] Foo[T] {
 }
         "#,
         );
+    }
+
+    #[test]
+    fn parse_type_alias() {
+        no_errors("type MyInt = Int;");
+        no_errors("type MyGame = Game[MyGameCharacters, MyGameState];");
+        no_errors("type Boxed[T] = Box[T];");
     }
 
     #[test]
