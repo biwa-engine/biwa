@@ -54,7 +54,8 @@
             "entity.name.function.biwa"
           ],
           "variable": [
-            "variable.other.biwa"
+            "entity.name.variable.biwa",
+            "variable.other.readwrite.biwa"
           ],
           "parameter": [
             "variable.parameter.biwa"
@@ -78,7 +79,7 @@
             "entity.name.namespace.biwa"
           ],
           "novelText": [
-            "string.unquoted.novel-text.biwa"
+            "text.raw.novel.biwa"
           ],
           "novelCommand": [
             "keyword.control.command.biwa"

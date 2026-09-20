@@ -181,7 +181,7 @@
       "comment": "プレーンなテキスト行 (@ や # で始まらない行)。`match` (単発マッチ) では中に別のパターンを入れ子にできないため、`//` コメントや `$` 埋め込み式が行内のどこにあっても手前で行全体を食ってしまっていた。begin/end にして中身を別パターンに開放する。",
       "begin": "^(?!\\s*[@#\\}])(?=.*\\S)",
       "end": "$",
-      "name": "string.unquoted.novel-text.biwa",
+      "name": "text.raw.novel.biwa",
       "patterns": [
         { "include": "#comments" },
         { "include": "#novel-embedded-expr" },
