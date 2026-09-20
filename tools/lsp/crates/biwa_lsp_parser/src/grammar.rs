@@ -1250,4 +1250,30 @@ Hello! $blue(bold("a"))!
         );
         no_errors("scene s(g: G) -> G {{\n$(player.hp)\n}}\n");
     }
+
+    /// CST の再構成テキストが元のソースと一致すること (lossless)。
+    ///
+    /// 回帰テスト: ノベルモードで `#`/`@`/`}}` 行の行頭インデントが
+    /// トークン化されず、それ以降の CST の全ノードの位置がずれて
+    /// 壊れるバグがあった (biwa_lsp_lexer 側の修正と対で確認する)。
+    fn assert_lossless(src: &str) {
+        let result = parse(src);
+        let tree_text = result.syntax().text().to_string();
+        assert_eq!(tree_text, src, "parsed tree must reproduce the source exactly");
+    }
+
+    #[test]
+    fn scene_with_indented_novel_lines_is_lossless() {
+        assert_lossless(
+            r#"scene s(g: G) -> G {{
+    #let x = f(
+        1,
+        2, // continues
+    )
+    @biwa
+    text $foo(1).bar() more >>
+    }}
+"#,
+        );
+    }
 }

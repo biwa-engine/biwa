@@ -190,6 +190,7 @@ fn token_type_for(kind: SyntaxKind, parent: Option<SyntaxKind>) -> Option<TokenT
         SyntaxKind::NovelAt => Some(TokenType::NovelCharacter),
         SyntaxKind::NovelHash => Some(TokenType::NovelCommand),
         SyntaxKind::NovelDollar => Some(TokenType::Operator),
+        SyntaxKind::NovelWait => Some(TokenType::NovelCommand),
 
         _ => None,
     }

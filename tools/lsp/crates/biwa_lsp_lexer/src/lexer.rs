@@ -400,11 +400,23 @@ fn push_text(out: &mut Vec<Token>, offset: usize, from: usize, to: usize) {
 /// 地の文 (`@` 行の識別子より後ろも含む) を、`//` コメントと `$` 埋め込み式を
 /// 見分けながら `[start, limit)` の範囲で読む。
 fn scan_novel_text(src: &str, offset: usize, start: usize, limit: usize, out: &mut Vec<Token>) {
+    // `>>` (「待ち」コマンド。積んだ内容をまとめて出してクリックを待つ)。
+    // 行 (trailing の空白を除く) の末尾がこれなら、そこで地の文を打ち切る。
+    // `biwac_novel_parser` の `WAIT_COMMAND` / `consume_raw_novel_line` と同じ規則
+    // (`docs/content-api.md`)。
+    let trimmed_end = src[start..limit].trim_end_matches([' ', '\t']).len();
+    let wait_at = if trimmed_end >= 2 && src[start..start + trimmed_end].ends_with(">>") {
+        Some(start + trimmed_end - 2)
+    } else {
+        None
+    };
+    let text_limit = wait_at.unwrap_or(limit);
+
     let mut i = start;
     let mut text_start = start;
 
-    while i < limit {
-        let rest = &src[i..limit];
+    while i < text_limit {
+        let rest = &src[i..text_limit];
         let c = rest.chars().next().expect("in range");
 
         if rest.starts_with("//") {
@@ -412,8 +424,16 @@ fn scan_novel_text(src: &str, offset: usize, start: usize, limit: usize, out: &m
             out.push(Token {
                 kind: SyntaxKind::LineComment,
                 start: offset + i,
-                end: offset + limit,
+                end: offset + text_limit,
             });
+            if let Some(wait_at) = wait_at {
+                out.push(Token {
+                    kind: SyntaxKind::NovelWait,
+                    start: offset + wait_at,
+                    end: offset + wait_at + 2,
+                });
+                push_text(out, offset, wait_at + 2, limit);
+            }
             return;
         }
 
@@ -425,7 +445,7 @@ fn scan_novel_text(src: &str, offset: usize, start: usize, limit: usize, out: &m
 
         if c == '$' {
             push_text(out, offset, text_start, i);
-            match scan_embedded_expr(src, offset, i, limit, out) {
+            match scan_embedded_expr(src, offset, i, text_limit, out) {
                 Some(end) => {
                     i = end;
                 }
@@ -447,6 +467,15 @@ fn scan_novel_text(src: &str, offset: usize, start: usize, limit: usize, out: &m
         i += c.len_utf8();
     }
     push_text(out, offset, text_start, i);
+
+    if let Some(wait_at) = wait_at {
+        out.push(Token {
+            kind: SyntaxKind::NovelWait,
+            start: offset + wait_at,
+            end: offset + wait_at + 2,
+        });
+        push_text(out, offset, wait_at + 2, limit);
+    }
 }
 
 /// `#` の位置から、継続する限り複数行にまたがるコマンドを読む。
@@ -514,20 +543,34 @@ fn lex_novel_segment(src: &str, offset: usize, out: &mut Vec<Token>) {
         }
         let has_newline = line_end < len;
 
-        // 行頭の空白 (インデント) は `#`/`@`/`}}` 行では読み捨ててよい。
-        // 生地の文では表示に反映されるので、こちらは触らない (下の分岐参照)。
+        // 行頭の空白 (インデント) は `#`/`@`/`}}` 行の種別判定では読み飛ばすが、
+        // rowan の CST は lossless (ソースの全バイトがどれかのトークンに属する)
+        // でなければならないので、判定用に読み飛ばした分も必ず別のトークンとして
+        // 出す (`Whitespace`)。生地の文では表示に反映される内容なので、
+        // こちらは読み飛ばさず `line_start` からそのままテキストとして読む
+        // (下の `else` 分岐参照)。
         let mut content_start = line_start;
         while content_start < line_end
             && (bytes[content_start] == b' ' || bytes[content_start] == b'\t')
         {
             content_start += 1;
         }
+        let push_indent = |out: &mut Vec<Token>| {
+            if content_start > line_start {
+                out.push(Token {
+                    kind: SyntaxKind::Whitespace,
+                    start: offset + line_start,
+                    end: offset + content_start,
+                });
+            }
+        };
 
         let is_end_brace = content_start + 1 < len
             && bytes[content_start] == b'}'
             && bytes[content_start + 1] == b'}';
 
         if is_end_brace {
+            push_indent(out);
             out.push(Token {
                 kind: SyntaxKind::DoubleRBrace,
                 start: offset + content_start,
@@ -544,11 +587,20 @@ fn lex_novel_segment(src: &str, offset: usize, out: &mut Vec<Token>) {
             }
             pos = line_end;
         } else if content_start >= line_end {
-            // 空行
+            // 空行 (空白のみ、または完全に空)。
+            if line_end > line_start {
+                out.push(Token {
+                    kind: SyntaxKind::Whitespace,
+                    start: offset + line_start,
+                    end: offset + line_end,
+                });
+            }
             pos = line_end;
         } else if bytes[content_start] == b'#' {
+            push_indent(out);
             pos = scan_hash_command(src, offset, content_start, len, out);
         } else if bytes[content_start] == b'@' {
+            push_indent(out);
             out.push(Token {
                 kind: SyntaxKind::NovelAt,
                 start: offset + content_start,
@@ -797,5 +849,76 @@ mod tests {
         let ks = kinds("_probe");
         assert!(ks.contains(&SyntaxKind::Ident));
         assert!(!ks.contains(&SyntaxKind::KwUnderscore));
+    }
+
+    /// トークン列を素朴に連結したものが元のソースと一致すること
+    /// (lossless: すべてのバイトがどれかのトークンに属する)。
+    /// rowan の CST はこれが成り立っていないと、あるノード以降の
+    /// 位置がすべてずれて壊れる。
+    fn assert_lossless(src: &str) {
+        let toks = lex(src);
+        let mut rebuilt = String::new();
+        for t in &toks {
+            if t.kind == SyntaxKind::Eof {
+                continue;
+            }
+            rebuilt.push_str(&src[t.start..t.end]);
+        }
+        assert_eq!(rebuilt, src, "token concatenation must reproduce the source exactly");
+    }
+
+    #[test]
+    fn indented_hash_command_is_lossless() {
+        // 回帰テスト: `#`/`@`/`}}` 行の行頭インデントがトークン化されず、
+        // それ以降のノベルモード全体の位置がずれるバグがあった。
+        assert_lossless("scene s(g: G) -> G {{\n    #play_se(se1)\n}}\n");
+    }
+
+    #[test]
+    fn indented_at_line_is_lossless() {
+        assert_lossless("scene s(g: G) -> G {{\n    @biwa\n    こんにちは\n}}\n");
+    }
+
+    #[test]
+    fn indented_end_brace_is_lossless() {
+        assert_lossless("scene s(g: G) -> G {{\n  text\n    }}\n");
+    }
+
+    #[test]
+    fn blank_line_with_only_whitespace_is_lossless() {
+        assert_lossless("scene s(g: G) -> G {{\n text\n    \nmore\n}}\n");
+    }
+
+    #[test]
+    fn multiline_scene_with_continuation_and_comments_is_lossless() {
+        assert_lossless(
+            "scene s(g: G) -> G {{\n    #let x = f(\n        1,\n        2, // comment\n    )\n    text $foo(1).bar() more >>\n}}\n",
+        );
+    }
+
+    #[test]
+    fn lex_wait_command() {
+        let src = "scene s(g: G) -> G {{\nHello! >>\n}}\n";
+        let toks = lex(src);
+        let wait: Vec<_> = toks.iter().filter(|t| t.kind == SyntaxKind::NovelWait).collect();
+        assert_eq!(wait.len(), 1, "expected exactly one NovelWait token, got {toks:?}");
+        assert_eq!(&src[wait[0].start..wait[0].end], ">>");
+        assert_lossless(src);
+    }
+
+    #[test]
+    fn wait_command_after_embedded_expr_is_lossless() {
+        let src = "scene s(g: G) -> G {{\ntext $blue(bold(\"a\")) more >>\n}}\n";
+        assert_lossless(src);
+        let toks = lex(src);
+        assert!(toks.iter().any(|t| t.kind == SyntaxKind::NovelWait));
+    }
+
+    #[test]
+    fn wait_command_without_preceding_text_produces_no_empty_error_tokens() {
+        let src = "scene s(g: G) -> G {{\n>>\n}}\n";
+        assert_lossless(src);
+        let toks = lex(src);
+        assert!(!toks.iter().any(|t| t.kind == SyntaxKind::Error));
     }
 }
