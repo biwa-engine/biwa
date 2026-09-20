@@ -22,7 +22,7 @@
       "patterns": [
         {
           "name": "keyword.control.biwa",
-          "match": "\\b(if|else|while|for|in|return|match)\\b"
+          "match": "\\b(if|else|while|for|in|return|match|endscene)\\b"
         },
         {
           "name": "keyword.declaration.biwa",
@@ -152,20 +152,42 @@
       },
       "name": "meta.novel-mode.biwa",
       "patterns": [
-        { "include": "#comments" },
         {
           "name": "entity.name.tag.character.biwa",
           "match": "^\\s*(@[^\\n]*)$"
         },
-        {
-          "name": "keyword.control.command.biwa",
-          "match": "^\\s*(#[^\\n]*)$"
-        },
+        { "include": "#novel-hash-command-line" },
+        { "include": "#novel-raw-text-line" }
+      ]
+    },
+    "novel-hash-command-line": {
+      "comment": "`#` コマンド行の中身は通常コードの文なので、キーワード・文字列・数値・演算子を通常コードと同じパターンで塗る。ただし TextMate は行をまたぐ状態を持てないため、`(`/`[`/`,`/`.`/`::` で終わって次行へ継続する場合、継続行はこの行の続きとしては塗れない (`novel-raw-text-line` 側に落ちる)。継続行も含めた正確な色付けは LSP の semantic tokens 側の仕事になる (`biwa_lsp_lexer::lex_novel_segment` 参照)。",
+      "begin": "^\\s*(#)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.command.biwa" }
+      },
+      "end": "$",
+      "name": "meta.novel-command.biwa",
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#keywords" },
+        { "include": "#builtin-types" },
+        { "include": "#literals" },
+        { "include": "#strings" },
+        { "include": "#operators" }
+      ]
+    },
+    "novel-raw-text-line": {
+      "comment": "プレーンなテキスト行 (@ や # で始まらない行)。`match` (単発マッチ) では中に別のパターンを入れ子にできないため、`//` コメントや `$` 埋め込み式が行内のどこにあっても手前で行全体を食ってしまっていた。begin/end にして中身を別パターンに開放する。",
+      "begin": "^(?!\\s*[@#\\}])(?=.*\\S)",
+      "end": "$",
+      "name": "string.unquoted.novel-text.biwa",
+      "patterns": [
+        { "include": "#comments" },
         { "include": "#novel-embedded-expr" },
         {
-          "comment": "プレーンなテキスト行 (@ や # で始まらない行)",
-          "name": "string.unquoted.novel-text.biwa",
-          "match": "^(?!\\s*[@#\\}]).*[^\\s].*$"
+          "name": "keyword.control.wait.biwa",
+          "match": "\\s*>>\\s*$"
         }
       ]
     },

@@ -54,8 +54,25 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
+        // 「今動いているバイナリはどれか」をすぐ確認できるように、実行ファイルの
+        // パスと更新時刻を出す (再ビルド後に古いバイナリを掴んでいないかの確認用)。
+        let exe_info = std::env::current_exe()
+            .ok()
+            .map(|p| {
+                let modified = std::fs::metadata(&p)
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .map(|t| format!("{t:?}"))
+                    .unwrap_or_else(|| "unknown".to_string());
+                format!("{} (modified: {modified})", p.display())
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+
         self.client
-            .log_message(MessageType::INFO, "biwa-lsp initialized")
+            .log_message(
+                MessageType::INFO,
+                format!("biwa-lsp v{} initialized, binary: {exe_info}", env!("CARGO_PKG_VERSION")),
+            )
             .await;
     }
 
@@ -97,13 +114,30 @@ impl LanguageServer for Backend {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
+        let uri = &params.text_document.uri;
         let docs = self.documents.read().await;
-        let Some(src) = docs.get(&params.text_document.uri) else {
+        let Some(src) = docs.get(uri) else {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!("semanticTokens/full: {uri} is not an open document (no cached text)"),
+                )
+                .await;
             return Ok(None);
         };
 
         let highlight_tokens = highlight(src);
         let data = encode_semantic_tokens(src, &highlight_tokens);
+        self.client
+            .log_message(
+                MessageType::LOG,
+                format!(
+                    "semanticTokens/full: {uri} -> {} highlight tokens, {} encoded",
+                    highlight_tokens.len(),
+                    data.len()
+                ),
+            )
+            .await;
 
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             result_id: None,
@@ -135,6 +169,16 @@ impl Backend {
                 }
             })
             .collect();
+
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "publishDiagnostics: {uri} -> {} error(s)",
+                    diagnostics.len()
+                ),
+            )
+            .await;
 
         self.client
             .publish_diagnostics(uri.clone(), diagnostics, None)
