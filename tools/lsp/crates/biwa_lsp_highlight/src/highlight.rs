@@ -17,6 +17,8 @@ pub enum TokenType {
     Comment,
     Operator,
     Namespace,
+    Method,
+    Interface,
     // ノベルモード固有
     NovelText,
     NovelCommand,
@@ -38,6 +40,8 @@ impl TokenType {
             TokenType::Comment => "comment",
             TokenType::Operator => "operator",
             TokenType::Namespace => "namespace",
+            TokenType::Method => "method",
+            TokenType::Interface => "interface",
             TokenType::NovelText => "novelText",
             TokenType::NovelCommand => "novelCommand",
             TokenType::NovelCharacter => "novelCharacter",

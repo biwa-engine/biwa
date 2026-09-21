@@ -17,6 +17,8 @@ pub const TOKEN_TYPES_LEGEND: &[&str] = &[
     "novelText",      // 11
     "novelCommand",   // 12
     "novelCharacter", // 13
+    "method",         // 14
+    "interface",      // 15
 ];
 
 fn token_type_index(tt: TokenType) -> u32 {
@@ -35,6 +37,8 @@ fn token_type_index(tt: TokenType) -> u32 {
         TokenType::NovelText => 11,
         TokenType::NovelCommand => 12,
         TokenType::NovelCharacter => 13,
+        TokenType::Method => 14,
+        TokenType::Interface => 15,
     }
 }
 

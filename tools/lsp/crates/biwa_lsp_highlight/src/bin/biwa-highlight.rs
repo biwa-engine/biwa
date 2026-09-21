@@ -36,6 +36,8 @@ fn ansi_color(tt: TokenType) -> &'static str {
         TokenType::Comment => "\x1b[90m",        // dark gray
         TokenType::Operator => "\x1b[37m",       // light gray
         TokenType::Namespace => "\x1b[34m",      // blue
+        TokenType::Method => "\x1b[33;1m",       // bold yellow
+        TokenType::Interface => "\x1b[36;1m",    // bold cyan
         TokenType::NovelText => "\x1b[97;1m",    // bold white
         TokenType::NovelCommand => "\x1b[93m",   // bright yellow
         TokenType::NovelCharacter => "\x1b[95m", // bright magenta

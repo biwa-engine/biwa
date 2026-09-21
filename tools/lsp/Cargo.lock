@@ -106,10 +106,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "biwa_lsp_resolve"
+version = "0.1.0"
+dependencies = [
+ "biwa_lsp_lower",
+ "biwa_lsp_parser",
+ "biwac_ast",
+ "biwac_attribute",
+ "biwac_base",
+ "biwac_dependency_metadata",
+ "biwac_metadata_loader",
+ "biwac_name_resolver",
+ "biwac_package_loader",
+ "biwac_span",
+]
+
+[[package]]
 name = "biwa_lsp_server"
 version = "0.1.0"
 dependencies = [
  "biwa_lsp_highlight",
+ "biwa_lsp_resolve",
  "tokio",
  "tower-lsp",
 ]
@@ -118,6 +135,15 @@ dependencies = [
 name = "biwac_ast"
 version = "0.1.0"
 dependencies = [
+ "biwac_base",
+ "biwac_span",
+]
+
+[[package]]
+name = "biwac_attribute"
+version = "0.1.0"
+dependencies = [
+ "biwac_ast",
  "biwac_base",
  "biwac_span",
 ]
@@ -132,10 +158,111 @@ dependencies = [
 ]
 
 [[package]]
+name = "biwac_dependency_metadata"
+version = "0.1.0"
+dependencies = [
+ "biwac_base",
+ "biwac_hash",
+ "biwac_hir",
+ "biwac_lang_item",
+ "biwac_span",
+]
+
+[[package]]
 name = "biwac_hash"
 version = "0.1.0"
 dependencies = [
  "biwac_base",
+]
+
+[[package]]
+name = "biwac_hir"
+version = "0.1.0"
+dependencies = [
+ "biwac_ast",
+ "biwac_base",
+ "biwac_span",
+]
+
+[[package]]
+name = "biwac_lang_item"
+version = "0.1.0"
+dependencies = [
+ "biwac_base",
+ "biwac_span",
+]
+
+[[package]]
+name = "biwac_lexer"
+version = "0.1.0"
+dependencies = [
+ "ariadne",
+ "biwac_base",
+ "biwac_span",
+]
+
+[[package]]
+name = "biwac_metadata_loader"
+version = "0.1.0"
+dependencies = [
+ "biwac_base",
+ "colored",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "biwac_name_resolver"
+version = "0.1.0"
+dependencies = [
+ "ariadne",
+ "biwac_ast",
+ "biwac_attribute",
+ "biwac_base",
+ "biwac_dependency_metadata",
+ "biwac_hir",
+ "biwac_lang_item",
+ "biwac_lexer",
+ "biwac_metadata_loader",
+ "biwac_package_loader",
+ "biwac_span",
+ "biwac_trait_solver",
+]
+
+[[package]]
+name = "biwac_novel_parser"
+version = "0.1.0"
+dependencies = [
+ "ariadne",
+ "biwac_ast",
+ "biwac_base",
+ "biwac_hir",
+ "biwac_span",
+]
+
+[[package]]
+name = "biwac_package_loader"
+version = "0.1.0"
+dependencies = [
+ "biwac_ast",
+ "biwac_base",
+ "biwac_lexer",
+ "biwac_metadata_loader",
+ "biwac_parser",
+ "colored",
+]
+
+[[package]]
+name = "biwac_parser"
+version = "0.1.0"
+dependencies = [
+ "ariadne",
+ "biwac_ast",
+ "biwac_attribute",
+ "biwac_base",
+ "biwac_lexer",
+ "biwac_novel_parser",
+ "biwac_span",
 ]
 
 [[package]]
@@ -144,6 +271,15 @@ version = "0.1.0"
 dependencies = [
  "biwac_base",
  "biwac_hash",
+]
+
+[[package]]
+name = "biwac_trait_solver"
+version = "0.1.0"
+dependencies = [
+ "biwac_base",
+ "biwac_hir",
+ "biwac_span",
 ]
 
 [[package]]

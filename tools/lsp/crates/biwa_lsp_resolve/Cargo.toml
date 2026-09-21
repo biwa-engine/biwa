@@ -1,0 +1,22 @@
+[package]
+name = "biwa_lsp_resolve"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+biwa_lsp_parser = { path = "../biwa_lsp_parser" }
+biwa_lsp_lower = { path = "../biwa_lsp_lower" }
+
+# 名前解決 (biwac_name_resolver) をそのまま呼び出すための土台。
+# tools/lsp は compiler/ submodule を相対 path dependency で直接参照する。
+#
+# biwac_hir/biwac_lang_item はここでは使わない (型推論以降の話であり、
+# 名前解決の診断・semantic highlighting は biwac_ast の OnceCell だけで足りる)。
+biwac_base = { path = "../../../../compiler/src/biwac_base" }
+biwac_span = { path = "../../../../compiler/src/biwac_span" }
+biwac_ast = { path = "../../../../compiler/src/biwac_ast" }
+biwac_name_resolver = { path = "../../../../compiler/src/biwac_name_resolver" }
+biwac_package_loader = { path = "../../../../compiler/src/biwac_package_loader" }
+biwac_metadata_loader = { path = "../../../../compiler/src/biwac_metadata_loader" }
+biwac_dependency_metadata = { path = "../../../../compiler/src/biwac_dependency_metadata" }
+biwac_attribute = { path = "../../../../compiler/src/biwac_attribute" }

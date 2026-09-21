@@ -78,6 +78,12 @@
           "namespace": [
             "entity.name.namespace.biwa"
           ],
+          "method": [
+            "entity.name.function.member.biwa"
+          ],
+          "interface": [
+            "entity.name.type.interface.biwa"
+          ],
           "novelText": [
             "text.raw.novel.biwa"
           ],

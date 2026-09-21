@@ -7,6 +7,7 @@ edition = "2024"
 tower-lsp        = "0.20"
 tokio            = { version = "1", features = ["rt-multi-thread", "macros", "io-std"] }
 biwa_lsp_highlight = { path = "../biwa_lsp_highlight" }
+biwa_lsp_resolve = { path = "../biwa_lsp_resolve" }
 
 [[bin]]
 name = "biwa-lsp"

@@ -8,7 +8,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-use biwa_lsp_highlight::highlight;
+use biwa_lsp_highlight::{HighlightToken, TokenType, highlight};
 use semantic_tokens::{
     TOKEN_TYPES_LEGEND, build_line_index, encode_semantic_tokens, offset_to_line_col,
 };
@@ -17,6 +17,10 @@ struct Backend {
     client: Client,
     // ファイル URI → テキスト内容
     documents: Arc<RwLock<HashMap<Url, String>>>,
+    // ファイル URI → 直近の名前解決結果 (publish_diagnostics で更新し、
+    // semantic_tokens_full が読み直す。パッケージ全体のロード・解決は
+    // 決して安くないので、リクエストのたびに 2 回走らせない)。
+    resolutions: Arc<RwLock<HashMap<Url, biwa_lsp_resolve::DocumentResolution>>>,
 }
 
 #[tower_lsp::async_trait]
@@ -111,6 +115,10 @@ impl LanguageServer for Backend {
             .write()
             .await
             .remove(&params.text_document.uri);
+        self.resolutions
+            .write()
+            .await
+            .remove(&params.text_document.uri);
     }
 
     async fn semantic_tokens_full(
@@ -129,7 +137,10 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let highlight_tokens = highlight(src);
+        let mut highlight_tokens = highlight(src);
+        if let Some(resolution) = self.resolutions.read().await.get(uri) {
+            apply_resolved_classifications(&mut highlight_tokens, &resolution.classifications);
+        }
         let data = encode_semantic_tokens(src, &highlight_tokens);
         self.client
             .log_message(
@@ -150,28 +161,44 @@ impl LanguageServer for Backend {
 }
 
 impl Backend {
-    /// パースエラーを Diagnostics として publish する。
+    /// パースエラーと名前解決エラーを合わせて Diagnostics として publish する。
     async fn publish_diagnostics(&self, uri: &Url, src: &str) {
         let parse_result = biwa_lsp_highlight::parse_for_diagnostics(src);
         let line_starts = build_line_index(src);
-        let diagnostics: Vec<Diagnostic> = parse_result
+        let mut diagnostics: Vec<Diagnostic> = parse_result
             .errors
             .iter()
-            .map(|e| {
-                let (start_line, start_col) = offset_to_line_col(&line_starts, src, e.start);
-                let (end_line, end_col) = offset_to_line_col(&line_starts, src, e.end);
-                Diagnostic {
-                    range: Range {
-                        start: Position::new(start_line, start_col),
-                        end: Position::new(end_line, end_col),
-                    },
-                    severity: Some(DiagnosticSeverity::ERROR),
-                    message: e.message.clone(),
-                    source: Some("biwa-lsp".to_string()),
-                    ..Default::default()
-                }
-            })
+            .map(|e| to_lsp_diagnostic(&line_starts, src, e.start, e.end, &e.message))
             .collect();
+
+        // 名前解決はパッケージ全体を読み直す重い処理で、`biwa-package.json` が
+        // 見つからない場合など走らせようがないこともある。そうした場合は
+        // 構文だけの診断・ハイライトに静かにフォールバックする。
+        match uri.to_file_path() {
+            Ok(path) => match biwa_lsp_resolve::resolve_document(&path, src) {
+                Ok(resolution) => {
+                    diagnostics.extend(resolution.diagnostics.iter().map(|d| {
+                        to_lsp_diagnostic(&line_starts, src, d.start, d.end, &d.message)
+                    }));
+                    self.resolutions
+                        .write()
+                        .await
+                        .insert(uri.clone(), resolution);
+                }
+                Err(reason) => {
+                    self.resolutions.write().await.remove(uri);
+                    self.client
+                        .log_message(
+                            MessageType::INFO,
+                            format!("name resolution skipped for {uri}: {reason}"),
+                        )
+                        .await;
+                }
+            },
+            Err(()) => {
+                self.resolutions.write().await.remove(uri);
+            }
+        }
 
         self.client
             .log_message(
@@ -189,6 +216,58 @@ impl Backend {
     }
 }
 
+fn to_lsp_diagnostic(
+    line_starts: &[usize],
+    src: &str,
+    start: usize,
+    end: usize,
+    message: &str,
+) -> Diagnostic {
+    let (start_line, start_col) = offset_to_line_col(line_starts, src, start);
+    let (end_line, end_col) = offset_to_line_col(line_starts, src, end);
+    Diagnostic {
+        range: Range {
+            start: Position::new(start_line, start_col),
+            end: Position::new(end_line, end_col),
+        },
+        severity: Some(DiagnosticSeverity::ERROR),
+        message: message.to_string(),
+        source: Some("biwa-lsp".to_string()),
+        ..Default::default()
+    }
+}
+
+/// 名前解決による識別子の分類で、構文だけで決めた token_type を上書きする。
+/// span が完全一致するものだけを対象にする
+/// (`biwa_lsp_resolve::Classification` は識別子 1 つぶんの span しか出さない)。
+fn apply_resolved_classifications(
+    tokens: &mut [HighlightToken],
+    classifications: &[biwa_lsp_resolve::Classification],
+) {
+    use std::collections::HashMap;
+
+    let overrides: HashMap<(usize, usize), TokenType> = classifications
+        .iter()
+        .map(|c| ((c.start, c.end), resolved_kind_to_token_type(c.kind)))
+        .collect();
+
+    for tok in tokens.iter_mut() {
+        if let Some(tt) = overrides.get(&(tok.start, tok.end)) {
+            tok.token_type = *tt;
+        }
+    }
+}
+
+fn resolved_kind_to_token_type(kind: biwa_lsp_resolve::ResolvedKind) -> TokenType {
+    match kind {
+        biwa_lsp_resolve::ResolvedKind::Function => TokenType::Function,
+        biwa_lsp_resolve::ResolvedKind::Parameter => TokenType::Parameter,
+        biwa_lsp_resolve::ResolvedKind::Type => TokenType::Type,
+        biwa_lsp_resolve::ResolvedKind::Interface => TokenType::Interface,
+        biwa_lsp_resolve::ResolvedKind::Namespace => TokenType::Namespace,
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let stdin = tokio::io::stdin();
@@ -197,6 +276,7 @@ async fn main() {
     let (service, socket) = LspService::new(|client| Backend {
         client,
         documents: Arc::new(RwLock::new(HashMap::new())),
+        resolutions: Arc::new(RwLock::new(HashMap::new())),
     });
 
     Server::new(stdin, stdout, socket).serve(service).await;
