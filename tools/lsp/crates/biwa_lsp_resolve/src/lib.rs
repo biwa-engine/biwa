@@ -31,7 +31,7 @@ pub struct DocumentResolution {
 /// - 依存パッケージは `<pkg_root>/.biwa_build/deps/<name>/.biwa_build/typescript/`
 ///   に事前にビルド済みでなければならない。
 /// - 直接依存だけを見る (推移的依存の閉包は辿らない)。
-/// - target は `TypeScript` に固定。
+/// - target は `Wasm` に固定 (`package::TARGET` 参照)。
 pub fn resolve_document(doc_path: &Path, doc_src: &str) -> Result<DocumentResolution, String> {
     let pkg_root = package::find_package_root(doc_path).ok_or_else(|| {
         format!(
