@@ -1,4 +1,6 @@
-import bar::Bar;
+// import bar::Bar;
+
+struct Bar {}
 
 fn add(x: Int, y: Int) -> Int {
   x + y
@@ -25,12 +27,14 @@ impl[T] Foo[T] {
   }
 }
 
+struct MyGame {}
+
 scene foo(g: MyGame) -> MyGame {{
   Hello!
   #hoge()
 
   // プレイヤーのセリフ
-  @player
-  I'm ${player.name}.
+  // @player
+  I'm $player.name() .
 }}
 

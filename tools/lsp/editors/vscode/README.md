@@ -1,3 +1,5 @@
+# Biwa Language Server (VSCode Extension)
+
 ```
 # 1. Rust バイナリをビルド・配置 (変更のたびに必要)
 cargo build --release -p biwa_lsp_server
@@ -28,3 +30,7 @@ code --install-extension biwa-lang-0.1.0.vsix
 その依存が引き込む Node20+ 専用パッケージ (`@azure/msal-node`, `cheerio`)
 を `package.json` の `overrides` で Node18 互換バージョンに固定してある。
 Node 20+ が使える環境ではこの overrides は不要 (害もない)。
+
+## License
+
+MIT-Licensed. See [./LICENSE].
