@@ -1,9 +1,14 @@
-//! `biwac_name_resolver` を編集中のバッファに対して走らせるための土台。
+//! `biwac_name_resolver` / `biwac_type_inferrer` を編集中のバッファに対して
+//! 走らせるための土台。
 //!
 //! ディスク上のパッケージ全体を [`biwac_package_loader::Pkg`] でロードし、
 //! 開いているファイルに対応するモジュールだけをエディタ上の生きた内容
 //! (`biwa_lsp_lower` で lower した [`biwac_ast::ModAst`]) に差し替えてから、
-//! `biwac_name_resolver::NameResolver` に通す。
+//! `biwac_name_resolver::NameResolver` に通す。名前解決が成功したら、
+//! その `Hir` をそのまま `biwac_type_inferrer::TyCtx` に渡して型推論も行う
+//! (依存パッケージのメタデータは名前解決のために既に読み込み済みなので、
+//! ほぼ結線するだけでよい — `biwac_driver` の
+//! `load_analyze_and_codegen_single_package` と同じ配線)。
 //!
 //! ロードには [`package::LspSourceParser`] (biwa-lsp 自身の lossless /
 //! エラー耐性パーサ) を `biwac_package_loader::SourceParser` として差し込む。
@@ -20,11 +25,13 @@
 mod classify;
 mod diagnostics;
 mod package;
+mod type_diagnostics;
 
 pub use classify::{Classification, ResolvedKind};
 pub use diagnostics::Diagnostic;
 
 use std::path::Path;
+use std::sync::Arc;
 
 pub struct DocumentResolution {
     pub diagnostics: Vec<Diagnostic>,
@@ -93,6 +100,19 @@ pub fn resolve_document(doc_path: &Path, doc_src: &str) -> Result<DocumentResolu
 
     let pkg_name = interner.get_or_insert(metadata.metadata.name.value());
 
+    // 型推論 (`biwac_type_inferrer::TyCtx`) が要る依存パッケージのメタデータ。
+    // `external_packages` は次で `NameResolver::new` に消費されるので、
+    // ここで先に (`biwac_driver` の `load_analyze_and_codegen_single_package`
+    // と同じ形で) 控えておく。名前で引けるかを問わない型推論では
+    // `direct` の区別を落として推移閉包すべてを渡す。
+    let ext_pkgs_for_ty: Vec<(
+        biwac_base::PackageId,
+        Arc<biwac_dependency_metadata::DepMetadata>,
+    )> = external_packages
+        .iter()
+        .map(|p| (p.pkg_id, Arc::clone(&p.meta)))
+        .collect();
+
     let resolver =
         biwac_name_resolver::NameResolver::new(&metadata, external_packages, pkg_name, &mut pkg)
             .map_err(|e| format!("{e:?}"))?;
@@ -102,7 +122,17 @@ pub fn resolve_document(doc_path: &Path, doc_src: &str) -> Result<DocumentResolu
     // 手元に残るので、成功・失敗にかかわらず同じ `pkg` から分類できる
     // (診断だけがエラーの有無で変わる)。
     let diagnostics = match resolver.try_resolve(&mut interner) {
-        Ok(_output) => Vec::new(),
+        Ok(biwac_name_resolver::ResolveOutput { hir, lang_items }) => {
+            // 名前解決が成功したら、その Hir をそのまま型推論に渡す。
+            // 依存パッケージはすでに名前解決のために読み込み済みなので、
+            // ここは実質つなぐだけでよい (`biwac_driver` と同じ結線)。
+            match biwac_type_inferrer::TyCtx::new(hir, lang_items, ext_pkgs_for_ty, &mut interner)
+                .infer()
+            {
+                Ok(_hir) => Vec::new(),
+                Err(e) => type_diagnostics::extract(&e, doc_mod_id, &interner),
+            }
+        }
         Err(errors) => diagnostics::extract(&errors, doc_mod_id, &interner),
     };
 
