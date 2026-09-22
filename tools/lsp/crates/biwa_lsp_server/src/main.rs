@@ -263,6 +263,7 @@ fn apply_resolved_classifications(
 fn resolved_kind_to_token_type(kind: biwa_lsp_resolve::ResolvedKind) -> TokenType {
     match kind {
         biwa_lsp_resolve::ResolvedKind::Function => TokenType::Function,
+        biwa_lsp_resolve::ResolvedKind::Method => TokenType::Method,
         biwa_lsp_resolve::ResolvedKind::Parameter => TokenType::Parameter,
         biwa_lsp_resolve::ResolvedKind::Type => TokenType::Type,
         biwa_lsp_resolve::ResolvedKind::Interface => TokenType::Interface,

@@ -22,13 +22,23 @@
 //!
 //! - enum のバリアント (`DefIdKind::Variant`) に対応する semantic token 種別が
 //!   無いので分類しない。
-//! - メソッド呼び出し (`.foo()`) は分類しない (要求仕様どおり: 型推論をしないと
-//!   実装が決まらないことが多いため、この段では variable 系のまま残す)。
-//!   `MethodCall::target` に相当する解決は名前解決の範囲外である。
 //! - `scene` の本体のうち `@` 行 (キャラクター指定) は `biwa_lsp_lower` が
 //!   `NovelStmt` へ変換しない (実コンパイラ自身もまだ持たない文法) ので
 //!   分類しようがない。
 //! - `Self` 型 (`TypReprVal::SelfTyp`) は `OnceCell` を持たないため分類しない。
+//!
+//! # メソッド呼び出しの分類について
+//!
+//! `.foo()` がどのメソッドを指すかは名前解決の範囲外で、型推論
+//! (`biwac_type_inferrer`) が `biwac_hir::MethodCall::target` を埋めて
+//! 初めて決まる。これは `biwac_ast` 側には対応する field が無い
+//! (`biwac_ast::MethodCall` に `target` は無い) ので、`classify` (この
+//! ファイルの AST ベースの関数) では扱えない。型推論後に呼ぶ
+//! [`classify_resolved_methods`] が `Hir` を直接辿って埋める。
+//! `MethodCall::method: Ident` はそのメソッド名の識別子自身の span を
+//! そのまま持っている (元の AST の `Ident::from(mc.method.clone())` を
+//! 素通ししているだけ) ので、`FnCall`/`StructLiteral` のときのような
+//! span 突き合わせは要らない。
 
 use std::collections::HashSet;
 
@@ -47,6 +57,7 @@ use biwac_span::{DefIdKind, Span, VarId};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolvedKind {
     Function,
+    Method,
     Parameter,
     Type,
     Interface,
@@ -300,11 +311,20 @@ fn classify_novel_scene(s: &NovelScene, out: &mut Vec<Classification>) {
     classify_arg_decl_list(&s.args, out);
     classify_ret_typ_repr(&s.rtype, out);
 
-    let param_ids: HashSet<VarId> = s.args.args.iter().filter_map(|a| a.var_id.get().copied()).collect();
+    let param_ids: HashSet<VarId> = s
+        .args
+        .args
+        .iter()
+        .filter_map(|a| a.var_id.get().copied())
+        .collect();
     classify_novel_stmts(&s.stmts, &param_ids, out);
 }
 
-fn classify_novel_stmts(stmts: &[NovelStmt], param_ids: &HashSet<VarId>, out: &mut Vec<Classification>) {
+fn classify_novel_stmts(
+    stmts: &[NovelStmt],
+    param_ids: &HashSet<VarId>,
+    out: &mut Vec<Classification>,
+) {
     for s in stmts {
         classify_novel_stmt(s, param_ids, out);
     }
@@ -475,5 +495,162 @@ fn classify_pattern(p: &Pattern, param_ids: &HashSet<VarId>, out: &mut Vec<Class
                 }
             }
         }
+    }
+}
+
+// ── メソッド呼び出し (型推論後の Hir を辿る) ──────────────────────────────
+
+/// 型推論が解決したメソッド呼び出しを `Method` として分類する。
+/// `hir` は `biwac_type_inferrer::TyCtx::infer()` が返した (= `OnceCell` が
+/// 埋まった) ものでなければならない。
+pub(crate) fn classify_resolved_methods(
+    hir: &biwac_hir::Hir,
+    doc_mod_id: ModId,
+) -> Vec<Classification> {
+    let mut out = Vec::new();
+
+    for val in hir.vals.values() {
+        match val {
+            biwac_hir::ValDefKind::Fn(f) if f.name.span.module() == doc_mod_id => {
+                walk_hir_body(&f.body, doc_mod_id, &mut out);
+            }
+            biwac_hir::ValDefKind::NovelScene(s) if s.name.span.module() == doc_mod_id => {
+                walk_hir_body(&s.body, doc_mod_id, &mut out);
+            }
+            _ => {}
+        }
+    }
+
+    for ty_impl in hir.tys.values() {
+        for list in ty_impl.vals.values() {
+            for pair in list.vals.values() {
+                if let biwac_hir::AssocValDefKind::Fn(f) = &pair.val_content
+                    && f.name.span.module() == doc_mod_id
+                {
+                    walk_hir_body(&f.body, doc_mod_id, &mut out);
+                }
+            }
+        }
+    }
+
+    out
+}
+
+fn walk_hir_body(body: &biwac_hir::FnBody, doc_mod_id: ModId, out: &mut Vec<Classification>) {
+    for s in &body.stmts {
+        walk_hir_stmt(s, doc_mod_id, out);
+    }
+    if let Some(e) = &body.expr {
+        walk_hir_expr(e, doc_mod_id, out);
+    }
+}
+
+fn walk_hir_stmt(s: &biwac_hir::Stmt, doc_mod_id: ModId, out: &mut Vec<Classification>) {
+    use biwac_hir::Stmt as S;
+    match s {
+        S::Block(b) => walk_hir_block_stmt(b, doc_mod_id, out),
+        S::Expr(e) => walk_hir_expr(&e.expr, doc_mod_id, out),
+        S::Return(r) => walk_hir_expr(&r.expr, doc_mod_id, out),
+        S::If(i) => {
+            walk_hir_expr(&i.cond, doc_mod_id, out);
+            walk_hir_block_stmt(&i.then, doc_mod_id, out);
+            if let Some(els) = &i.els {
+                walk_hir_block_stmt(els, doc_mod_id, out);
+            }
+        }
+        S::Match(m) => {
+            walk_hir_expr(&m.scrutinee, doc_mod_id, out);
+            for arm in &m.arms {
+                walk_hir_block_stmt(&arm.body, doc_mod_id, out);
+            }
+        }
+        S::While(w) => {
+            walk_hir_expr(&w.cond, doc_mod_id, out);
+            walk_hir_block_stmt(&w.stmts, doc_mod_id, out);
+        }
+        S::VarDecl(v) => walk_hir_expr(&v.init, doc_mod_id, out),
+        S::Assign(a) => {
+            walk_hir_primary(&a.dst, doc_mod_id, out);
+            walk_hir_expr(&a.src, doc_mod_id, out);
+        }
+        S::NovelSyscall(n) => walk_hir_expr(&n.call, doc_mod_id, out),
+    }
+}
+
+fn walk_hir_block_stmt(b: &biwac_hir::BlockStmt, doc_mod_id: ModId, out: &mut Vec<Classification>) {
+    for s in &b.stmts {
+        walk_hir_stmt(s, doc_mod_id, out);
+    }
+}
+
+fn walk_hir_block_expr(b: &biwac_hir::BlockExpr, doc_mod_id: ModId, out: &mut Vec<Classification>) {
+    for s in &b.stmts {
+        walk_hir_stmt(s, doc_mod_id, out);
+    }
+    walk_hir_expr(&b.expr, doc_mod_id, out);
+}
+
+fn walk_hir_expr(e: &biwac_hir::Expr, doc_mod_id: ModId, out: &mut Vec<Classification>) {
+    use biwac_hir::ExprVal as E;
+    match &e.expr {
+        E::Primary(p) => walk_hir_primary(p, doc_mod_id, out),
+        E::Unary(u) => walk_hir_expr(&u.right, doc_mod_id, out),
+        E::Binary(b) => {
+            walk_hir_expr(&b.left, doc_mod_id, out);
+            walk_hir_expr(&b.right, doc_mod_id, out);
+        }
+    }
+}
+
+fn walk_hir_primary(p: &biwac_hir::Primary, doc_mod_id: ModId, out: &mut Vec<Classification>) {
+    use biwac_hir::Primary as P;
+    match p {
+        P::Literal(biwac_hir::Literal::Struct(s)) => {
+            for (_, e) in &s.members {
+                walk_hir_expr(e, doc_mod_id, out);
+            }
+        }
+        P::Literal(_) => {}
+        P::Variable(_) => {}
+        P::FnCall(f) => {
+            for a in &f.args {
+                walk_hir_expr(a, doc_mod_id, out);
+            }
+        }
+        P::MemberAccess(m) => walk_hir_expr(&m.left, doc_mod_id, out),
+        P::MethodCall(m) => {
+            walk_hir_expr(&m.left, doc_mod_id, out);
+            for a in &m.args {
+                walk_hir_expr(a, doc_mod_id, out);
+            }
+            if m.target.get().is_some() && m.method.span.module() == doc_mod_id {
+                push(out, m.method.span.clone(), ResolvedKind::Method);
+            }
+        }
+        P::IfExpr(i) => {
+            walk_hir_expr(&i.cond, doc_mod_id, out);
+            walk_hir_block_expr(&i.then, doc_mod_id, out);
+            walk_hir_block_expr(&i.els, doc_mod_id, out);
+        }
+        P::Match(m) => {
+            walk_hir_expr(&m.scrutinee, doc_mod_id, out);
+            for arm in &m.arms {
+                walk_hir_block_expr(&arm.body, doc_mod_id, out);
+            }
+        }
+        P::Block(b) => walk_hir_block_expr(b, doc_mod_id, out),
+        P::VariantCtor(v) => match &v.fields {
+            biwac_hir::VariantCtorFields::Unit => {}
+            biwac_hir::VariantCtorFields::Positional(exprs) => {
+                for e in exprs {
+                    walk_hir_expr(e, doc_mod_id, out);
+                }
+            }
+            biwac_hir::VariantCtorFields::Named(fields) => {
+                for (_, e) in fields {
+                    walk_hir_expr(e, doc_mod_id, out);
+                }
+            }
+        },
     }
 }

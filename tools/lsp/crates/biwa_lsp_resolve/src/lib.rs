@@ -121,7 +121,12 @@ pub fn resolve_document(doc_path: &Path, doc_src: &str) -> Result<DocumentResolu
     // 失敗しても `pkg` の `OnceCell` はそこまで解決できた分だけ埋まった状態で
     // 手元に残るので、成功・失敗にかかわらず同じ `pkg` から分類できる
     // (診断だけがエラーの有無で変わる)。
-    let diagnostics = match resolver.try_resolve(&mut interner) {
+    //
+    // メソッド呼び出しの分類 (`.foo()` が実際どのメソッドか) だけは
+    // `biwac_ast`/`Pkg` 側に対応する情報が無く、型推論が埋める
+    // `biwac_hir::MethodCall::target` からしか分からないので、
+    // 型推論に成功したときだけ別枠で集めて `classifications` に混ぜる。
+    let (diagnostics, method_classifications) = match resolver.try_resolve(&mut interner) {
         Ok(biwac_name_resolver::ResolveOutput { hir, lang_items }) => {
             // 名前解決が成功したら、その Hir をそのまま型推論に渡す。
             // 依存パッケージはすでに名前解決のために読み込み済みなので、
@@ -129,14 +134,25 @@ pub fn resolve_document(doc_path: &Path, doc_src: &str) -> Result<DocumentResolu
             match biwac_type_inferrer::TyCtx::new(hir, lang_items, ext_pkgs_for_ty, &mut interner)
                 .infer()
             {
-                Ok(_hir) => Vec::new(),
-                Err(e) => type_diagnostics::extract(&e, doc_mod_id, &interner),
+                Ok(hir) => {
+                    let methods = classify::classify_resolved_methods(&hir, doc_mod_id);
+                    (Vec::new(), methods)
+                }
+                Err(e) => (
+                    type_diagnostics::extract(&e, doc_mod_id, &interner),
+                    Vec::new(),
+                ),
             }
         }
-        Err(errors) => diagnostics::extract(&errors, doc_mod_id, &interner),
+        Err(errors) => (
+            diagnostics::extract(&errors, doc_mod_id, &interner),
+            Vec::new(),
+        ),
     };
 
-    let classifications = classify::classify(&pkg, doc_mod_id);
+    let mut classifications = classify::classify(&pkg, doc_mod_id);
+    classifications.extend(method_classifications);
+    classifications.sort_by_key(|c| c.start);
 
     Ok(DocumentResolution {
         diagnostics,
