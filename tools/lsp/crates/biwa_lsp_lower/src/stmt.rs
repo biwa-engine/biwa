@@ -147,7 +147,7 @@ pub(crate) fn lower_block_expr_mandatory(
     }
 }
 
-fn lower_var_decl(
+pub(crate) fn lower_var_decl(
     mod_id: ModId,
     interner: &mut IdentInterner,
     node: &SyntaxNode,
@@ -180,7 +180,7 @@ fn lower_var_decl(
     })
 }
 
-fn lower_expr_stmt(
+pub(crate) fn lower_expr_stmt(
     mod_id: ModId,
     interner: &mut IdentInterner,
     node: &SyntaxNode,
@@ -193,7 +193,7 @@ fn lower_expr_stmt(
     Some(ExprStmt { expr, span })
 }
 
-fn lower_assign_stmt(
+pub(crate) fn lower_assign_stmt(
     mod_id: ModId,
     interner: &mut IdentInterner,
     node: &SyntaxNode,

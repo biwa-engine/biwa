@@ -12,6 +12,7 @@ use biwac_span::{GenDefId, LocalGenDefId, Span};
 
 use crate::cursor::{Children, SyntaxNode, elem_kind, intern_ident_token, node_span, token_span};
 use crate::error::LowerError;
+use crate::novel::lower_novel_stmts;
 use crate::path_ty::{lower_ident_path, lower_optional_return_type, lower_type_repr};
 use crate::stmt::lower_fn_body;
 
@@ -597,25 +598,19 @@ fn lower_scene_def(
     let rtype = lower_optional_return_type(mod_id, interner, &mut children, &args.span, errors)?;
 
     children.eat_token(SyntaxKind::DoubleLBrace);
-    // ノベルモードの本体 (`NovelModeBody`) は今のところ構造を持たないトークンの
-    // 塊でしかなく (biwac_novel_parser 相当の文法が biwa-lsp-parser に無い)、
-    // `biwac_ast::NovelStmt` へは変換できない。空の本体として salvage する。
-    children.eat_node(SyntaxKind::NovelModeBody);
+    let body_node = children.eat_node(SyntaxKind::NovelModeBody);
+    let stmts = match &body_node {
+        Some(n) => lower_novel_stmts(mod_id, interner, n, errors),
+        None => vec![],
+    };
     children.eat_token(SyntaxKind::DoubleRBrace);
-
-    errors.push(LowerError::new(
-        "the novel-mode scene body was not lowered: biwa-lsp-parser does not yet parse \
-         novel-mode structure the way `biwac_novel_parser` does, so this scene has an \
-         empty body",
-        span.clone(),
-    ));
 
     Some(Globals::NovelScene(NovelScene {
         id,
         def_id: OnceCell::new(),
         args,
         rtype,
-        stmts: vec![],
+        stmts,
         span,
         attrs: Attrs::empty(),
     }))

@@ -34,6 +34,8 @@ pub enum SyntaxKind {
     /// `Self` (大文字)。値としての `self` (`KwSelf`) とは別トークン。
     KwSelfType,
     KwReturn,
+    /// `endscene` (novel モードの `#endscene <expr>` 専用)。
+    KwEndScene,
     KwPackage,
     KwEnum,
     KwMatch,
@@ -118,6 +120,14 @@ pub enum SyntaxKind {
     NovelCommandLine,
     /// ノベルモードの `$` 埋め込み式。`docs/content-api.md` の EBNF に対応する。
     NovelEmbeddedExpr,
+    /// ノベルモードの `@` 行 (キャラクター指定)。`NovelAt` とその行の内容
+    /// (地の文と同じ `NovelText`/`NovelEmbeddedExpr`/`NovelWait`) をまとめる。
+    /// 実コンパイラ (`biwac_novel_parser`) 側もまだ `NovelStmt` へ変換する
+    /// 文法を持たない (`CharaCommand => todo!()`) ので、lowering では
+    /// 中身を読み捨てる。
+    NovelCharaLine,
+    /// ノベルモードの `#endscene <expr>`。
+    NovelEndSceneStmt,
     FunctionArgDecl,
     MethodArgDecl,
     GenericsArgDecl,

@@ -436,24 +436,183 @@ fn parse_scene_def(p: &mut Parser) {
 
 /// ノベルモードの本体。`#` コマンドと `$` 埋め込み式の中身は、字句解析の段階
 /// (`biwa_lsp_lexer::lex_novel_segment`) で既に通常コードのトークン列として
-/// 切り出されている。ここではそれを平らに並べるだけで、`#`/`$` の中身を
-/// 構造化した CST ノード (`NovelIfStmt` 相当) には組み立てない
-/// (`docs/enum-and-match.md` が言う「ノベル `#` コード行での match」と同じ理由で、
-/// 行継続を含む文の並びを組む設計がまだ無いため)。
-///
-/// 字句解析が `Error` として弾いたトークンだけ、目立つように `Error` ノードで包む。
+/// 切り出されている (`#` コマンドの複数行への継続も、境界となるトークンを
+/// またいでレクサ側で解決済み)。ここではその境界だけを見て文の列に組み立てる。
 fn parse_novel_mode_body(p: &mut Parser) {
     p.start_node(SyntaxKind::NovelModeBody);
-    while !p.at(SyntaxKind::DoubleRBrace) && p.current() != SyntaxKind::Eof {
-        if p.current() == SyntaxKind::Error {
-            p.start_node(SyntaxKind::Error);
-            p.bump();
-            p.finish_node();
-        } else {
+    parse_novel_stmt_seq(p);
+    p.finish_node();
+}
+
+/// `}}` (scene 全体の終端) か `}` (`#if` ブロックの終端) か Eof で止まるまで、
+/// ノベル文の並びを読む。終端トークン自体は呼び出し側が消費する。
+fn parse_novel_stmt_seq(p: &mut Parser) {
+    loop {
+        p.skip_trivia();
+        match p.current_non_trivia() {
+            SyntaxKind::DoubleRBrace | SyntaxKind::RBrace | SyntaxKind::Eof => return,
+            SyntaxKind::NovelHash => parse_novel_command_line(p),
+            SyntaxKind::NovelAt => parse_novel_chara_line(p),
+            SyntaxKind::NovelText | SyntaxKind::NovelDollar | SyntaxKind::NovelWait => {
+                parse_novel_content_element(p)
+            }
+            _ => {
+                // 字句解析が `Error` として弾いたトークン、または想定外の
+                // 通常コードトークン (境界判定の食い違い)。1 つ読み捨てて進む。
+                p.push_error("unexpected token in novel mode body");
+                p.start_node(SyntaxKind::Error);
+                p.skip_trivia();
+                p.bump();
+                p.finish_node();
+            }
+        }
+    }
+}
+
+/// 生の地の文 (`NovelText`)・待ちコマンド (`NovelWait`)・埋め込み式
+/// (`NovelDollar` に続く式) のうち 1 要素を読む。
+fn parse_novel_content_element(p: &mut Parser) {
+    match p.current_non_trivia() {
+        SyntaxKind::NovelDollar => parse_novel_embedded_expr(p),
+        _ => {
+            // NovelText / NovelWait はそのままのトークンとして置く。
+            p.skip_trivia();
             p.bump();
         }
     }
+}
+
+/// 次の (`Whitespace`/`LineComment` を飛ばした先の) トークンが、間に改行を
+/// 挟まず同じ行にあるか。`current_non_trivia` は改行も読み飛ばしてしまうので、
+/// ノベルモードで「1 行分だけ」を境界にしたい場面ではこちらを使う。
+fn next_is_on_same_line(p: &Parser) -> bool {
+    let mut i = 0;
+    loop {
+        match p.nth(i) {
+            SyntaxKind::Whitespace | SyntaxKind::LineComment => i += 1,
+            SyntaxKind::Newline => return false,
+            _ => return true,
+        }
+    }
+}
+
+/// `$` に続く埋め込み式。中身は通常コードの式と同じ文法で読む
+/// (境界は字句解析側で「呼び出しで終わる」まで測ってあるので、ここでは
+/// 普通に式をパースするだけで自然とその境界で止まる)。
+fn parse_novel_embedded_expr(p: &mut Parser) {
+    p.start_node(SyntaxKind::NovelEmbeddedExpr);
+    p.skip_trivia();
+    p.bump(); // $
+    parse_delimited_expression(p);
     p.finish_node();
+}
+
+/// `@` に続くキャラクター指定行。中身は地の文と同じ形 (`NovelText`/`$`/`>>`)
+/// だが、実コンパイラ (`biwac_novel_parser`) 側もまだこれを `NovelStmt` へ
+/// 変換する文法を持たない (`CharaCommand => todo!()`) ので、lowering では
+/// 中身を読み捨てる。ここでは CST 上で崩さず読めれば十分。
+fn parse_novel_chara_line(p: &mut Parser) {
+    p.start_node(SyntaxKind::NovelCharaLine);
+    p.skip_trivia();
+    p.bump(); // @
+    // `current_non_trivia` は改行も読み飛ばすので、それだけで次の要素を
+    // 判定すると次の行の地の文まで `@` 行に取り込んでしまう。1 行分だけに
+    // 留めるため、間に改行を挟まないことも確認する。
+    while next_is_on_same_line(p)
+        && matches!(
+            p.current_non_trivia(),
+            SyntaxKind::NovelText | SyntaxKind::NovelDollar | SyntaxKind::NovelWait
+        )
+    {
+        parse_novel_content_element(p);
+    }
+    p.finish_node();
+}
+
+/// `#` に続く 1 つの論理コマンド。`if`/`let`/`endscene`/それ以外 (式文 or 代入文)
+/// に分岐する。実コンパイラの `consume_statements` の `GeneralCommand` 腕に対応する。
+fn parse_novel_command_line(p: &mut Parser) {
+    p.start_node(SyntaxKind::NovelCommandLine);
+    p.skip_trivia();
+    p.bump(); // #
+    p.skip_trivia();
+    match p.current_non_trivia() {
+        SyntaxKind::KwIf => parse_novel_if_stmt(p),
+        SyntaxKind::KwLet => parse_novel_let_stmt(p),
+        SyntaxKind::KwEndScene => parse_novel_end_scene_stmt(p),
+        _ => parse_novel_expr_or_assign_stmt(p),
+    }
+    p.finish_node();
+}
+
+/// ノベル `#if <cond> { .. }`。実コンパイラと同じく `else` は無い
+/// (`biwac_novel_parser::symbols::statements::if_stmt` も `els` を作らない)。
+/// 本体の閉じは `}}` ではなく単独の `}` 行 (`biwa_lsp_lexer` が `RBrace` として
+/// 認識する)。
+fn parse_novel_if_stmt(p: &mut Parser) {
+    p.start_node(SyntaxKind::IfStmt);
+    p.skip_trivia();
+    p.expect(SyntaxKind::KwIf);
+    parse_condition_expression(p);
+    parse_novel_block_stmt(p);
+    p.finish_node();
+}
+
+/// `#if` の本体。`{` `}` の内側は再びノベル文の並び。
+fn parse_novel_block_stmt(p: &mut Parser) {
+    p.start_node(SyntaxKind::BlockStmt);
+    p.skip_trivia();
+    p.expect(SyntaxKind::LBrace);
+    parse_novel_stmt_seq(p);
+    p.expect(SyntaxKind::RBrace);
+    p.finish_node();
+}
+
+/// ノベル `#let <ident> (":" <type>)? "=" <expr>`。`;` は無い
+/// (行境界がそのまま文の終わりになる)。
+fn parse_novel_let_stmt(p: &mut Parser) {
+    p.start_node(SyntaxKind::VarDefStmt);
+    p.skip_trivia();
+    p.expect(SyntaxKind::KwLet);
+    p.skip_trivia();
+    p.expect(SyntaxKind::Ident);
+    if p.at(SyntaxKind::Colon) {
+        p.skip_trivia();
+        p.bump();
+        parse_type_repr(p);
+    }
+    p.expect(SyntaxKind::Eq);
+    parse_expression(p);
+    p.finish_node();
+}
+
+/// ノベル `#endscene <expr>`。
+fn parse_novel_end_scene_stmt(p: &mut Parser) {
+    p.start_node(SyntaxKind::NovelEndSceneStmt);
+    p.skip_trivia();
+    p.expect(SyntaxKind::KwEndScene);
+    parse_expression(p);
+    p.finish_node();
+}
+
+/// ノベル `#` コマンドの式文・代入文。通常コードの `parse_expr_or_assign_stmt`
+/// と同じ checkpoint パターンだが、`;` は無い (行境界が終わりを決める)。
+fn parse_novel_expr_or_assign_stmt(p: &mut Parser) {
+    let checkpoint = p.builder.checkpoint();
+    parse_expression(p);
+    p.skip_trivia();
+    if p.current_non_trivia() == SyntaxKind::Eq {
+        p.builder
+            .start_node_at(checkpoint, SyntaxKind::AssignStmt.into());
+        p.skip_trivia();
+        p.bump(); // =
+        parse_expression(p);
+        p.finish_node();
+    } else {
+        p.builder
+            .start_node_at(checkpoint, SyntaxKind::ExprStmt.into());
+        p.finish_node();
+    }
 }
 
 // ── generics ─────────────────────────────────────────────────────────────────
@@ -1281,6 +1440,52 @@ Hello! $blue(bold("a"))!
         no_errors("scene s(g: G) -> G {{\n$(player.hp)\n}}\n");
     }
 
+    #[test]
+    fn parse_scene_let_stmt() {
+        no_errors("scene s(g: G) -> G {{\n#let x = 1\n}}\n");
+        no_errors("scene s(g: G) -> G {{\n#let x: Int = 1\n}}\n");
+    }
+
+    #[test]
+    fn parse_scene_assign_stmt() {
+        no_errors("scene s(g: G) -> G {{\n#let x = 1\n#x = 2\n}}\n");
+    }
+
+    #[test]
+    fn parse_scene_end_scene_stmt() {
+        no_errors("scene s(g: G) -> G {{\n#endscene g\n}}\n");
+    }
+
+    #[test]
+    fn parse_scene_if_stmt() {
+        no_errors("scene s(g: G) -> G {{\n#if x > 2 {\ntext\n}\n}}\n");
+    }
+
+    #[test]
+    fn parse_scene_if_stmt_with_nested_command() {
+        no_errors(
+            "scene s(g: G) -> G {{\n#if x > 2 {\n#let y = 1\ntext $y()\n}\n}}\n",
+        );
+    }
+
+    #[test]
+    fn parse_scene_novel_command_line_node_shape() {
+        // `#play_se(se1)` は NovelCommandLine[NovelHash, ExprStmt[..]] に
+        // 構造化されるはず (以前はトークンの塊のままだった)。
+        use biwa_lsp_lexer::SyntaxKind;
+        let result = parse("scene s(g: G) -> G {{\n#play_se(se1)\n}}\n");
+        let root = result.syntax();
+        let kinds: Vec<SyntaxKind> = root.descendants().map(|n| n.kind()).collect();
+        assert!(
+            kinds.contains(&SyntaxKind::NovelCommandLine),
+            "expected a NovelCommandLine node, got {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&SyntaxKind::ExprStmt),
+            "expected the command body to be an ExprStmt, got {kinds:?}"
+        );
+    }
+
     /// CST の再構成テキストが元のソースと一致すること (lossless)。
     ///
     /// 回帰テスト: ノベルモードで `#`/`@`/`}}` 行の行頭インデントが
@@ -1307,6 +1512,13 @@ Hello! $blue(bold("a"))!
     text $foo(1).bar() more >>
     }}
 "#,
+        );
+    }
+
+    #[test]
+    fn scene_with_if_block_and_end_scene_is_lossless() {
+        assert_lossless(
+            "scene s(g: G) -> G {{\n    #let x = add(1, 2)\n    #if x > 2 {\n         yes\n    }\n    #endscene g\n}}\n",
         );
     }
 }

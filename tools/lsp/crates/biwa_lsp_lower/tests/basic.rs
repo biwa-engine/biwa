@@ -449,6 +449,105 @@ impl Foo {
 }
 
 #[test]
+fn lowers_novel_scene_body_statements() {
+    let src = r#"
+scene main(g: MyGame) -> MyGame {{
+    #let biwa = add(1, 2)
+    Hello!
+    こんにちは $blue(bold("biwa")) です。 >>
+    #if biwa {
+        yes
+    }
+    #biwa = 3
+    #endscene g
+}}
+"#;
+    let (ast, errors) = lower(src);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    assert_eq!(ast.globals.len(), 1);
+    let Globals::NovelScene(scene) = &ast.globals[0] else {
+        panic!("expected NovelScene, got {:?}", ast.globals[0]);
+    };
+
+    // #let biwa = add(1, 2)
+    assert!(matches!(scene.stmts[0], biwac_ast::NovelStmt::VarDecl(_)));
+
+    // プレーンなテキスト行が続く (行ごとに分かれていてもよい)。
+    let has_plain_text = scene.stmts.iter().any(|s| {
+        matches!(
+            s,
+            biwac_ast::NovelStmt::ContentPush(biwac_ast::NovelContent::Text { .. })
+        )
+    });
+    assert!(has_plain_text, "expected at least one Text content push");
+
+    // `$blue(...)` の埋め込み式。
+    let has_embedded_expr = scene.stmts.iter().any(|s| {
+        matches!(
+            s,
+            biwac_ast::NovelStmt::ContentPush(biwac_ast::NovelContent::Expr { .. })
+        )
+    });
+    assert!(has_embedded_expr, "expected an embedded-expression content push");
+
+    // `>>`
+    let has_wait = scene
+        .stmts
+        .iter()
+        .any(|s| matches!(s, biwac_ast::NovelStmt::ContentFlushAndWait(_)));
+    assert!(has_wait, "expected a ContentFlushAndWait");
+
+    // #if biwa { yes }
+    let if_stmt = scene
+        .stmts
+        .iter()
+        .find_map(|s| match s {
+            biwac_ast::NovelStmt::If(i) => Some(i),
+            _ => None,
+        })
+        .expect("expected a NovelIfStmt");
+    assert_eq!(if_stmt.then.stmts.len(), 1);
+    assert!(if_stmt.els.is_none());
+    assert!(matches!(
+        if_stmt.then.stmts[0],
+        biwac_ast::NovelStmt::ContentPush(biwac_ast::NovelContent::Text { .. })
+    ));
+
+    // #biwa = 3
+    assert!(
+        scene
+            .stmts
+            .iter()
+            .any(|s| matches!(s, biwac_ast::NovelStmt::Assign(_)))
+    );
+
+    // #endscene g
+    assert!(matches!(
+        scene.stmts.last(),
+        Some(biwac_ast::NovelStmt::NovelEndScene(_))
+    ));
+}
+
+#[test]
+fn lowers_novel_scene_chara_line_is_skipped() {
+    let src = "scene s(g: G) -> G {{\n@biwa\nこんにちは\n}}\n";
+    let (ast, errors) = lower(src);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::NovelScene(scene) = &ast.globals[0] else {
+        panic!("expected NovelScene");
+    };
+    // `@biwa` 行自体は捨てられるが、次の行の地の文は残る。
+    assert!(
+        scene.stmts.iter().any(|s| matches!(
+            s,
+            biwac_ast::NovelStmt::ContentPush(biwac_ast::NovelContent::Text { .. })
+        )),
+        "expected the raw text line after @biwa to survive, got {:?}",
+        scene.stmts
+    );
+}
+
+#[test]
 fn bare_self_type_used_as_a_value_is_dropped_not_panicking() {
     // 実コンパイラの文法上ありえない書き方 (`Self` 単独を式として使う) だが、
     // biwa-lsp-parser は許容範囲が広いので CST は作れてしまう。

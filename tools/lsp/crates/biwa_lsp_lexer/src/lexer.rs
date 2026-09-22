@@ -74,6 +74,8 @@ enum CodeToken {
     KwSelfType,
     #[token("return")]
     KwReturn,
+    #[token("endscene")]
+    KwEndScene,
     #[token("package")]
     KwPackage,
     #[token("enum")]
@@ -194,6 +196,7 @@ fn code_token_to_syntax_kind(t: &CodeToken) -> SyntaxKind {
         CodeToken::KwSelf => SyntaxKind::KwSelf,
         CodeToken::KwSelfType => SyntaxKind::KwSelfType,
         CodeToken::KwReturn => SyntaxKind::KwReturn,
+        CodeToken::KwEndScene => SyntaxKind::KwEndScene,
         CodeToken::KwPackage => SyntaxKind::KwPackage,
         CodeToken::KwEnum => SyntaxKind::KwEnum,
         CodeToken::KwMatch => SyntaxKind::KwMatch,
@@ -568,6 +571,13 @@ fn lex_novel_segment(src: &str, offset: usize, out: &mut Vec<Token>) {
         let is_end_brace = content_start + 1 < len
             && bytes[content_start] == b'}'
             && bytes[content_start + 1] == b'}';
+        // 単独の `}` 行。`#if cond {` のように `#` コマンド行の末尾に置かれた
+        // `{` (ordinary code token として lex_code_segment 側で `LBrace` になる)
+        // に対応するブロック終端で、`}}` (scene 全体の終端) とは別物。
+        // 同じ `RBrace` トークンにしておくと、対応する `LBrace` と種類が揃う。
+        let is_single_brace_close = !is_end_brace
+            && content_start < line_end
+            && bytes[content_start] == b'}';
 
         if is_end_brace {
             push_indent(out);
@@ -579,6 +589,23 @@ fn lex_novel_segment(src: &str, offset: usize, out: &mut Vec<Token>) {
             let after = content_start + 2;
             if after < line_end {
                 // `}}` の後ろに何か残っていれば (通常は起きない)、そのまま読み捨てる。
+                out.push(Token {
+                    kind: SyntaxKind::Error,
+                    start: offset + after,
+                    end: offset + line_end,
+                });
+            }
+            pos = line_end;
+        } else if is_single_brace_close {
+            push_indent(out);
+            out.push(Token {
+                kind: SyntaxKind::RBrace,
+                start: offset + content_start,
+                end: offset + content_start + 1,
+            });
+            let after = content_start + 1;
+            if after < line_end {
+                // `}` の後ろに何か残っていれば (通常は起きない)、そのまま読み捨てる。
                 out.push(Token {
                     kind: SyntaxKind::Error,
                     start: offset + after,
@@ -930,5 +957,31 @@ mod tests {
         assert_lossless(src);
         let toks = lex(src);
         assert!(!toks.iter().any(|t| t.kind == SyntaxKind::Error));
+    }
+
+    #[test]
+    fn lex_endscene_keyword() {
+        let ks = kinds("scene s(g: G) -> G {{\n#endscene g\n}}\n");
+        assert!(ks.contains(&SyntaxKind::KwEndScene));
+        assert!(ks.contains(&SyntaxKind::Ident), "`g` should still lex as Ident");
+    }
+
+    #[test]
+    fn lex_single_brace_line_closes_as_rbrace_not_double_rbrace() {
+        // `#if cond {` の `{` に対応する、`#if` ブロックだけを閉じる単独の `}`。
+        // 行全体の終端 (`}}`) と区別できなければならない。
+        let src = "scene s(g: G) -> G {{\n#if x {\ntext\n}\n}}\n";
+        let toks = lex(src);
+        let kinds: Vec<SyntaxKind> = toks.iter().map(|t| t.kind).collect();
+        assert!(kinds.contains(&SyntaxKind::LBrace));
+        let rbrace_count = kinds.iter().filter(|k| **k == SyntaxKind::RBrace).count();
+        assert_eq!(rbrace_count, 1, "expected exactly one single-brace close, got {toks:?}");
+        let double_rbrace_count = kinds
+            .iter()
+            .filter(|k| **k == SyntaxKind::DoubleRBrace)
+            .count();
+        assert_eq!(double_rbrace_count, 1);
+        assert!(!kinds.contains(&SyntaxKind::Error));
+        assert_lossless(src);
     }
 }

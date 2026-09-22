@@ -25,8 +25,8 @@
 //! - メソッド呼び出し (`.foo()`) は分類しない (要求仕様どおり: 型推論をしないと
 //!   実装が決まらないことが多いため、この段では variable 系のまま残す)。
 //!   `MethodCall::target` に相当する解決は名前解決の範囲外である。
-//! - `scene` の本体は `biwa_lsp_lower` がまだ構造化していないため
-//!   (`biwa_lsp_lower::lib` の既知の非対応リスト参照)、シグニチャ以外は
+//! - `scene` の本体のうち `@` 行 (キャラクター指定) は `biwa_lsp_lower` が
+//!   `NovelStmt` へ変換しない (実コンパイラ自身もまだ持たない文法) ので
 //!   分類しようがない。
 //! - `Self` 型 (`TypReprVal::SelfTyp`) は `OnceCell` を持たないため分類しない。
 
@@ -35,10 +35,10 @@ use std::collections::HashSet;
 use biwac_ast::symbols::globals::GenArgsDecl;
 use biwac_ast::{
     AbsolutePathHeader, ArgDeclList, BlockExpr, BlockStmt, Exprs, FnDef, Globals, ImplBlock,
-    Literal, MethodArgDeclList, MethodDef, NativeFnDef, NativeMethodDef, NovelScene, Path,
-    PathSegmentResolution, Pattern, PatternFields, Primary, RetTypRepr, Stmt, TraitDef,
-    TraitItemArgs, TraitItemDecl, TypDecl, TypRepr, TypReprVal, TypeDef, Variable, VariantDecl,
-    VariantFieldsDecl,
+    Literal, MethodArgDeclList, MethodDef, NativeFnDef, NativeMethodDef, NovelContent, NovelScene,
+    NovelStmt, Path, PathSegmentResolution, Pattern, PatternFields, Primary, RetTypRepr, Stmt,
+    TraitDef, TraitItemArgs, TraitItemDecl, TypDecl, TypRepr, TypReprVal, TypeDef, Variable,
+    VariantDecl, VariantFieldsDecl,
 };
 use biwac_base::ModId;
 use biwac_package_loader::{LoadedModule, Pkg};
@@ -299,8 +299,42 @@ fn classify_trait_item_decl(item: &TraitItemDecl, out: &mut Vec<Classification>)
 fn classify_novel_scene(s: &NovelScene, out: &mut Vec<Classification>) {
     classify_arg_decl_list(&s.args, out);
     classify_ret_typ_repr(&s.rtype, out);
-    // s.stmts (NovelStmt) は biwa_lsp_lower がまだ本体を構造化しないので常に空
-    // (`biwa_lsp_lower::lib` の既知の非対応リスト参照)。
+
+    let param_ids: HashSet<VarId> = s.args.args.iter().filter_map(|a| a.var_id.get().copied()).collect();
+    classify_novel_stmts(&s.stmts, &param_ids, out);
+}
+
+fn classify_novel_stmts(stmts: &[NovelStmt], param_ids: &HashSet<VarId>, out: &mut Vec<Classification>) {
+    for s in stmts {
+        classify_novel_stmt(s, param_ids, out);
+    }
+}
+
+fn classify_novel_stmt(s: &NovelStmt, param_ids: &HashSet<VarId>, out: &mut Vec<Classification>) {
+    match s {
+        NovelStmt::Expr(e) => classify_exprs(&e.expr, param_ids, out),
+        NovelStmt::If(i) => {
+            classify_exprs(&i.cond, param_ids, out);
+            classify_novel_stmts(&i.then.stmts, param_ids, out);
+            if let Some(els) = &i.els {
+                classify_novel_stmts(&els.stmts, param_ids, out);
+            }
+        }
+        NovelStmt::VarDecl(v) => {
+            classify_typ_decl(&v.typ, out);
+            classify_exprs(&v.init, param_ids, out);
+        }
+        NovelStmt::Assign(a) => {
+            classify_primary(&a.dst, param_ids, out);
+            classify_exprs(&a.src, param_ids, out);
+        }
+        NovelStmt::ContentPush(NovelContent::Expr { expr, .. }) => {
+            classify_exprs(expr, param_ids, out);
+        }
+        NovelStmt::ContentPush(NovelContent::Text { .. }) => {}
+        NovelStmt::ContentFlushAndWait(_) => {}
+        NovelStmt::NovelEndScene(e) => classify_exprs(&e.expr, param_ids, out),
+    }
 }
 
 // ── 文・式・パターン ────────────────────────────────────────────────────

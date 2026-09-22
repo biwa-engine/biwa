@@ -36,15 +36,11 @@
 //! - パターンのネスト、リテラル/範囲パターン、`|` による選択、ガード、`..`
 //!   によるフィールド省略 (biwac 自身がまだ入れていない範囲。
 //!   `docs/enum-and-match.md` の「今回やらないこと」と同じ)
-//! - `scene` の本体 (novel モード) の構造化 (`#`/`@` 行を文の列として組む、
-//!   `NovelIfStmt` 相当の CST ノードを作る、など)。字句解析の段階では
-//!   `#` コマンドの複数行への継続 (`(`/`[`/`,`/`.`/`::` で終わったら次行へ)
-//!   と `$` 埋め込み式 (`$(expr)` / `$ident(..)...` の呼び出しで終わる連鎖) は
-//!   `biwa_lsp_lexer::lexer::lex_novel_segment` が正しく認識し、中身を通常
-//!   コードのトークン列として切り出す。ここから `biwac_ast::NovelStmt` へ
-//!   構造化する文法が biwa-lsp-parser にまだ無く、常に空の本体として
-//!   salvage される (`docs/enum-and-match.md` が言う「ノベル `#` コード行での
-//!   match」と同じ理由で、行継続を含む文の並びを組む設計がまだ無いため)。
+//! - `scene` の本体 (novel モード) のうち `@` 行 (キャラクター指定)。
+//!   `#`/地の文/`$` 埋め込み式は `NovelStmt` へ構造化される
+//!   (`crate::novel` 参照) が、`@` 行は実コンパイラ (`biwac_novel_parser`)
+//!   自身もまだ `NovelStmt` へ変換する文法を持たない
+//!   (`symbols/statements.rs` の `CharaCommand => todo!()`) ため読み捨てる。
 //! - ブロック直下、素のまま置かれた `if`/`match` を tail 式として使うこと
 //!   (`fn f() -> Int { if c {1} else {2} }`)。`parse_statement_or_expr` が
 //!   `if`/`match` を常に文形 (`IfStmt`/`MatchStmt`) としてパースしてしまい、
@@ -59,6 +55,7 @@ mod cursor;
 mod error;
 mod expr;
 mod globals;
+mod novel;
 mod path_ty;
 mod pattern;
 mod stmt;
