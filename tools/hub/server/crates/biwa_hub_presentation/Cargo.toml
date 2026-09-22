@@ -1,0 +1,22 @@
+[package]
+name = "biwa_hub_presentation"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+biwa_hub_domain = { path = "../biwa_hub_domain" }
+biwa_hub_usecase = { path = "../biwa_hub_usecase" }
+biwac_base = { path = "../../../../../compiler/src/biwac_base" }
+
+serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["serde"] }
+
+# `client` は DTO の型だけを参照する (request/response のシリアライズ形式を共有するため)。
+# axum の router/handler コードは重い依存 (hyper 等) を引き込むので "server" feature の
+# 背後に隠し、client 側のビルドには含めない。
+axum = { version = "0.8", optional = true }
+
+[features]
+default = []
+server = ["dep:axum"]

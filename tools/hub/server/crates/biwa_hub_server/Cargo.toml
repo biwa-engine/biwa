@@ -1,0 +1,18 @@
+[package]
+name = "biwa_hub_server"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "biwa-hub-server"
+path = "src/main.rs"
+
+[dependencies]
+biwa_hub_domain = { path = "../biwa_hub_domain" }
+biwa_hub_infrastructure = { path = "../biwa_hub_infrastructure" }
+biwa_hub_presentation = { path = "../biwa_hub_presentation", features = ["server"] }
+
+anyhow = "1"
+axum = "0.8"
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
