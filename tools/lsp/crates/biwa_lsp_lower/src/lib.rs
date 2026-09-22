@@ -45,8 +45,6 @@
 //!   構造化する文法が biwa-lsp-parser にまだ無く、常に空の本体として
 //!   salvage される (`docs/enum-and-match.md` が言う「ノベル `#` コード行での
 //!   match」と同じ理由で、行継続を含む文の並びを組む設計がまだ無いため)。
-//! - `Self` (大文字) 型/パス (biwa-lsp-lexer に専用トークンが無く、
-//!   ただの識別子 `Self` として読まれる)
 //! - ブロック直下、素のまま置かれた `if`/`match` を tail 式として使うこと
 //!   (`fn f() -> Int { if c {1} else {2} }`)。`parse_statement_or_expr` が
 //!   `if`/`match` を常に文形 (`IfStmt`/`MatchStmt`) としてパースしてしまい、

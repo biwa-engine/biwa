@@ -543,9 +543,21 @@ fn parse_identifier_path(p: &mut Parser) {
         p.skip_trivia();
         p.bump();
         p.expect(SyntaxKind::ColonColon);
-    }
-    // `self` も識別子として許可
-    if p.current_non_trivia() == SyntaxKind::KwSelf {
+        p.skip_trivia();
+        p.expect(SyntaxKind::Ident);
+    } else if p.current_non_trivia() == SyntaxKind::KwSelfType {
+        // `Self` (型)。単独 (型位置) でも `Self::foo` (式位置) でもよいので、
+        // `package` と違い `::` は無くてもエラーにしない。
+        p.skip_trivia();
+        p.bump();
+        if p.at(SyntaxKind::ColonColon) {
+            p.skip_trivia();
+            p.bump();
+            p.skip_trivia();
+            p.expect(SyntaxKind::Ident);
+        }
+    } else if p.current_non_trivia() == SyntaxKind::KwSelf {
+        // `self` も識別子として許可
         p.skip_trivia();
         p.bump();
     } else {
@@ -1000,7 +1012,7 @@ fn parse_primary(p: &mut Parser) {
             p.bump();
             p.finish_node();
         }
-        SyntaxKind::Ident | SyntaxKind::KwPackage | SyntaxKind::KwSelf => {
+        SyntaxKind::Ident | SyntaxKind::KwPackage | SyntaxKind::KwSelf | SyntaxKind::KwSelfType => {
             // struct literal か ident path かを判定
             // ident path の直後に `{` が来れば struct literal
             let checkpoint = p.builder.checkpoint();

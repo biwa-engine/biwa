@@ -6,14 +6,29 @@ use biwac_span::Span;
 use crate::cursor::{Children, SyntaxNode, intern_ident_token, node_span};
 use crate::error::LowerError;
 
-/// `IdentPath` ノード (`package::foo::Bar` のような列) を `biwac_ast::Path` に直す。
+/// `IdentPath` ノード (`package::foo::Bar` や `Self::new` のような列) を
+/// `biwac_ast::Path` に直す。
 ///
 /// 実コンパイラの `consume_qualified_identifier` は `self` を segment として
 /// 受け付けない (`self` は `Variable::SelfVar` として別扱いされる)。
-/// biwa-lsp-lexer には `Self` 専用のトークンが無く `self` (小文字) しか
-/// キーワードとして区別できないため、`self` が Path の先頭に来る形は
-/// ここでは「識別子 "self" が書かれた」ものとして扱う (実コンパイラの文法上は
-/// 本来ありえない位置なので、通常のコードでは通らない)。
+/// biwa-lsp-lexer でも `self` (小文字) は独立したトークンだが、キーワードを
+/// 識別子として許して salvage する既存の方針に合わせ、ここでは
+/// 「識別子として書かれた」ものとして扱う (実コンパイラの文法上は本来
+/// ありえない位置なので、通常のコードでは通らない)。
+///
+/// `Self` (大文字) は `package` と同じく先頭の path header
+/// (`AbsolutePathHeader::SelfTyp`) として扱う。型位置の単独 `Self`
+/// (`-> Self`, `x: Self`) はこの関数を呼ぶ前に `lower_type_repr` 側で
+/// `TypReprVal::SelfTyp` として弾くので、ここに来るのは `Self::foo` /
+/// `Self { .. }` の形だけを想定している。
+///
+/// **注意**: `Self { .. }` (構造体リテラル) は実コンパイラでも
+/// segments が空のまま (`Path{header: Some(SelfTyp), segments: []}`) が
+/// 正しい形なので、ここでは弾かない。一方 `Path::span()` は
+/// `segments.last().unwrap()` を呼ぶため、式の値として使う経路
+/// (`Variable::Path`/`FnCall`) でこの形が渡るとパニックしうる。
+/// そちらは呼び出し側 (`lower_ident_path_as_variable` 等) で
+/// `segments.is_empty()` を追加でチェックして弾いている。
 pub(crate) fn lower_ident_path(
     mod_id: ModId,
     interner: &mut IdentInterner,
@@ -27,6 +42,15 @@ pub(crate) fn lower_ident_path(
         // `::` は `expect` されている前提の構文なので、無ければそのまま諦める。
         children.eat_token(SyntaxKind::ColonColon);
         Some(biwac_ast::AbsolutePathHeader::Package(span))
+    } else if let Some(self_ty_tok) = children.eat_token(SyntaxKind::KwSelfType) {
+        let span = crate::cursor::token_span(mod_id, &self_ty_tok);
+        // `Self` 単独 (`::` が続かない) はここでは segments が空のまま
+        // 下の判定で `None` になる。型位置はこの関数に来ない前提なので、
+        // 式位置での裸の `Self` (本来ありえない書き方) が安全に捨てられる。
+        children.eat_token(SyntaxKind::ColonColon);
+        Some(biwac_ast::AbsolutePathHeader::SelfTyp(
+            biwac_ast::SelfTypHeader::new(span),
+        ))
     } else {
         None
     };
@@ -56,6 +80,26 @@ pub(crate) fn lower_ident_path(
     }
 
     Some(Path::new(abs_header, segments))
+}
+
+/// 式の値として使う位置 (`Variable::Path`/`FnCall`) で `path` を使ってよいか。
+///
+/// `segments` が空なのに `abs_header` だけある形 (`package` 単独や、
+/// `Self::` が入力途中で途切れた形) は `Path::span()` の
+/// `segments.last().unwrap()` がパニックする。`Self { .. }` (構造体リテラル)
+/// はこの形が正しいので、値としての経路だけここでチェックする。
+pub(crate) fn path_is_usable_as_value(path: &Path) -> bool {
+    !path.segments.is_empty()
+}
+
+/// `IdentPath` ノードが `Self` 単独 (続きが無い) かどうかを見る。
+/// 型位置の `Self` を `TypReprVal::SelfTyp` として特別扱いするための判定。
+fn is_bare_self_type(node: &SyntaxNode) -> bool {
+    let mut children = Children::of(node);
+    if children.eat_token(SyntaxKind::KwSelfType).is_none() {
+        return false;
+    }
+    children.peek_kind().is_none()
 }
 
 /// `GenericsArgList` (`[T, Int]` のような、型引数の**指定**) を読む。
@@ -126,6 +170,12 @@ pub(crate) fn lower_type_repr(
         }
         Some(SyntaxKind::IdentPath) => {
             let path_node = children.next_node()?;
+            if is_bare_self_type(&path_node) {
+                return Some(TypRepr {
+                    val: TypReprVal::SelfTyp,
+                    span,
+                });
+            }
             let path = lower_ident_path(mod_id, interner, &path_node)?;
             let genargs = if let Some(list_node) = children.eat_node(SyntaxKind::GenericsArgList) {
                 Some(lower_generics_arg_list(

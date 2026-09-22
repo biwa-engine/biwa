@@ -11,7 +11,7 @@ use crate::cursor::{
     Children, SyntaxElement, SyntaxNode, intern_ident_token, node_span, token_span,
 };
 use crate::error::LowerError;
-use crate::path_ty::lower_ident_path;
+use crate::path_ty::{lower_ident_path, path_is_usable_as_value};
 use crate::pattern::lower_pattern;
 use crate::stmt::lower_block_expr_mandatory;
 
@@ -151,7 +151,8 @@ fn lower_ident_path_as_variable(
         ))));
     }
 
-    let Some(path) = lower_ident_path(mod_id, interner, node) else {
+    let Some(path) = lower_ident_path(mod_id, interner, node).filter(path_is_usable_as_value)
+    else {
         errors.push(LowerError::new(
             "malformed identifier path",
             node_span(mod_id, node),
@@ -225,7 +226,7 @@ fn lower_postfix_expr(
         && first_node.kind() == SyntaxKind::IdentPath
         && children.peek_kind() == Some(SyntaxKind::CallArgList)
     {
-        let path = lower_ident_path(mod_id, interner, first_node)?;
+        let path = lower_ident_path(mod_id, interner, first_node).filter(path_is_usable_as_value)?;
         let args_node = children.eat_node(SyntaxKind::CallArgList)?;
         let args = lower_call_arg_list(mod_id, interner, &args_node, errors);
         return Some(Exprs::Primary(Primary::FnCall(FnCall { path, args, span })));

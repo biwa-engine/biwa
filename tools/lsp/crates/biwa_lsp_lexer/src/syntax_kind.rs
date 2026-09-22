@@ -31,6 +31,8 @@ pub enum SyntaxKind {
     KwFor,
     KwIn,
     KwSelf,
+    /// `Self` (大文字)。値としての `self` (`KwSelf`) とは別トークン。
+    KwSelfType,
     KwReturn,
     KwPackage,
     KwEnum,

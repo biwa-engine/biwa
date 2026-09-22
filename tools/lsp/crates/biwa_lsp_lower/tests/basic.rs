@@ -388,3 +388,72 @@ fn lowers_generics_bounds() {
     assert_eq!(genargs.genargs.len(), 1);
     assert_eq!(genargs.genargs[0].bounds.len(), 1);
 }
+
+#[test]
+fn self_type_in_return_position_lowers_to_self_typ_variant() {
+    let src = r#"
+impl Duration {
+  fn ms(ms: Uint) -> Self {
+    Self { ms = ms }
+  }
+}
+"#;
+    let (ast, errors) = lower(src);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::ImplBlock(imp) = &ast.globals[0] else {
+        panic!("expected impl block, got {:?}", ast.globals[0]);
+    };
+    let f = &imp.assoc_fns[0];
+
+    // `-> Self` は `TypReprVal::Defined` (単なる識別子) ではなく
+    // 専用の `SelfTyp` バリアントでなければならない。
+    let biwac_ast::RetTypRepr::Typ(rtype) = &f.rtype else {
+        panic!("expected an explicit return type");
+    };
+    assert!(matches!(rtype.val, biwac_ast::TypReprVal::SelfTyp));
+
+    // `Self { ms = ms }` は struct literal で、path の header が
+    // `AbsolutePathHeader::SelfTyp` になり、segments は空。
+    let Some(Exprs::Primary(Primary::Literal(biwac_ast::Literal::Struct(lit)))) = &f.expr else {
+        panic!("expected a struct literal tail, got {:?}", f.expr);
+    };
+    assert!(lit.path.segments.is_empty());
+    assert!(matches!(
+        lit.path.abs_header,
+        Some(biwac_ast::AbsolutePathHeader::SelfTyp(_))
+    ));
+}
+
+#[test]
+fn self_colon_colon_call_lowers_to_fn_call_with_self_typ_header() {
+    let src = r#"
+impl Foo {
+  fn make() -> Foo {
+    Self::make()
+  }
+}
+"#;
+    let (ast, errors) = lower(src);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::ImplBlock(imp) = &ast.globals[0] else {
+        panic!("expected impl block, got {:?}", ast.globals[0]);
+    };
+    let Some(Exprs::Primary(Primary::FnCall(call))) = &imp.assoc_fns[0].expr else {
+        panic!("expected a call tail, got {:?}", imp.assoc_fns[0].expr);
+    };
+    assert!(matches!(
+        call.path.abs_header,
+        Some(biwac_ast::AbsolutePathHeader::SelfTyp(_))
+    ));
+    assert_eq!(call.path.segments.len(), 1);
+}
+
+#[test]
+fn bare_self_type_used_as_a_value_is_dropped_not_panicking() {
+    // 実コンパイラの文法上ありえない書き方 (`Self` 単独を式として使う) だが、
+    // biwa-lsp-parser は許容範囲が広いので CST は作れてしまう。
+    // Path の segments が空のまま Variable として渡ると `Path::span()` が
+    // パニックしうるので、lowering の時点で安全に落とさなければならない。
+    let (_ast, errors) = lower("fn f() -> Bool { Self }");
+    assert!(!errors.is_empty(), "expected a lowering error, got none");
+}

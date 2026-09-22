@@ -70,6 +70,8 @@ enum CodeToken {
     KwIn,
     #[token("self")]
     KwSelf,
+    #[token("Self")]
+    KwSelfType,
     #[token("return")]
     KwReturn,
     #[token("package")]
@@ -190,6 +192,7 @@ fn code_token_to_syntax_kind(t: &CodeToken) -> SyntaxKind {
         CodeToken::KwFor => SyntaxKind::KwFor,
         CodeToken::KwIn => SyntaxKind::KwIn,
         CodeToken::KwSelf => SyntaxKind::KwSelf,
+        CodeToken::KwSelfType => SyntaxKind::KwSelfType,
         CodeToken::KwReturn => SyntaxKind::KwReturn,
         CodeToken::KwPackage => SyntaxKind::KwPackage,
         CodeToken::KwEnum => SyntaxKind::KwEnum,

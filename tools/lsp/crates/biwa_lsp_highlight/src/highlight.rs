@@ -124,7 +124,12 @@ fn token_type_for(kind: SyntaxKind, parent: Option<SyntaxKind>) -> Option<TokenT
 
         // ── built-in types ────────────────────────────────────────────────────
         // `Void` は無い (`biwa_lsp_lexer::SyntaxKind` のコメント参照)。
-        SyntaxKind::KwInt | SyntaxKind::KwUint | SyntaxKind::KwFloat | SyntaxKind::KwBool => {
+        // `Self` (大文字) も型として振る舞うのでここに含める。
+        SyntaxKind::KwInt
+        | SyntaxKind::KwUint
+        | SyntaxKind::KwFloat
+        | SyntaxKind::KwBool
+        | SyntaxKind::KwSelfType => {
             Some(TokenType::Type)
         }
 
