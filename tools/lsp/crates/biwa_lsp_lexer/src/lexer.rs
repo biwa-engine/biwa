@@ -38,7 +38,11 @@ enum CodeToken {
     IntLiteral,
     #[regex(r"[0-9]+\.[0-9]+")]
     FloatLiteral,
-    #[regex(r#""[^"\n]*""#)]
+    // `\"` を正しく飛ばさないと `"\"foo\""` のようなエスケープされた `"` を
+    // 含む文字列が途中で閉じたことになってしまう (`[^"\n]*` は `\` の次の
+    // 文字を特別扱いしないため)。biwac_lexer と同じ対応表・走査規則
+    // (`biwac_base::string_body_end`) を共有し、コールバックで手動走査する。
+    #[token("\"", lex_string_literal)]
     StringLiteral,
 
     // keywords / built-in types
@@ -168,6 +172,25 @@ enum CodeToken {
     LBracket,
     #[token("]")]
     RBracket,
+}
+
+/// 開き `"` (トークンとしてはすでに消費済み) から続きを走査し、
+/// エスケープを正しく飛ばしながら閉じ `"` まで読み進める。
+///
+/// biwa の文字列はコード中では改行をまたがないので (`docs/lexical.md`)、
+/// 閉じが見つからない場合も行末までで打ち切る
+/// (`biwac_lexer::divide_regions` が改行に対してエラーにするのと同じ規則。
+/// ただしこちらはエラー耐性のため、行末までを「壊れた文字列」として
+/// そのままトークンにする)。
+fn lex_string_literal(lex: &mut logos::Lexer<CodeToken>) -> bool {
+    let rest = lex.remainder();
+    let line_end = rest.find('\n').unwrap_or(rest.len());
+    let window = &rest[..line_end];
+    match biwac_base::string_body_end(window) {
+        Some(body_len) => lex.bump(body_len + 1), // +1: 閉じ `"` 自身
+        None => lex.bump(window.len()),
+    }
+    true
 }
 
 fn code_token_to_syntax_kind(t: &CodeToken) -> SyntaxKind {
@@ -982,6 +1005,41 @@ mod tests {
             .count();
         assert_eq!(double_rbrace_count, 1);
         assert!(!kinds.contains(&SyntaxKind::Error));
+        assert_lossless(src);
+    }
+
+    #[test]
+    fn string_literal_with_escaped_quote_is_a_single_token() {
+        // `[^"\n]*` ベースの旧正規表現は `\` の次の `"` を特別扱いせず、
+        // `"\"` の時点で閉じたことにしてしまっていた。
+        let src = r#"let s = "a\"b";"#;
+        let toks = lex(src);
+        let strings: Vec<&Token> = toks
+            .iter()
+            .filter(|t| t.kind == SyntaxKind::StringLiteral)
+            .collect();
+        assert_eq!(strings.len(), 1, "expected exactly one string token, got {toks:?}");
+        assert_eq!(strings[0].text(src), r#""a\"b""#);
+        assert!(!toks.iter().any(|t| t.kind == SyntaxKind::Error));
+        assert_lossless(src);
+    }
+
+    #[test]
+    fn string_literal_with_escaped_quote_inside_novel_embedded_expr_is_a_single_token() {
+        // test1/src/main.biwa 118行目付近と同じ形: 地の文の `$expr(...)` の中で
+        // エスケープされた `"` を含む文字列リテラルを渡す。
+        let src = "scene s(g: G) -> G {{\n$green(\"\\\"foo\\\"\")\n>>\n}}\n";
+        let toks = lex(src);
+        assert!(
+            !toks.iter().any(|t| t.kind == SyntaxKind::Error),
+            "unexpected error token(s): {toks:?}"
+        );
+        let strings: Vec<&Token> = toks
+            .iter()
+            .filter(|t| t.kind == SyntaxKind::StringLiteral)
+            .collect();
+        assert_eq!(strings.len(), 1, "expected exactly one string token, got {toks:?}");
+        assert_eq!(strings[0].text(src), "\"\\\"foo\\\"\"");
         assert_lossless(src);
     }
 }
