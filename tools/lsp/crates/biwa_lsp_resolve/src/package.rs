@@ -5,9 +5,35 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use biwac_base::{IdentInterner, MetadataHolder, ModId, ModPath, Target};
+use biwac_base::{BiwacError, IdentInterner, MetadataHolder, ModId, ModPath, Target};
 use biwac_dependency_metadata::{DepMetadata, ExternalPackage};
-use biwac_package_loader::{LoadedModule, Pkg};
+use biwac_package_loader::{LoadedModule, Pkg, SourceParser};
+
+/// [`biwac_package_loader::Pkg::try_load`] に差し込む、biwa-lsp 自身の
+/// lossless / エラー耐性パーサ。
+///
+/// 実コンパイラ本体の `biwac_lexer`/`biwac_parser` は構文エラーで即失敗するため、
+/// それをそのまま使うと**パッケージ内のどこか 1 箇所に構文エラーがあるだけで
+/// 名前解決自体が始まらない** (`biwa_lsp_lower::lower_module` は salvage 方式で
+/// 常に `ModAst` を返すのに、コンパイラ側のロードで先に弾かれてしまう)。
+/// この実装は常に `Ok` を返す — soft error (`LowerError`) は捨てる。
+/// 診断としては、開いているファイルぶんは既存の CST パーサのエラーで
+/// 十分カバーされている (`biwa_lsp_highlight::parse_for_diagnostics`)。
+pub(crate) struct LspSourceParser;
+
+impl SourceParser for LspSourceParser {
+    fn parse<'src>(
+        mod_id: ModId,
+        modpath: ModPath,
+        src: &'src str,
+        interner: &mut IdentInterner,
+    ) -> Result<biwac_ast::ModAst, Box<dyn BiwacError + 'src>> {
+        let parsed = biwa_lsp_parser::parse(src);
+        let (ast, _lower_errors) =
+            biwa_lsp_lower::lower_module(mod_id, modpath, interner, &parsed.syntax());
+        Ok(ast)
+    }
+}
 
 /// `doc_path` の祖先ディレクトリを遡って `biwa-package.json` を探す。
 pub(crate) fn find_package_root(doc_path: &Path) -> Option<PathBuf> {
@@ -105,9 +131,8 @@ pub(crate) fn substitute_module(
 ) -> Option<ModId> {
     let mod_id = find_mod_id(&pkg.root_module, target_modpath)?;
 
-    let parsed = biwa_lsp_parser::parse(doc_src);
-    let (ast, _lower_errors) =
-        biwa_lsp_lower::lower_module(mod_id, target_modpath.clone(), interner, &parsed.syntax());
+    // `LspSourceParser` は常に `Ok` を返すので `.unwrap()` してよい。
+    let ast = LspSourceParser::parse(mod_id, target_modpath.clone(), doc_src, interner).unwrap();
 
     replace_ast(&mut pkg.root_module, mod_id, ast);
 
@@ -118,7 +143,10 @@ fn find_mod_id(module: &LoadedModule, target: &ModPath) -> Option<ModId> {
     if &module.ast.modpath == target {
         return Some(module.mod_id);
     }
-    module.children.values().find_map(|c| find_mod_id(c, target))
+    module
+        .children
+        .values()
+        .find_map(|c| find_mod_id(c, target))
 }
 
 /// `ast` を消費して該当モジュールへ挿し込む。木を下る途中は `Some` を積み戻し続け、
@@ -142,4 +170,46 @@ fn replace_ast(
         }
     }
     ast
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `tests/fixtures/minipkg` を直接使う (crate 直下のユニットテストからは
+    /// `tests/` 配下の統合テストと違って `CARGO_MANIFEST_DIR` を介さなくても
+    /// 相対パスで届く)。`src/broken.biwa` は実コンパイラの `biwac_parser` なら
+    /// package 全体のロードごと失敗させる、わざと壊れた構文を持つ。
+    fn fixture_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/minipkg")
+    }
+
+    #[test]
+    fn try_load_with_lsp_source_parser_survives_a_syntax_error_in_another_module() {
+        let pkg_root = fixture_root();
+        let metadata = biwac_metadata_loader::try_load_package_metadata(pkg_root.clone()).unwrap();
+        let mut interner = IdentInterner::default();
+        let mut srcs = biwac_base::SourceHolder::default();
+
+        // `LspSourceParser` を使えば、`src/broken.biwa` の構文エラーにも
+        // かかわらずロード自体は `Ok` になるはず (`BiwacSourceParser` なら
+        // ここで `Err` になる — その回復性の無さがそもそもの動機だった)。
+        let pkg = Pkg::try_load::<LspSourceParser>(&metadata, &mut interner, &mut srcs, pkg_root)
+            .unwrap_or_else(|e| panic!("expected Ok despite the syntax error, got: {:?}", e.errs));
+
+        let mut modpaths: Vec<String> = Vec::new();
+        pkg.walk_modules(|m| modpaths.push(format!("{:?}", m.ast.modpath)));
+        modpaths.sort();
+        assert_eq!(
+            modpaths,
+            vec!["Lib".to_string(), "Mod([\"broken\"])".to_string()]
+        );
+
+        // root module は `lib.biwa` 自身。`fn add` 1 つがちゃんと読めている。
+        assert_eq!(
+            pkg.root_module.ast.globals.len(),
+            1,
+            "expected lib.biwa's single `fn add` to survive lowering"
+        );
+    }
 }

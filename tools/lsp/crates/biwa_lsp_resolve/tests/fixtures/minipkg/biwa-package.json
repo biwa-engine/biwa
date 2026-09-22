@@ -1,0 +1,7 @@
+{
+  "name": "minipkg",
+  "version": "0.1.0",
+  "description": "biwa_lsp_resolve tests only: no natives/attributes so biwa_lsp_lower's known gaps don't get in the way.",
+  "dependencies": [],
+  "no_std": true
+}

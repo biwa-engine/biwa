@@ -175,26 +175,28 @@ impl Backend {
         // 見つからない場合など走らせようがないこともある。そうした場合は
         // 構文だけの診断・ハイライトに静かにフォールバックする。
         match uri.to_file_path() {
-            Ok(path) => match biwa_lsp_resolve::resolve_document(&path, src) {
-                Ok(resolution) => {
-                    diagnostics.extend(resolution.diagnostics.iter().map(|d| {
-                        to_lsp_diagnostic(&line_starts, src, d.start, d.end, &d.message)
-                    }));
-                    self.resolutions
-                        .write()
-                        .await
-                        .insert(uri.clone(), resolution);
+            Ok(path) => {
+                match biwa_lsp_resolve::resolve_document(&path, src) {
+                    Ok(resolution) => {
+                        diagnostics.extend(resolution.diagnostics.iter().map(|d| {
+                            to_lsp_diagnostic(&line_starts, src, d.start, d.end, &d.message)
+                        }));
+                        self.resolutions
+                            .write()
+                            .await
+                            .insert(uri.clone(), resolution);
+                    }
+                    Err(reason) => {
+                        self.resolutions.write().await.remove(uri);
+                        self.client
+                            .log_message(
+                                MessageType::INFO,
+                                format!("name resolution skipped for {uri}: {reason}"),
+                            )
+                            .await;
+                    }
                 }
-                Err(reason) => {
-                    self.resolutions.write().await.remove(uri);
-                    self.client
-                        .log_message(
-                            MessageType::INFO,
-                            format!("name resolution skipped for {uri}: {reason}"),
-                        )
-                        .await;
-                }
-            },
+            }
             Err(()) => {
                 self.resolutions.write().await.remove(uri);
             }

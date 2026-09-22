@@ -5,6 +5,14 @@
 //! (`biwa_lsp_lower` で lower した [`biwac_ast::ModAst`]) に差し替えてから、
 //! `biwac_name_resolver::NameResolver` に通す。
 //!
+//! ロードには [`package::LspSourceParser`] (biwa-lsp 自身の lossless /
+//! エラー耐性パーサ) を `biwac_package_loader::SourceParser` として差し込む。
+//! 実コンパイラの `biwac_lexer`/`biwac_parser` は構文エラーで即失敗するため、
+//! それをそのまま使うとパッケージ内のどこか 1 箇所の構文エラーだけで
+//! 名前解決そのものが始まらなくなる。`LspSourceParser` は常に salvage された
+//! `ModAst` を返すので、開いていないファイルに構文エラーがあっても
+//! パッケージ全体のロード・名前解決は続けられる。
+//!
 //! 名前解決はパッケージ単位でしか行えない (`biwac_name_resolver` のコメント参照)
 //! ため、この関数はディスク上の他ファイルもまとめて読み直す。
 //! エディタで開いているが保存していない他ファイルの変更は反映されない。
@@ -49,7 +57,11 @@ pub fn resolve_document(doc_path: &Path, doc_src: &str) -> Result<DocumentResolu
 
     let external_packages = package::load_external_packages(&pkg_root, &metadata, &mut interner)?;
 
-    let mut pkg = biwac_package_loader::Pkg::try_load(
+    // `LspSourceParser` (biwa-lsp 自身の lossless / エラー耐性パーサ) を使う。
+    // 実コンパイラの `biwac_lexer`/`biwac_parser` (既定の `BiwacSourceParser`)
+    // だと構文エラーのあるファイルが 1 つでもあるとパッケージ全体のロードが
+    // 失敗し、名前解決そのものが始まらなくなってしまう。
+    let mut pkg = biwac_package_loader::Pkg::try_load::<package::LspSourceParser>(
         &metadata,
         &mut interner,
         &mut srcs,
@@ -65,9 +77,13 @@ pub fn resolve_document(doc_path: &Path, doc_src: &str) -> Result<DocumentResolu
         )
     })?;
 
-    let doc_mod_id =
-        package::substitute_module(&mut pkg, &target_modpath, &mut interner, doc_src)
-            .ok_or_else(|| format!("module for {} not found in package tree", doc_path.display()))?;
+    let doc_mod_id = package::substitute_module(&mut pkg, &target_modpath, &mut interner, doc_src)
+        .ok_or_else(|| {
+            format!(
+                "module for {} not found in package tree",
+                doc_path.display()
+            )
+        })?;
 
     // 選択されていない arch の native を落としてから解決する
     // (同名の arch 違い native がシンボル衝突するため)。

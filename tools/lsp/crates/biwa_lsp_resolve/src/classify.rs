@@ -74,7 +74,10 @@ fn find_module(module: &LoadedModule, mod_id: ModId) -> Option<&LoadedModule> {
     if module.mod_id == mod_id {
         return Some(module);
     }
-    module.children.values().find_map(|c| find_module(c, mod_id))
+    module
+        .children
+        .values()
+        .find_map(|c| find_module(c, mod_id))
 }
 
 fn push(out: &mut Vec<Classification>, span: Span, kind: ResolvedKind) {
@@ -187,7 +190,12 @@ fn classify_fn_def(f: &FnDef, out: &mut Vec<Classification>) {
     classify_ret_typ_repr(&f.rtype, out);
     classify_genargs_decl(&f.genargs, out);
 
-    let param_ids: HashSet<VarId> = f.args.args.iter().filter_map(|a| a.var_id.get().copied()).collect();
+    let param_ids: HashSet<VarId> = f
+        .args
+        .args
+        .iter()
+        .filter_map(|a| a.var_id.get().copied())
+        .collect();
     classify_body(&f.stmts, &f.expr, &param_ids, out);
 }
 
@@ -196,7 +204,12 @@ fn classify_method_def(m: &MethodDef, out: &mut Vec<Classification>) {
     classify_ret_typ_repr(&m.rtype, out);
     classify_genargs_decl(&m.genargs, out);
 
-    let param_ids: HashSet<VarId> = m.args.args.iter().filter_map(|a| a.var_id.get().copied()).collect();
+    let param_ids: HashSet<VarId> = m
+        .args
+        .args
+        .iter()
+        .filter_map(|a| a.var_id.get().copied())
+        .collect();
     classify_body(&m.stmts, &m.expr, &param_ids, out);
 }
 

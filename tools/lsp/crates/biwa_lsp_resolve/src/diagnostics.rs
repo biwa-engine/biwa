@@ -104,7 +104,9 @@ fn to_diagnostic(err: &ResolveError, interner: &IdentInterner) -> Option<RawDiag
         }
 
         E::DuplicatedSymbolAndModuleName {
-            name: n, symbol_span, ..
+            name: n,
+            symbol_span,
+            ..
         } => {
             let n = name(interner, n);
             raw(
@@ -135,7 +137,10 @@ fn to_diagnostic(err: &ResolveError, interner: &IdentInterner) -> Option<RawDiag
 
         E::DuplicatedStructMember { name: n, span2, .. } => {
             let n = name(interner, n);
-            raw(span2.clone(), format!("Struct member `{n}` is declared twice."))
+            raw(
+                span2.clone(),
+                format!("Struct member `{n}` is declared twice."),
+            )
         }
 
         E::DuplicatedAssociatedItemForGenArgs { .. } => {
@@ -181,7 +186,9 @@ fn to_diagnostic(err: &ResolveError, interner: &IdentInterner) -> Option<RawDiag
             let n = name(interner, &segment.ident.id);
             raw(
                 segment.ident.span.clone(),
-                format!("`{n}` is a generic parameter, not a generic type; it cannot take generic arguments."),
+                format!(
+                    "`{n}` is a generic parameter, not a generic type; it cannot take generic arguments."
+                ),
             )
         }
 
@@ -291,7 +298,10 @@ fn to_diagnostic(err: &ResolveError, interner: &IdentInterner) -> Option<RawDiag
 
         E::TraitImplNameConflict { name: n, span } => {
             let n = name(interner, n);
-            raw(span.clone(), format!("`{n}` is already defined on this type."))
+            raw(
+                span.clone(),
+                format!("`{n}` is already defined on this type."),
+            )
         }
 
         E::MissingTraitItem { name: n, span } => {
@@ -302,7 +312,12 @@ fn to_diagnostic(err: &ResolveError, interner: &IdentInterner) -> Option<RawDiag
             let n = name(interner, n);
             raw(span.clone(), format!("The trait does not declare `{n}`."))
         }
-        E::TraitItemSignatureMismatch { name: n, span, detail, .. } => {
+        E::TraitItemSignatureMismatch {
+            name: n,
+            span,
+            detail,
+            ..
+        } => {
             let n = name(interner, n);
             raw(
                 span.clone(),

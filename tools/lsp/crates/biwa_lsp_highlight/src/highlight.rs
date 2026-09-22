@@ -129,9 +129,7 @@ fn token_type_for(kind: SyntaxKind, parent: Option<SyntaxKind>) -> Option<TokenT
         | SyntaxKind::KwUint
         | SyntaxKind::KwFloat
         | SyntaxKind::KwBool
-        | SyntaxKind::KwSelfType => {
-            Some(TokenType::Type)
-        }
+        | SyntaxKind::KwSelfType => Some(TokenType::Type),
 
         // ── literals ──────────────────────────────────────────────────────────
         SyntaxKind::TrueLiteral | SyntaxKind::FalseLiteral | SyntaxKind::NoneLiteral => {
