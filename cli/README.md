@@ -100,6 +100,16 @@ repository はパッケージに 1 つしか持てず、hub 側にもそれを�
 未設定のビルドでは `biwa publish` はエラーで止まる
 (詳細は [`tools/hub/README.md`](../tools/hub/README.md))。
 
+設定は 2 通り:
+
+- シェルで export してビルドする: `BIWA_HUB_URL=https://hub.example.com cargo build`
+- `tools/hub/client/.env` に置く (`tools/hub/client/sample.env` をコピーして編集):
+  `biwa_hub_client` は path 依存として組み込まれるので、`cli`/`compiler` など
+  どの workspace からビルドしても、そのビルドスクリプトの cwd は常に
+  `tools/hub/client/` になる。**`.env` を置けるのはここだけ**であり、
+  `cli/.env` などに置いても読まれない。`.env` は `.gitignore` 済み。
+  シェルで export 済みの場合はそちらが優先され、`.env` の値は無視される。
+
 ### ターゲット
 
 | ターゲット    | 生成物                                        | 実行のされ方                                      |
