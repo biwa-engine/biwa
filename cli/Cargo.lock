@@ -142,9 +142,11 @@ name = "biwa"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "biwa_hub_client",
  "biwac_base",
  "biwac_driver",
  "biwac_generator",
+ "biwac_metadata_loader",
  "clap",
  "notify",
  "rust-embed",
@@ -225,6 +227,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "biwac_dependency_fetcher"
+version = "0.1.0"
+dependencies = [
+ "biwa_hub_client",
+ "biwac_base",
+]
+
+[[package]]
 name = "biwac_dependency_metadata"
 version = "0.1.0"
 dependencies = [
@@ -241,8 +251,8 @@ version = "0.1.0"
 dependencies = [
  "biwac_attribute",
  "biwac_base",
+ "biwac_dependency_fetcher",
  "biwac_dependency_metadata",
- "biwac_fetch",
  "biwac_fingerprint",
  "biwac_generator",
  "biwac_hash",
@@ -258,14 +268,6 @@ dependencies = [
  "biwac_span",
  "biwac_type_inferrer",
  "colored",
-]
-
-[[package]]
-name = "biwac_fetch"
-version = "0.1.0"
-dependencies = [
- "biwa_hub_client",
- "biwac_base",
 ]
 
 [[package]]

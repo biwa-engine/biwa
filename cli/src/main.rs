@@ -7,6 +7,7 @@
 mod assets;
 mod dev;
 mod project;
+mod publish;
 mod runtime;
 
 use clap::{Parser, Subcommand};
@@ -31,6 +32,9 @@ struct Cli {
 enum Command {
     /// 開発サーバを起動する
     Dev(dev::DevArgs),
+
+    /// パッケージを Biwa Package Hub に公開する
+    Publish(publish::PublishArgs),
 }
 
 fn main() {
@@ -38,6 +42,7 @@ fn main() {
 
     let result = match cli.command {
         Command::Dev(args) => dev::run(args),
+        Command::Publish(args) => publish::run(args),
     };
 
     if let Err(e) = result {
