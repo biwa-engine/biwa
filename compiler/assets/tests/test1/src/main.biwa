@@ -1,0 +1,362 @@
+import math::pos::Pos;
+import math::pos::Pos::new;
+import collections::Pair;
+// バリアント単体を import できる。
+import package::Shade::Dark;
+import collections::Vec;
+// trait 越しの関連関数・メソッドは、その trait を import していないと引けない。
+import greeter::Describe;
+import std::game::Game;
+import std::game::config::Config;
+// 装飾 API。埋め込み式で使うので、使う側が import する。
+import std::game::content::red;
+import std::game::content::blue;
+import std::game::content::bold;
+import std::game::content::big;
+import std::game::content::slow;
+
+type PairIntT[T] = Pair[Int, T];
+
+// 浮動小数点数のリテラル。
+//
+// `1.5` の `.` は字句解析が数値の一部として読み切る。
+// 一方 `1.foo()` の `.` はメソッド呼び出しなので、
+// 小数点として扱うのは後ろに数字が続くときだけである。
+struct Ratio {
+  mul: Float,
+}
+
+impl Ratio {
+  fn normal() -> Self {
+    Self { mul = 1.5 }
+  }
+
+  fn scaled(self, k: Float) -> Float {
+    self.mul * k + 0.25
+  }
+}
+
+fn float_demo() -> Float {
+  Ratio::normal().scaled(2.0)
+}
+
+fn add(x: Int, y: Int) -> Int {
+    return x + y;
+}
+
+fn foo() {
+  let x = add(3, 2);
+  let y = math::fact(x);
+  let l = math::line::Line{
+    begin = Pos::new(0, x),
+    end = Pos::new(11, y),
+  };
+  let z = native_add(3, 2);
+  let pair = Pair::new(l, z);
+  let aa = Pair::new(x, pair.y()).add();
+  // 型引数が埋まりきっていないエイリアス越しの呼び出し。
+  // 呼び出し位置の self 型は使えないので、引数からの推論に落ちる。
+  let ab = PairIntT::new(0, aa).x();
+}
+
+[[native(arch="typescript")]]
+fn native_add(x: Int, y: Int) -> Int {{
+  console.log("Hello, TypeScript World!");
+  return x + y;
+}}
+
+// 同じ名前で arch 違いの native を並べる。
+// 選ばれていない arch のものは def collection の前に落とされるので、
+// シンボルは衝突しない。
+[[native(arch="wasm")]]
+fn native_add(x: Int, y: Int) -> Int {{
+  local.get 0
+  local.get 1
+  i32.add
+}}
+
+// 依存パッケージ greeter の API を使う。
+//
+// greeter のシグニチャには greeter 自身ではなく
+// その依存 (std, color) で定義された型が現れる。
+// これらが .biwameta 越しに正しく復元できるかの検証。
+fn greeting_demo() {
+  // 引数・戻り値の型は greeter から見て外部の型 (std の String)。
+  let msg = greeter::greet("Hello");
+
+  // struct のメンバの型も std の String。
+  let g = greeter::Greeting::new(msg);
+  let m = g.message();
+
+  // 戻り値は color の型。test1 は color に依存していないので
+  // `color::Rgb` と名前で書くことはできないが、型としては流れてくる。
+  // 解決には推移的依存のメタデータがロードされている必要がある。
+  let c = greeter::theme();
+  let red = c.r;
+}
+
+// 自パッケージの enum。
+//
+// バリアントの並びは宣言順で、その添字がタグの値になる。
+enum Shade {
+  Dark,
+  Mid(Int),
+  Tinted { hue: Int, alpha: Int },
+}
+
+impl Shade {
+  fn level(self) -> Int {
+    match self {
+      Shade::Dark => 0,
+      Shade::Mid(n) => n,
+      Shade::Tinted { hue = h, alpha } => h + alpha,
+    }
+  }
+}
+
+fn enum_demo() -> Int {
+  let a = Shade::Mid(3);
+  let b = Shade::Tinted { hue = 10, alpha = 20 };
+
+  // import したバリアントは、パスを書かずに使える。
+  let c = Dark;
+
+  // 文形の match と `_` のアーム。
+  let n = 0;
+  match c {
+    Dark => { n = 1; }
+    _ => { n = 2; }
+  }
+
+  a.level() + b.level() + c.level() + n
+}
+
+// 別パッケージ (std) の enum とそのバリアント。
+fn ext_enum_demo() -> Int {
+  let o = std::option::Option::Some(7);
+
+  match o {
+    std::option::Option::Some(v) => v,
+    std::option::Option::None => 0,
+  }
+}
+
+// 型エイリアス越しに外部パッケージの関連関数を引く。
+//
+// エイリアスの右辺が外部パッケージの型を指すとき、canonical な型は
+// 自パッケージの名前ツリーに居ない。依存メタデータの view まで降りて
+// 関連アイテムを引けているかの検証である。
+type ExtGreeting = greeter::Greeting;      // 非ジェネリックな外部型
+type IntBox = greeter::Box[Int];           // ジェネリックな外部型 (型引数つき)
+type IntBox2 = IntBox;                     // エイリアスの連鎖
+type PairIntInt = Pair[Int, Int];          // 自パッケージの型 (回帰確認)
+type IntVec = Vec[Int];                    // 型引数がエイリアスからしか決まらない
+
+fn alias_assoc_demo() {
+  let g = ExtGreeting::new(greeter::greet("Hi"));
+  let m = g.message();
+
+  let b = IntBox::new(1);
+  let n = b.get();
+
+  let b2 = IntBox2::new(2);
+  let n2 = b2.get();
+
+  let p = PairIntInt::new(3, 4).add();
+
+  // `new()` の型引数は戻り値にしか現れず、以降どこからも決まらない。
+  // エイリアスに書かれた `Int` で決まらなければ単相化できない。
+  let v = IntVec::new();
+}
+
+// 単相化の根はランタイムが呼ぶ scene (main) だけなので、
+// そこから辿れない関数は成果物に入らない。
+// scene main が foo() と greeting_demo() を呼んでいるのは、
+// ジェネリクスの実体化と、パッケージをまたぐ実体化を通すためである。
+//
+//  - foo()            -> Pair::new が [Int, Int] と [Line, Int] の 2 通りに実体化される
+//  - greeting_demo()  -> greeter (直接依存) と color / std (推移的依存) を引き込む
+
+struct MyGameState {}
+
+struct MyGameCharacters {}
+
+type MyGame = Game[MyGameCharacters, MyGameState];
+
+// 最初の `Game` を組み立てる。
+//
+// ランタイムがゲーム開始時にこれを呼び、返ってきた値を `scene main` に渡す。
+// `Game` は開発者が決める値 (characters / states / config) を含むので、
+// ランタイムには組み立てられない。
+fn on_new_game() -> MyGame {
+  Game::new("test1", MyGameCharacters {}, MyGameState {}, Config::default())
+}
+
+// 埋め込み式で出す値。
+fn greet_name() -> std::string::String {
+  greeter::greet("Biwa")
+}
+
+scene main(g: MyGame) -> MyGame {{
+  Hello, World!
+
+  // `$` 埋め込み式。生テキストと式が 1 行の中で混ざる。
+  こんにちは $(greet_name()) さん。>>
+  関数呼び出しの形も $greet_name() 書ける。
+  メソッドチェーンも $("a".concat("b")) 使える。
+  括弧を含む文字列でも壊れない: $("(".concat(")"))
+  バックスラッシュで書いた記号はそのまま出る: 100\$
+  // `Into[Content]` があるので String 以外も置ける。
+  整数も $native_add(40, 2) 小数も $float_demo() 置ける。
+  // 装飾は入れ子にできる。内側から外側へ順に掛かる。
+  $red("赤い字") と $bold(blue("青い太字")) と $big(slow("大きくゆっくり"))。
+  $bold(big(red(native_add(1, 2)))) のように数値にも掛かる。
+  // 文字列の中の `//` はコメントにならず、`\"` で `"` も書ける。
+  $red("// \"引用\" も出せる") // ここは本物のコメント
+  地の文の "引用符" は文字列を開かない。 // これもコメント
+  #let x = native_add(1, 2)
+  #if x > 2 {
+    Nice!
+  }
+
+  hogehoge~~~
+
+  #foo()
+  #greeting_demo()
+  #alias_assoc_demo()
+  #let _shade = enum_demo()
+  #let _opt = ext_enum_demo()
+  #let _lv = trait_demo()
+  #let _ratio = float_demo()
+  #let _bound = bound_demo()
+
+  #endscene g
+}}
+
+// ---- trait ----
+
+// 自パッケージで宣言した trait。
+trait Level {
+  fn level2(self) -> Int;
+
+  fn from_level(n: Int) -> Self;
+}
+
+// 自パッケージの trait を自パッケージの型に実装する。
+//
+// `level` は直接の impl に既にあるので、名前を分けてある。
+// 1 つの型にぶら下がる関連名は、直接 impl でも trait impl でも一意でなければならない。
+impl Shade: Level {
+  fn level2(self) -> Int {
+    self.level() + 100
+  }
+
+  fn from_level(n: Int) -> Self {
+    Shade::Mid(n)
+  }
+}
+
+// 自パッケージの trait を **外部パッケージの型へのエイリアス** に実装する。
+// trait が自パッケージなので孤児則を満たす。
+//
+// エイリアスの右辺 (`greeter::Box[Int]`) まで展開してから登録しないと、
+// 対象の型もその型引数も取り違える。
+impl IntBox: Level {
+  fn level2(self) -> Int {
+    self.get() + 1000
+  }
+
+  fn from_level(n: Int) -> Self {
+    greeter::Box::new(n)
+  }
+}
+
+// **外部パッケージの trait** を自パッケージの型に実装する。
+// 対象の型が自パッケージなので孤児則を満たす。
+impl Pos: greeter::Describe {
+  fn describe(self) -> Int {
+    self.x + self.y
+  }
+
+  fn from_code(code: Int) -> Self {
+    Pos::new(code, code)
+  }
+}
+
+// 型エイリアスに対する普通の impl。
+//
+// 名前解決はエイリアスを型の位置で潰さないので、
+// lowering が右辺に展開して canonical な型の下に置く必要がある。
+// 置き場所を間違えると、エイリアスは `.biwameta` のシンボルにならないため
+// 「シンボル表に無い型」に関連関数がぶら下がることになる。
+impl PairIntInt {
+  fn viaalias(self) -> Int {
+    self.add() + 1
+  }
+}
+
+fn trait_demo() -> Int {
+  // 自パッケージの trait 越しのメソッドと関連関数。
+  let a = Shade::Mid(1).level2();
+  let b = Shade::from_level(2).level2();
+
+  // 外部パッケージの型への trait impl。
+  let c = greeter::Box::new(5).level2();
+  let d = IntBox::from_level(6).level2();
+
+  // 外部パッケージの trait 越し。import した Describe がスコープにある。
+  let e = Pos::new(1, 2).describe();
+  let f = Pos::from_code(3).describe();
+
+  a + b + c + d + e + f + PairIntInt::new(1, 2).viaalias()
+}
+
+// ---- ジェネリクスの trait 制限 (第 2 段) ----
+//
+// `T::from_level(..)` と `v.level2()` の呼び先は、
+// `T` が具体になる単相化まで決まらない。
+// wasm は単相化で普通の直接呼び出しに潰す。
+// TypeScript は未対応で、driver が codegen の手前で弾く。
+
+struct Wrapper[T] {
+  inner: T,
+}
+
+// 制限つきの impl ブロック。
+impl[T: Level] Wrapper[T] {
+  fn wrap(inner: T) -> Self {
+    Self { inner = inner }
+  }
+
+  // レシーバがジェネリック引数のメソッド呼び出し。
+  fn score(self) -> Int {
+    self.inner.level2()
+  }
+
+  // ジェネリック引数越しの関連関数呼び出し。
+  fn rebuilt(self, n: Int) -> Int {
+    let other = T::from_level(n);
+    other.level2()
+  }
+}
+
+// 制限つきの通常の関数。
+fn score_of[U: Level](v: U) -> Int {
+  v.level2()
+}
+
+// 呼び出し元自身の制限をそのまま転送する形。
+fn forwarded[V: Level](v: V) -> Int {
+  score_of(v) + Wrapper::wrap(v).score()
+}
+
+fn bound_demo() -> Int {
+  // 自パッケージの型で満たす
+  let a = Wrapper::wrap(Shade::Mid(1)).score();
+  let b = Wrapper::wrap(Shade::Dark).rebuilt(2);
+  // 外部パッケージの型 (エイリアス経由の trait impl) で満たす
+  let c = score_of(greeter::Box::new(3));
+  let d = forwarded(Shade::Mid(4));
+
+  a + b + c + d
+}

@@ -1,0 +1,53 @@
+[workspace]
+members = [
+  "src/biwac_base",
+  "src/biwac_hash",
+  "src/biwac_span",
+  "src/biwac_lexer",
+  "src/biwac_ast",
+  "src/biwac_attribute",
+  "src/biwac_parser",
+  "src/biwac_novel_parser",
+  "src/biwac_metadata_loader",
+  "src/biwac_package_loader",
+  "src/biwac_hir",
+  "src/biwac_lang_item",
+  "src/biwac_scene",
+  "src/biwac_dependency_fetcher",
+  "src/biwac_dependency_metadata",
+  "src/biwac_fingerprint",
+  "src/biwac_trait_solver",
+  "src/biwac_name_resolver",
+  "src/biwac_type_inferrer",
+  "src/biwac_mir",
+  "src/biwac_mir_build",
+  "src/biwac_mir_transform",
+  "src/biwac_generator",
+  "src/biwac_driver",
+  "src/biwac_cli"
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+oxc_codegen = "0.113.0"
+oxc_ast = "0.113.0"
+oxc_span = "0.113.0"
+oxc_allocator = "0.113.0"
+oxc_parser = "0.113.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+regex = "1.12.3"
+clap = { version = "4.5.61", features = ["derive"] }
+ariadne = "0.6.0"
+colored = "3.1.1"
+wat = "1.0"
+wasmparser = "0.258.0"
+
+[workspace.features]
+default = [ "typescript", "wasm" ]
+typescript = [ "biwac_generator/typescript" ]
+wasm = [ "biwac_generator/wasm" ]

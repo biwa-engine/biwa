@@ -1,0 +1,46 @@
+import math::pos::Pos;
+import math::pos::Pos::new;
+import collections::Pair;
+
+type PairIntT[T] = Pair[Int, T];
+
+fn add(x: Int, y: Int) -> Int {
+    return x + y;
+}
+
+fn main() {
+  let x = add(3, 2);
+  let y = math::fact(x);
+  let l = math::line::Line{
+    begin = Pos::new(0, x),
+    end = Pos::new(11, y),
+  };
+  let z = native_add(3, 2);
+  let pair = Pair::new(l, z);
+  let aa = Pair::new(x, pair.y()).add(); "
+  let ab = PairIntT::new(0, aa).x();
+}
+
+[[native(arch="typescript")]]
+fn native_add(x: Int, y: Int) -> Int {{
+  console.log("Hello, TypeScript World!");
+  return x + y;
+}}
+
+struct MyGameState {}
+
+struct MyGameCharacters {}
+
+scene scene1(
+    g: std::game::Game[MyGameCharacters, MyGameState]
+  ) -> std::game::Game[MyGameCharacters, MyGameState] {{
+  Hello, World!
+  #let x = native_add(1, 2)
+  #if x > 2 {
+    Nice!
+  }
+
+  hogehoge~~~
+  
+  #endscene g
+}}

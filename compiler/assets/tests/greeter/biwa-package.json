@@ -1,0 +1,21 @@
+{
+  "name": "greeter",
+  "version": "0.1.0",
+  "description": "test fixture: a library whose public signatures mention its dependencies' types",
+  "dependencies": [
+    {
+      "name": "std",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    },
+    {
+      "name": "color",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

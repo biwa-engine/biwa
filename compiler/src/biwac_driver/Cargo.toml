@@ -1,0 +1,30 @@
+[package]
+name = "biwac_driver"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+biwac_base = { path = "../biwac_base"}
+biwac_metadata_loader = { path = "../biwac_metadata_loader"}
+biwac_package_loader = { path = "../biwac_package_loader"}
+biwac_attribute = { path = "../biwac_attribute"}
+biwac_lang_item = { path = "../biwac_lang_item"}
+biwac_hir = { path = "../biwac_hir"}
+biwac_scene = { path = "../biwac_scene"}
+biwac_dependency_metadata = { path = "../biwac_dependency_metadata"}
+biwac_fingerprint = { path = "../biwac_fingerprint"}
+biwac_hash = { path = "../biwac_hash"}
+biwac_span = { path = "../biwac_span"}
+biwac_name_resolver = { path = "../biwac_name_resolver"}
+biwac_type_inferrer = { path = "../biwac_type_inferrer"}
+biwac_mir = { path = "../biwac_mir"}
+biwac_mir_build = { path = "../biwac_mir_build"}
+biwac_mir_transform = { path = "../biwac_mir_transform"}
+biwac_generator = { path = "../biwac_generator"}
+biwac_dependency_fetcher = { path = "../biwac_dependency_fetcher"}
+colored.workspace = true
+
+[features]
+default = [ "typescript", "wasm" ]
+typescript = [ "biwac_generator/typescript" ]
+wasm = [ "biwac_generator/wasm" ]
