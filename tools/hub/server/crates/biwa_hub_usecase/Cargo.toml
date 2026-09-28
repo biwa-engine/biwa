@@ -1,0 +1,12 @@
+[package]
+name = "biwa_hub_usecase"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+biwa_hub_domain = { path = "../biwa_hub_domain" }
+biwac_base = { path = "../../../../../compiler/src/biwac_base" }
+
+thiserror = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }

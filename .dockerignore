@@ -1,0 +1,13 @@
+# rust
+**/target
+
+# biwa
+**/.biwa_build
+**/.biwa_runtime
+
+.git
+
+# Node.js
+node_modules
+dist
+dist-ssr

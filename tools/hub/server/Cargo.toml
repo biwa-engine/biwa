@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "crates/biwa_hub_domain",
+    "crates/biwa_hub_infrastructure",
+    "crates/biwa_hub_usecase",
+    "crates/biwa_hub_presentation",
+    "crates/biwa_hub_server",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"

@@ -1,0 +1,41 @@
+# hub server を簡易に起動するための compose ファイル。
+#
+# 使い方 (リポジトリルートから):
+#   docker compose -f tools/hub/server/deploy/compose.yaml up --build
+#
+# 起動すると http://localhost:8080 で API が listen する。
+# マイグレーションは biwa_hub_server の起動時に自動で走る。
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: biwa_hub
+      POSTGRES_USER: biwa_hub
+      POSTGRES_PASSWORD: biwa_hub
+    volumes:
+      - biwa_hub_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U biwa_hub"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  hub:
+    build:
+      # biwa_hub_domain/infrastructure が compiler/src/biwac_base を相対パスで
+      # 参照しているため、ビルドコンテキストはリポジトリルートにする必要がある。
+      context: ../../../..
+      dockerfile: tools/hub/server/deploy/Dockerfile
+    environment:
+      DATABASE_URL: postgres://biwa_hub:biwa_hub@db:5432/biwa_hub
+      # アプリ側の既定値も 0.0.0.0:8080 だが、意図を明示するためここでも指定する。
+      BIND_ADDR: 0.0.0.0:8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  biwa_hub_db:

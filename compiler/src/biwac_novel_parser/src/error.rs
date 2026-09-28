@@ -1,0 +1,391 @@
+use biwac_base::BiwacError;
+use biwac_span::Span;
+
+use crate::token::{CharKind, NCodeTkKindName, NCodeToken};
+
+use ariadne::{Color, Label, Report, ReportKind, Source};
+
+#[derive(Debug, Clone)]
+pub enum NovelParseError {
+    InvalidToken {
+        expecteds: Vec<NCodeTkKindName>,
+        found: Box<NCodeToken>,
+    },
+    InvalidChar {
+        expecteds: Vec<CharKind>,
+        found: CharKind,
+        span: Span,
+    },
+    InvalidLineEnd {
+        expecteds: Vec<NCodeTkKindName>,
+        span: Span,
+    },
+    LineEndExpected {
+        found: Box<NCodeToken>,
+    },
+    GeneralCommandLineOnlyPrefix {
+        span: Span,
+    },
+    InvalidCloseLine {
+        span: Span,
+    },
+    CloseLineExpected {
+        span: Span,
+    },
+    StringLiteralNotClosed {
+        span: Span,
+    },
+
+    /// 文字列リテラルの中の `\` に、知らない文字が続いている。
+    ///
+    /// 黙って `\` を残さないのは、あとから `\u` のような形を足したときに
+    /// 既存のコードの意味が変わってしまうからである。
+    UnknownEscape {
+        found: char,
+        span: Span,
+    },
+
+    /// `$` の後ろが埋め込み式の形になっていない。
+    EmbeddedExpressionExpected {
+        span: Span,
+    },
+
+    /// 埋め込み式の括弧が同じ行で閉じていない。
+    EmbeddedExpressionNotClosed {
+        span: Span,
+    },
+
+    /// 埋め込み式が呼び出しで終わっていない。
+    ///
+    /// どこまでが式でどこからが地の文かを決められないため、
+    /// `$` の形は必ず `)` で終わらなければならない。
+    EmbeddedExpressionMustEndWithCall {
+        span: Span,
+    },
+}
+
+impl BiwacError for NovelParseError {
+    fn print_error_message(&self, ctx: &biwac_base::ErrorContext) {
+        match self {
+            Self::InvalidToken { expecteds, found } => {
+                let modsrc = ctx.srcs.mods.get(&found.span.module()).unwrap();
+
+                let file_name = modsrc.modu.file_name();
+                let begin = modsrc.char_offset(found.span.begin());
+                let end = modsrc.char_offset(found.span.end());
+
+                Report::build(ReportKind::Error, (file_name.as_str(), begin..end))
+                    .with_message("Unexpected token found.")
+                    .with_label(
+                        Label::new((file_name.as_str(), begin..end))
+                            .with_message(if expecteds.is_empty() {
+                                format!(
+                                    "Another token expected, but found {}.",
+                                    found.kind.pattern()
+                                )
+                            } else if expecteds.len() == 1 {
+                                format!(
+                                    "Expected {}, but found {}.",
+                                    format_token_kinds(expecteds),
+                                    found.kind.pattern()
+                                )
+                            } else {
+                                format!(
+                                    "Expected one of {}, but found {}.",
+                                    format_token_kinds(expecteds),
+                                    found.kind.pattern()
+                                )
+                            })
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .print((file_name.as_str(), Source::from(&modsrc.src)))
+                    .unwrap();
+            }
+            Self::InvalidChar {
+                expecteds,
+                found,
+                span,
+            } => {
+                let modsrc = ctx.srcs.mods.get(&span.module()).unwrap();
+
+                let file_name = modsrc.modu.file_name();
+                let begin = modsrc.char_offset(span.begin());
+                let end = modsrc.char_offset(span.end());
+
+                Report::build(ReportKind::Error, (file_name.as_str(), begin..end))
+                    .with_message("Unexpected character found.")
+                    .with_label(
+                        Label::new((file_name.as_str(), begin..end))
+                            .with_message(if expecteds.is_empty() {
+                                format!(
+                                    "Another character expected, but found {}.",
+                                    found.pattern()
+                                )
+                            } else if expecteds.len() == 1 {
+                                format!(
+                                    "Expected {}, but found {}.",
+                                    format_char_kinds(expecteds),
+                                    found.pattern()
+                                )
+                            } else {
+                                format!(
+                                    "Expected one of {}, but found {}.",
+                                    format_char_kinds(expecteds),
+                                    found.pattern()
+                                )
+                            })
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .print((file_name.as_str(), Source::from(&modsrc.src)))
+                    .unwrap();
+            }
+            Self::StringLiteralNotClosed { span } => {
+                let modsrc = ctx.srcs.mods.get(&span.module()).unwrap();
+
+                let file_name = modsrc.modu.file_name();
+                let begin = modsrc.char_offset(span.begin());
+                let end = modsrc.char_offset(span.end());
+
+                Report::build(ReportKind::Error, (file_name.as_str(), begin..end))
+                    .with_message("Closing double quotation ( `\"` ) expected, but not found.")
+                    .with_label(
+                        Label::new((file_name.as_str(), begin..end))
+                            .with_message("`\"` expected")
+                            .with_color(Color::Red),
+                    )
+                    .with_note("a string literal in a scene block must be closed on the same line")
+                    .finish()
+                    .print((file_name.as_str(), Source::from(&modsrc.src)))
+                    .unwrap();
+            }
+            Self::UnknownEscape { found, span } => {
+                let modsrc = ctx.srcs.mods.get(&span.module()).unwrap();
+
+                let file_name = modsrc.modu.file_name();
+                let begin = modsrc.char_offset(span.begin());
+                let end = modsrc.char_offset(span.end());
+
+                Report::build(ReportKind::Error, (file_name.as_str(), begin..end))
+                    .with_message(format!("unknown escape `\\{found}` in a string literal"))
+                    .with_label(
+                        Label::new((file_name.as_str(), begin..end))
+                            .with_message("not an escape")
+                            .with_color(Color::Red),
+                    )
+                    .with_note(format!(
+                        "biwa understands {}; write `\\\\` for a backslash itself",
+                        biwac_base::known_escapes()
+                    ))
+                    .finish()
+                    .print((file_name.as_str(), Source::from(&modsrc.src)))
+                    .unwrap();
+            }
+            Self::EmbeddedExpressionExpected { span } => {
+                let modsrc = ctx.srcs.mods.get(&span.module()).unwrap();
+
+                let file_name = modsrc.modu.file_name();
+                let begin = modsrc.char_offset(span.begin());
+                let end = modsrc.char_offset(span.end());
+
+                Report::build(ReportKind::Error, (file_name.as_str(), begin..end))
+                    .with_message("`$` must be followed by an embedded expression.")
+                    .with_label(
+                        Label::new((file_name.as_str(), begin..end))
+                            .with_message("an identifier or `(` is expected here")
+                            .with_color(Color::Red),
+                    )
+                    .with_note(
+                        "write `$(expr)` or `$name(..)`; to put a literal `$` in the text, write `\\$`",
+                    )
+                    .finish()
+                    .print((file_name.as_str(), Source::from(&modsrc.src)))
+                    .unwrap();
+            }
+            Self::EmbeddedExpressionNotClosed { span } => {
+                let modsrc = ctx.srcs.mods.get(&span.module()).unwrap();
+
+                let file_name = modsrc.modu.file_name();
+                let begin = modsrc.char_offset(span.begin());
+                let end = modsrc.char_offset(span.end());
+
+                Report::build(ReportKind::Error, (file_name.as_str(), begin..end))
+                    .with_message("Closing `)` expected, but not found.")
+                    .with_label(
+                        Label::new((file_name.as_str(), begin..end))
+                            .with_message("this is never closed")
+                            .with_color(Color::Red),
+                    )
+                    .with_note("an embedded expression must be closed on the same line")
+                    .finish()
+                    .print((file_name.as_str(), Source::from(&modsrc.src)))
+                    .unwrap();
+            }
+            Self::EmbeddedExpressionMustEndWithCall { span } => {
+                let modsrc = ctx.srcs.mods.get(&span.module()).unwrap();
+
+                let file_name = modsrc.modu.file_name();
+                let begin = modsrc.char_offset(span.begin());
+                let end = modsrc.char_offset(span.end());
+
+                Report::build(ReportKind::Error, (file_name.as_str(), begin..end))
+                    .with_message("An embedded expression must end with a call.")
+                    .with_label(
+                        Label::new((file_name.as_str(), begin..end))
+                            .with_message("this does not end with `)`")
+                            .with_color(Color::Red),
+                    )
+                    .with_note(
+                        "otherwise the end of the expression cannot be told from the text \
+                         that follows; write `$(player.hp)` instead of `$player.hp`",
+                    )
+                    .finish()
+                    .print((file_name.as_str(), Source::from(&modsrc.src)))
+                    .unwrap();
+            }
+            Self::InvalidLineEnd { expecteds, span } => {
+                let modsrc = ctx.srcs.mods.get(&span.module()).unwrap();
+
+                let file_name = modsrc.modu.file_name();
+                let begin = modsrc.char_offset(span.begin());
+                let end = modsrc.char_offset(span.end());
+
+                Report::build(ReportKind::Error, (file_name.as_str(), begin..end))
+                    .with_message("The line ended in the middle of an expression.")
+                    .with_label(
+                        Label::new((file_name.as_str(), begin..end))
+                            .with_message(if expecteds.is_empty() {
+                                "More is expected here.".to_string()
+                            } else {
+                                format!("Expected {} here.", format_token_kinds(expecteds))
+                            })
+                            .with_color(Color::Red),
+                    )
+                    .with_note("a command line in a scene block must fit on one line")
+                    .finish()
+                    .print((file_name.as_str(), Source::from(&modsrc.src)))
+                    .unwrap();
+            }
+            Self::LineEndExpected { found } => {
+                let modsrc = ctx.srcs.mods.get(&found.span.module()).unwrap();
+
+                let file_name = modsrc.modu.file_name();
+                let begin = modsrc.char_offset(found.span.begin());
+                let end = modsrc.char_offset(found.span.end());
+
+                Report::build(ReportKind::Error, (file_name.as_str(), begin..end))
+                    .with_message("Unexpected token found.")
+                    .with_label(
+                        Label::new((file_name.as_str(), begin..end))
+                            .with_message(format!(
+                                "Expected the end of the line, but found {}.",
+                                found.kind.pattern()
+                            ))
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .print((file_name.as_str(), Source::from(&modsrc.src)))
+                    .unwrap();
+            }
+            Self::GeneralCommandLineOnlyPrefix { span } => {
+                let modsrc = ctx.srcs.mods.get(&span.module()).unwrap();
+
+                let file_name = modsrc.modu.file_name();
+                let begin = modsrc.char_offset(span.begin());
+                let end = modsrc.char_offset(span.end());
+
+                Report::build(ReportKind::Error, (file_name.as_str(), begin..end))
+                    .with_message("This command line has no command.")
+                    .with_label(
+                        Label::new((file_name.as_str(), begin..end))
+                            .with_message("`#` must be followed by a statement.")
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .print((file_name.as_str(), Source::from(&modsrc.src)))
+                    .unwrap();
+            }
+            Self::InvalidCloseLine { span } => {
+                let modsrc = ctx.srcs.mods.get(&span.module()).unwrap();
+
+                let file_name = modsrc.modu.file_name();
+                let begin = modsrc.char_offset(span.begin());
+                let end = modsrc.char_offset(span.end());
+
+                Report::build(ReportKind::Error, (file_name.as_str(), begin..end))
+                    .with_message("The line closing the scene block has something else on it.")
+                    .with_label(
+                        Label::new((file_name.as_str(), begin..end))
+                            .with_message("`}}` must be alone on its line.")
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .print((file_name.as_str(), Source::from(&modsrc.src)))
+                    .unwrap();
+            }
+            Self::CloseLineExpected { span } => {
+                let modsrc = ctx.srcs.mods.get(&span.module()).unwrap();
+
+                let file_name = modsrc.modu.file_name();
+                let begin = modsrc.char_offset(span.begin());
+                let end = modsrc.char_offset(span.end());
+
+                Report::build(ReportKind::Error, (file_name.as_str(), begin..end))
+                    .with_message("This scene block is not closed.")
+                    .with_label(
+                        Label::new((file_name.as_str(), begin..end))
+                            .with_message("`}}` expected")
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .print((file_name.as_str(), Source::from(&modsrc.src)))
+                    .unwrap();
+            }
+        }
+    }
+}
+
+fn format_token_kinds(kinds: &[NCodeTkKindName]) -> String {
+    if kinds.is_empty() {
+        "".to_string()
+    } else if kinds.len() == 1 {
+        kinds[0].to_string()
+    } else if kinds.len() == 2 {
+        format!("{} or {}", kinds.first().unwrap(), kinds.last().unwrap())
+    } else {
+        format!(
+            "{} or {}",
+            kinds[..kinds.len() - 1]
+                .iter()
+                .map(|kind| kind.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            kinds[kinds.len() - 1..][0]
+        )
+    }
+}
+
+fn format_char_kinds(kinds: &[CharKind]) -> String {
+    if kinds.is_empty() {
+        "".to_string()
+    } else if kinds.len() == 1 {
+        kinds[0].pattern().to_string()
+    } else if kinds.len() == 2 {
+        format!(
+            "{} or {}",
+            kinds.first().unwrap().pattern(),
+            kinds.last().unwrap().pattern()
+        )
+    } else {
+        format!(
+            "{} or {}",
+            kinds[..kinds.len() - 1]
+                .iter()
+                .map(|kind| kind.pattern().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            kinds[kinds.len() - 1..][0].pattern()
+        )
+    }
+}

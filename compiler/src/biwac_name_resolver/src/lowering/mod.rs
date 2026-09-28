@@ -1,0 +1,310 @@
+mod alias_expansion;
+mod expressions;
+pub(crate) mod globals;
+mod novel;
+pub(crate) mod patterns;
+mod statements;
+
+use std::collections::HashMap;
+
+pub(crate) use expressions::ExprLowerCtx;
+
+use biwac_ast::{Path, PathSegmentResolution, PrimTyp, TypRepr, TypReprVal};
+use biwac_base::{InternedIdent, ModId, PackageId, PackageName};
+use biwac_hir::{DefinedTy, DefinedTyImpl, Hir, Ty, TyKind, TypeAliasDef, ValDefKind};
+use biwac_package_loader::{LoadedModule, Pkg};
+use biwac_span::{DefIdKind, GenDefId, LocalGenDefId, TraitDefId, TyDefId, ValDefId};
+
+use crate::{ResolveError, resolving::def_collector::ImplCollector};
+
+pub(crate) fn lower(
+    pkg_name: PackageName,
+    pkg: &Pkg,
+    pkg_names: HashMap<PackageId, InternedIdent>,
+    impl_collector: &ImplCollector,
+    trait_scopes: HashMap<ModId, Vec<TraitDefId>>,
+    ext_pkgs: &[biwac_dependency_metadata::ExternalPackage],
+    interner: &mut biwac_base::IdentInterner,
+    lang_items: &biwac_lang_item::LangItemTable,
+) -> Result<Hir, Vec<ResolveError>> {
+    let mut errors = Vec::new();
+
+    // Pass 1: register all type definitions so impl blocks can reference them.
+    let mut ty_list = Vec::new();
+    let mut alias_list = Vec::new();
+    let mut trait_list = Vec::new();
+    lower_module_types(
+        &pkg.root_module,
+        &mut ty_list,
+        &mut alias_list,
+        &mut trait_list,
+        &mut errors,
+    );
+    let mut tys: HashMap<TyDefId, DefinedTyImpl> = ty_list.into_iter().collect();
+    let ty_aliases: HashMap<TyDefId, TypeAliasDef> = alias_list.into_iter().collect();
+    let traits: HashMap<TraitDefId, biwac_hir::TraitDef> = trait_list.into_iter().collect();
+
+    // Pass 2: lower impl blocks
+    lower_impl_blocks(
+        &mut tys,
+        &pkg.root_module,
+        impl_collector,
+        &ty_aliases,
+        &mut errors,
+    );
+
+    // Pass 2.5: trait impl が宣言と一致しているかを検査する。
+    //
+    // 検査をここまで遅らせるのは、
+    // def collection の段では trait の項目の型がまだ解決されていないからである。
+    globals::check_trait_impls(&tys, &traits, ext_pkgs, interner, &mut errors);
+
+    // Pass 3: lower all values (fns, impls, novel scenes, native code).
+    let vals = lower_module_vals(&pkg.root_module, lang_items, &mut errors)
+        .into_iter()
+        .map(|(def_id, val)| (def_id, val))
+        .collect();
+
+    // Pass 4: lower native codes
+    let native_codes = lower_native_codes(&pkg.root_module);
+
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+
+    let mut hir = Hir::new(
+        pkg_name,
+        pkg_names,
+        tys,
+        vals,
+        ty_aliases,
+        native_codes,
+        traits,
+        trait_scopes,
+    );
+
+    // Pass 5: 型 alias を右辺で置き換える。
+    //
+    // 名前解決は alias をその場で canonical な TyDefId に潰さない
+    // (潰すと `type MyGame = Game[A, B]` の [A, B] が失われるため)。
+    // 代わりにここで、すべての型・値を lower し終えたあとに一括で展開する。
+    alias_expansion::expand_aliases(&mut hir, &mut errors);
+
+    if errors.is_empty() {
+        Ok(hir)
+    } else {
+        Err(errors)
+    }
+}
+
+fn lower_module_types(
+    module: &LoadedModule,
+    tys: &mut Vec<(TyDefId, DefinedTyImpl)>,
+    aliases: &mut Vec<(TyDefId, TypeAliasDef)>,
+    traits: &mut Vec<(TraitDefId, biwac_hir::TraitDef)>,
+    errors: &mut Vec<ResolveError>,
+) {
+    for g in &module.ast.globals {
+        match g {
+            biwac_ast::Globals::TypeDef(type_def) => {
+                globals::lower_type_def(type_def, tys, aliases, errors);
+            }
+            biwac_ast::Globals::TraitDef(trait_def) => {
+                traits.push(globals::lower_trait_def(trait_def));
+            }
+            _ => {}
+        }
+    }
+    for (_, child) in module.children_ordered() {
+        lower_module_types(child, tys, aliases, traits, errors);
+    }
+}
+
+fn lower_impl_blocks(
+    tys: &mut HashMap<TyDefId, DefinedTyImpl>,
+    module: &LoadedModule,
+    impl_collector: &ImplCollector,
+    ty_aliases: &HashMap<TyDefId, TypeAliasDef>,
+    errors: &mut Vec<ResolveError>,
+) {
+    for g in &module.ast.globals {
+        if let biwac_ast::Globals::ImplBlock(impl_block) = g {
+            globals::lower_impl_block(tys, impl_block, impl_collector, ty_aliases, errors);
+        }
+    }
+    for (_, child) in module.children_ordered() {
+        lower_impl_blocks(tys, child, impl_collector, ty_aliases, errors);
+    }
+}
+
+fn lower_module_vals(
+    module: &LoadedModule,
+    lang_items: &biwac_lang_item::LangItemTable,
+    errors: &mut Vec<ResolveError>,
+) -> Vec<(ValDefId, ValDefKind)> {
+    let mut vals = Vec::new();
+
+    for g in &module.ast.globals {
+        match g {
+            biwac_ast::Globals::FnDef(fn_def) => {
+                vals.push(globals::lower_fn_def(fn_def, vec![], errors));
+            }
+            biwac_ast::Globals::NativeFnDef(fn_def) => {
+                vals.push(globals::lower_native_fn_def(fn_def, vec![], errors));
+            }
+            biwac_ast::Globals::NovelScene(scene_def) => {
+                vals.push(novel::lower_novel_scene(scene_def, lang_items, errors));
+            }
+            // trait の項目は本体を持たないので値にはならない。
+            biwac_ast::Globals::TypeDef(_)
+            | biwac_ast::Globals::TraitDef(_)
+            | biwac_ast::Globals::Import(_)
+            | biwac_ast::Globals::VarDecl(_)
+            | biwac_ast::Globals::ImplBlock(_)
+            | biwac_ast::Globals::NativeCode(_) => {}
+        }
+    }
+    for (_, child) in module.children_ordered() {
+        vals.extend(lower_module_vals(child, lang_items, errors));
+    }
+
+    vals
+}
+
+fn lower_native_codes(module: &LoadedModule) -> Vec<biwac_hir::NativeCode> {
+    let mut codes = Vec::new();
+
+    for g in &module.ast.globals {
+        if let biwac_ast::Globals::NativeCode(native) = g {
+            codes.push(globals::lower_native_code(native));
+        }
+    }
+    for (_, child) in module.children_ordered() {
+        codes.extend(lower_native_codes(child));
+    }
+
+    codes
+}
+
+/// Converts a resolved TypRepr to TyKind.
+/// `self_typ` is Some only inside impl blocks (for `Self` type references).
+///
+/// NOTE: `typ` path segments must have been resolved before calling this.
+pub(crate) fn ty_kind_from_typ_repr(typ: &TypRepr, self_typ: Option<&TyKind>) -> TyKind {
+    match &typ.val {
+        TypReprVal::Primitive(p) => match p {
+            PrimTyp::Int => TyKind::Int,
+            PrimTyp::Uint => TyKind::Int, // TODO: proper Uint type
+            PrimTyp::Float => TyKind::Float,
+            PrimTyp::Bool => TyKind::Bool,
+        },
+        TypReprVal::Defined(deftyp) => match ty_def_id_kind_from_path(&deftyp.path) {
+            Ok(TyDefIdKind::Ty(def_id)) => TyKind::Defined(DefinedTy {
+                def_id,
+                genargs: deftyp
+                    .genargs
+                    .iter()
+                    .flat_map(|genargs| {
+                        genargs
+                            .iter()
+                            .map(|t| Ty::new(ty_kind_from_typ_repr(t, self_typ), t.span.clone()))
+                    })
+                    .collect(),
+            }),
+            Ok(TyDefIdKind::Gen(gid)) => TyKind::Gen(gid),
+            Ok(TyDefIdKind::LocalGen(lgid)) => TyKind::LocGen(lgid),
+            Err(_) => TyKind::Infer(biwac_hir::InferTy::Unknown),
+        },
+        TypReprVal::SelfTyp => self_typ
+            .unwrap_or_else(|| panic!("compiler bug: SelfTyp outside impl context: {typ:?}"))
+            .clone(),
+    }
+}
+
+pub(crate) fn ty_from_typ_repr(typ: &TypRepr, self_typ: Option<&TyKind>) -> Ty {
+    Ty::new(ty_kind_from_typ_repr(typ, self_typ), typ.span.clone())
+}
+
+/// Returns the resolved DefIdKind from the final segment of a resolved path.
+///
+/// NOTE: panics if the path was not resolved — call only after successful name resolution.
+pub(crate) fn def_id_kind_from_path(path: &Path) -> Result<DefIdKind, ResolveError> {
+    if path.segments.is_empty() {
+        match path
+            .abs_header
+            .as_ref()
+            .expect("compiler bug: completely empty Path")
+        {
+            biwac_ast::AbsolutePathHeader::Package(_) => todo!(),
+            biwac_ast::AbsolutePathHeader::SelfTyp(self_typ) => {
+                return Ok(DefIdKind::Ty(
+                    *self_typ
+                        .resolved_id
+                        .get()
+                        .expect("compiler bug: path was not resolved before lowering"),
+                ));
+            }
+        }
+    }
+
+    for (i, segment) in path.segments.iter().enumerate() {
+        match segment.resolved_id.get() {
+            Some(PathSegmentResolution::Ok(def_id_kind)) => {
+                if i + 1 == path.segments.len() {
+                    return Ok(def_id_kind.clone());
+                }
+                // continue to next segment
+            }
+            Some(PathSegmentResolution::Err) => {
+                return Err(ResolveError::IdentNotFound {
+                    ident: segment.ident.clone(),
+                });
+            }
+            None => break,
+        }
+    }
+    panic!("compiler bug: path was not resolved before lowering: {path:?}")
+}
+
+pub(crate) enum TyDefIdKind {
+    Ty(TyDefId),
+    Gen(GenDefId),
+    LocalGen(LocalGenDefId),
+}
+
+pub(crate) fn ty_def_id_kind_from_path(path: &Path) -> Result<TyDefIdKind, ResolveError> {
+    match def_id_kind_from_path(path)? {
+        DefIdKind::Ty(id) => Ok(TyDefIdKind::Ty(id)),
+        DefIdKind::Gen(id) => Ok(TyDefIdKind::Gen(id)),
+        DefIdKind::LocalGen(id) => Ok(TyDefIdKind::LocalGen(id)),
+        DefIdKind::Package(pkg_id) => Err(ResolveError::TypeNotFoundPackageFound {
+            path: Box::new(path.clone()),
+            pkg_id,
+        }),
+        DefIdKind::Mod(mod_id) => Err(ResolveError::TypeNotFoundModuleFound {
+            path: Box::new(path.clone()),
+            mod_id,
+        }),
+        // バリアントは値であって型ではない。
+        DefIdKind::Variant(_) => Err(ResolveError::VariantExpected {
+            path: Box::new(path.clone()),
+        }),
+        DefIdKind::Val(def_id) => Err(ResolveError::TypeNotFoundValueFound {
+            path: Box::new(path.clone()),
+            def_id,
+        }),
+        // trait は型ではない。型の振る舞いを表すだけである。
+        DefIdKind::Trait(def_id) => Err(ResolveError::TypeNotFoundTraitFound {
+            path: Box::new(path.clone()),
+            def_id,
+        }),
+        // trait の項目は値である。
+        DefIdKind::TraitAssoc(_) => Err(ResolveError::PathResolutionFailed {
+            path: Box::new(path.clone()),
+        }),
+        DefIdKind::Var(var_id) => Err(ResolveError::TypeNotFoundVariableFound {
+            path: Box::new(path.clone()),
+            var_id,
+        }),
+    }
+}

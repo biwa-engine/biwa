@@ -1,0 +1,9 @@
+[package]
+name = "biwac_base"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ariadne.workspace = true
+regex.workspace = true
+colored.workspace = true

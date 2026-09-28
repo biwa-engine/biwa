@@ -1,0 +1,15 @@
+# nix
+/.direnv
+
+# rust
+**/target
+
+*.bak
+**/dst
+**/.biwa_build
+.env
+
+perf.data
+perf.data.old
+profile.json.gz
+flamegraph.svg

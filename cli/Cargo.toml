@@ -10,6 +10,10 @@ biwac_driver = { path = "../compiler/src/biwac_driver" }
 # `--target` の候補を出すためだけに要る。
 # どの feature でどのバックエンドが入るかを知っているのはこの crate である。
 biwac_generator = { path = "../compiler/src/biwac_generator" }
+# `biwa publish` が biwa-package.json (バージョン・説明・依存) をフルに読むのに使う。
+# `Project` (project.rs) は名前しか見ないので、これとは別に要る。
+biwac_metadata_loader = { path = "../compiler/src/biwac_metadata_loader" }
+biwa_hub_client = { path = "../tools/hub/client" }
 clap = { version = "4.6.6", features = ["derive"] }
 notify = "8.2.0"
 rust-embed = { version = "8.12.0", features = ["include-exclude"] }
