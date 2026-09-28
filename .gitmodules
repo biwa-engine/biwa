@@ -1,0 +1,3 @@
+[submodule "library/std"]
+	path = library/std
+	url = https://github.com/biwa-engine/biwa-std.git

@@ -1,7 +1,0 @@
-trait From[T] {
-  fn from(value: T) -> Self;
-}
-
-trait Into[T] {
-  fn into(self) -> T;
-}
