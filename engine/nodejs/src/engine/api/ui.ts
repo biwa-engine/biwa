@@ -20,7 +20,9 @@ export const ElementKind = {
   Horizontal: 4,
   Vertical: 5,
   HorizontalGrid: 6,
-  // 7 以降は Phase1 Step2/3 (Image, Canvas, MessageArea) で使う番号として空けてある。
+  /** std 側の型名は `UiImage` (`std::game::image::Image` との衝突を避けるため)。 */
+  Image: 7,
+  // 8 以降は Phase1 Step3 (Canvas, MessageArea) で使う番号として空けてある。
   // Button は funcref 前提のため実装しない (`docs/ui-api.md`)。
 } as const;
 
@@ -57,12 +59,26 @@ export const PropertyKind = {
   BackgroundColor: 10,
   /** HorizontalGrid の列数。val_u1 だけを使う。 */
   Column: 11,
+  /** unit: val_u1, value: val_f。 */
+  TextSize: 12,
+  /** 100〜900。val_u1 だけを使う (Content API の TextWeight と同じ規約)。 */
+  TextWeight: 13,
+  /** r, g, b, a (0〜255) を val_u1..val_u4 に積む。BackgroundColor と同じ理由。 */
+  TextColor: 14,
 
   // --- sys_ui_set_property_with_string (文字列: val_s) ---
   /** Page が持つ識別子。Link の遷移先として参照される。 */
   PageId: 100,
   /** Link のクリック時の遷移先 page_id。 */
   OnClickLink: 101,
+  /** Link に表示する文字列。 */
+  Text: 102,
+  /** CSS の font-family としてそのまま使うフォント名。 */
+  TextFont: 103,
+  /** 背景画像のパス (`assets/` 基準)。BackgroundColor とは排他 (std 側で保証する)。 */
+  BackgroundImage: 104,
+  /** `Image` Element が表示する画像のパス (`assets/` 基準)。 */
+  Image: 105,
 } as const;
 
 const NUMERIC_PROPERTY_KINDS = new Set<number>([
@@ -78,11 +94,18 @@ const NUMERIC_PROPERTY_KINDS = new Set<number>([
   PropertyKind.PaddingBottom,
   PropertyKind.BackgroundColor,
   PropertyKind.Column,
+  PropertyKind.TextSize,
+  PropertyKind.TextWeight,
+  PropertyKind.TextColor,
 ]);
 
 const STRING_PROPERTY_KINDS = new Set<number>([
   PropertyKind.PageId,
   PropertyKind.OnClickLink,
+  PropertyKind.Text,
+  PropertyKind.TextFont,
+  PropertyKind.BackgroundImage,
+  PropertyKind.Image,
 ]);
 
 export function isKnownNumericProperty(kind: number): boolean {

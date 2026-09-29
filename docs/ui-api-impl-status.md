@@ -339,10 +339,110 @@ fn do_tree(&mut self, bb: BasicBlock) -> Vec<Structured> {
 - コンソールエラー無し (`no such page` エラーは解消)
 - スクリーンショット3枚 (main → second → main) で相互遷移を確認済み
 
-### 次にやること
+### 次にやること (この節の時点)
 
 - Step2: `Image`, text 系 property, `background_image`。
 - Step3: `Canvas`/`MessageArea` ポータル実装 (`Canvas`/`MessageWindow` の
   リネームも一緒に行う)。
 - `test1/src/main.biwa` の動作確認用の追加分は、コメントで囲んだままリポジトリに
   残っている (削除するかどうかはユーザー判断)。
+
+## 10. Step2: `Image` / text 系 property / `background_image` (完了)
+
+### 開発環境: Node.js を nvm でこの環境に正式導入
+
+`biwa dev` 同梱エンジンの `vite@8`/`rolldown` が要求する Node `^20.19.0` を
+満たすため、`nvm` (v0.40.1) を導入し `node v22.23.3` を `default` にした。
+このシェル環境では `~/.bashrc` が非対話シェルで早期 `return` するため
+(`nvm` の読み込み行が実行されない)、`/usr/local/bin/{node,npm,npx,corepack}`
+に nvm でインストールした実体へのシンボリックリンクを張ることで、
+対話・非対話どちらのシェルでも `node`/`npm` がこのバージョンに解決されるようにした
+(`/usr/local/bin` は `/usr/bin` より `$PATH` で手前に来る)。
+システムの apt 管理下の Node (`/usr/bin/node`, v18.19.1) は変更していない。
+`claude` (このセッション自身) の動作に影響が無いことも確認済み。
+
+### 設計
+
+- **`Background` enum を新設**し、`background_color`/`background_image` の
+  排他性を型で保証した (`enum Background { Color(Color), Image(String) }`)。
+  Box/Link/Horizontal/Vertical/HorizontalGrid/Page の
+  `background_color: Option[Color]` フィールドをすべて
+  `background: Option[Background]` に置き換えた。
+  ビルダーメソッド `.background_color(c)` / `.background_image(path)` は
+  従来どおり両方生やしてあるが、内部で同じフィールドに書き込むため、
+  後から呼んだ方が勝つ (両方は同時に設定できない)。
+  `apply_layout_properties` の対応する引数も `background: Option[Background]`
+  に変え、内部で数値 (`sys_ui_set_property`) か文字列
+  (`sys_ui_set_property_with_string`) かを振り分ける `apply_background` を
+  切り出して、`Page::materialize_into` からも共有した。
+- **text 系 property は `Link` にだけ実装した。** `docs/ui-api.md` の
+  Elements 節で text 属性が明示されているのは `Link` の例
+  (`<Link text="NEW GAME" .../>`) のみで、Box や Layout 系には子として
+  テキストを表示する Element が無いため。`apply_text_properties` という
+  共有ヘルパーにしてあるので、将来他の Element にも text を持たせたくなったら
+  フィールドを足すだけで済む。
+- **`Image` Element は std 上 `UiImage` という型名にした。**
+  `std::game::image::Image` (canvas に置く画像。`Image::new(path).show_in_canvas(..)`
+  で使う、UI とは無関係の既存の型) と名前が衝突するため
+  (Biwa に import のエイリアスが無く、同じスコープに両方 `Image` として
+  import できない)。前回の `Window`→`GameWindow` のときは
+  「新しい方の名前を死守し、古い方(あまり使われていない内部用)をリネーム」
+  したが、今回は逆に**既存の `Image` が character の立ち絵・背景など
+  広く使われすぎていてリネームが割に合わない**ため、新しい方を
+  `UiImage` にリネームして解消した。エンジン側の `ElementKind.Image` の
+  番号 (7) には影響しない (名前は std 側だけの問題)。
+- `UiImage` の property は `image`(パス文字列) と width/height/margin/padding
+  のみ。background は持たせていない (画像そのものが背景の役割を兼ねるため)。
+
+### 追加した property kind (`api/ui.ts` / `game/ui.biwa` で対で管理)
+
+- 数値 (`sys_ui_set_property`): `TextSize=12` (unit+value, Width と同じ形),
+  `TextWeight=13` (100〜900, val_u1 のみ), `TextColor=14` (r,g,b,a)
+- 文字列 (`sys_ui_set_property_with_string`): `Text=102`, `TextFont=103`,
+  `BackgroundImage=104`, `Image=105`
+- Element kind: `Image=7`
+
+### エンジン側の変更 (`UIObjects.ts`)
+
+- `ElementKind.Image` の DOM: `background-size: cover` 等を持つ `div`
+  (画像用の `<img>` タグではなく、他の Element と同じ CSS 背景方式に揃えた)
+- `Link` の既定スタイルに `display: inline-flex` + 中央寄せを追加
+  (テキストを持つようになったため; Step1 時点では空の box だったので不要だった)
+- `BackgroundColor` 設定時は `backgroundImage` を空にし、`BackgroundImage`
+  設定時は `backgroundColor` を空にする (相互に上書きしたときの後始末。
+  std の `Background` enum による排他性を、エンジン側の CSS 適用でも
+  素直になぞっただけで、判定ロジックでは無い)
+- `BackgroundImage`/`Image` property の値は
+  `resolveAssetUrl()` (`api/assets.ts`、既存のアセット解決を再利用) を通す
+
+### `test1` での確認
+
+`build_demo_window()` (Step5 で追加した関数) に以下を追加した:
+
+- "main" Page: `UiImage::new("sample.png")` (width 20vw / height 15vw) を
+  Link の上に配置。Link には `text("つぎへ")` /
+  `text_size(vh(3.0))` / `text_weight(700)` / `text_color(Color::white())` を追加
+- "second" Page: `.background_image("josei_20_b.png")` を追加
+  (Page 自体に背景画像を敷く確認)
+
+`biwa dev` + Playwright (headless Chromium) で確認:
+
+- "main" ページに `UiImage` の画像 (グラデーション画像) と、
+  白太字中央寄せの「つぎへ」ラベル付き Link が表示される
+- クリックで "second" ページに切り替わると、Page 全体に
+  `background_image` (別のキャラクター画像) が敷かれ、
+  「もどる」ラベル付き Link が重なって表示される
+  (canvas 側の背景 (`background-countryside.jpg`) と紛れないよう、
+  あえて別のアセットを使って CSS 側の background_image だと視覚的に
+  確認できるようにした)
+- 「もどる」をクリックすると "main" に戻り、表示が正しく戻る
+- コンソールエラー無し
+
+`cargo test` (compiler workspace 全体) と `tsc --noEmit` (engine/nodejs) は
+どちらもエラー無し。
+
+### 次にやること
+
+- Step3: `Canvas`/`MessageArea` ポータル実装。このとき `Canvas`/`MessageWindow`
+  (既存の `GameWindow` 内の型) との名前衝突が起きる見込みなので、
+  `Window`/`Image` でやった判断 (使用範囲が狭い方をリネーム) を踏襲する。

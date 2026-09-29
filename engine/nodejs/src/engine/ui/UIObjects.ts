@@ -8,6 +8,7 @@
  * 設計は `docs/ui-api.md`、実装方針は `docs/ui-api-impl-status.md` にある。
  */
 
+import { resolveAssetUrl } from "../api/assets";
 import {
   ElementKind,
   isKnownElementKind,
@@ -251,6 +252,27 @@ export class UIObjects {
         node.onClickLink = valS;
         this.ensureLinkClickHandler(node);
         return;
+      case PropertyKind.Text:
+        node.dom.textContent = valS;
+        return;
+      case PropertyKind.TextFont:
+        node.dom.style.fontFamily = valS;
+        return;
+      case PropertyKind.BackgroundImage:
+        node.dom.style.backgroundColor = "";
+        node.dom.style.backgroundImage = `url(${resolveAssetUrl(valS)})`;
+        node.dom.style.backgroundSize = "cover";
+        node.dom.style.backgroundPosition = "center";
+        return;
+      case PropertyKind.Image:
+        if (node.kind !== ElementKind.Image) {
+          console.error(
+            `[biwa] "image" property is only meaningful on Image (ui element ${node.id})`,
+          );
+          return;
+        }
+        node.dom.style.backgroundImage = `url(${resolveAssetUrl(valS)})`;
+        return;
       default:
         console.error(`[biwa] unhandled string ui property: ${kind}`);
     }
@@ -331,7 +353,10 @@ function createDom(kind: number): HTMLElement {
       });
     case ElementKind.Link:
       return styled(document.createElement("div"), {
-        display: "inline-block",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
         cursor: "pointer",
         pointerEvents: "auto",
       });
@@ -349,6 +374,12 @@ function createDom(kind: number): HTMLElement {
       return styled(document.createElement("div"), {
         display: "grid",
         gridTemplateColumns: "repeat(1, 1fr)",
+      });
+    case ElementKind.Image:
+      return styled(document.createElement("div"), {
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
       });
     default:
       // `isKnownElementKind` を先に通しているので、ここには来ない想定。
@@ -407,6 +438,7 @@ function applyNumericProperty(
       node.dom.style.paddingBottom = sizeToCss(valU1, valF);
       return;
     case PropertyKind.BackgroundColor:
+      node.dom.style.backgroundImage = "";
       node.dom.style.backgroundColor = `rgba(${valU1}, ${valU2}, ${valU3}, ${valU4 / 255})`;
       return;
     case PropertyKind.Column:
@@ -417,6 +449,15 @@ function applyNumericProperty(
         return;
       }
       node.dom.style.gridTemplateColumns = `repeat(${Math.max(valU1, 1)}, 1fr)`;
+      return;
+    case PropertyKind.TextSize:
+      node.dom.style.fontSize = sizeToCss(valU1, valF);
+      return;
+    case PropertyKind.TextWeight:
+      node.dom.style.fontWeight = String(valU1);
+      return;
+    case PropertyKind.TextColor:
+      node.dom.style.color = `rgba(${valU1}, ${valU2}, ${valU3}, ${valU4 / 255})`;
       return;
     default:
       // `isKnownNumericProperty` を先に通しているので、ここには来ない想定。
