@@ -441,8 +441,77 @@ fn do_tree(&mut self, bb: BasicBlock) -> Vec<Structured> {
 `cargo test` (compiler workspace 全体) と `tsc --noEmit` (engine/nodejs) は
 どちらもエラー無し。
 
-### 次にやること
+### 次にやること (この節の時点)
 
 - Step3: `Canvas`/`MessageArea` ポータル実装。このとき `Canvas`/`MessageWindow`
   (既存の `GameWindow` 内の型) との名前衝突が起きる見込みなので、
   `Window`/`Image` でやった判断 (使用範囲が狭い方をリネーム) を踏襲する。
+
+## 11. すべての Element に `id: String` を追加 (完了)
+
+`docs/ui-api.md` 62 行目付近に追記された設計 (Page が `canvas`/`message_area`
+property で子の Canvas/MessageArea を id 参照する、`on_new_game()` へ
+`GameWindow` を渡す、等) の前段として、まず「すべての Element が
+`id: String` を持て、エンジン側が `String → ui_id` の map を正しく持つ」
+ところまでを実装した。`GameWindow::new()` のホスト export や
+`on_new_game(window: GameWindow)` への signature 変更、Page の
+`canvas`/`message_area` property 自体はまだ手を付けていない (Step3 の範囲)。
+
+### 実装
+
+- **property kind**: `Id = 106` (文字列)。数値/文字列どちらの帯にも寄せず、
+  既存の文字列 property の続き番号にした (すべての Element に共通する
+  property であり、特定の Element 専用ではないという位置づけ)。
+- **エンジン側 (`UIObjects.ts`)**:
+  - `idsByName: Map<string, number>` を追加。`resolveId(name): number | undefined`
+    で引ける (Step3/host export から使う想定)。
+  - `id` property 設定時、同じ名前が別の Element に既に使われていれば
+    ログを出しつつ上書き (取り違えに気づけるようにする程度で、禁止はしない)。
+  - id を付け替えたとき (2 回目の設定) は古いキーを消してから新しいキーを張る。
+  - `destroy()` (push_child で子を持てない Element に潰されたときなど) で
+    map からも消す。
+  - devtools・自動テストから見えるよう `dom.dataset.biwaId` にも反映した
+    (`docs/ui-api.md` の仕様には無い、実装上のおまけ)。
+- **std 側**: 8 つの Element 構造体 (`Window`/`Page`/`Box`/`Link`/`Horizontal`/
+  `Vertical`/`HorizontalGrid`/`UiImage`) すべてに `id: Option[String]` を追加し、
+  `.id(value: String) -> Self` ビルダーを生やした。発行は共通の
+  `apply_id(id: Uint, name: Option[String])` ヘルパーに集約し、各
+  `materialize()`/`materialize_into()`/`Window::show()` から 1 行で呼ぶ形にした
+  (`apply_background`/`apply_text_properties` と同じ扱い)。
+
+### ハマった点: エンジンの生成物埋め込み
+
+`id` property を実装して `biwa dev` で確認したところ
+`[biwa] unknown or non-string ui property: 106` が出た。原因は
+**`biwa` (CLI) バイナリが `engine/nodejs` を `rust_embed` でビルド時に
+埋め込んでおり、`cargo build` し直さない限り `.biwa_runtime/` へ
+展開される同梱エンジンが更新されない**ため
+(`cli/CLAUDE.md`: 「エンジン変更時は `biwa` を再ビルドしてから `biwa dev`
+し直す」という運用が必要)。`cargo build -p biwa` → `biwa dev` の再起動で解消した。
+以降 engine/nodejs を触ったら CLI の再ビルドが要ることを覚えておく。
+
+### `test1` での確認
+
+`build_demo_window()` に `.id(...)` を追加 (Window に `"demo_window"`,
+`main_page` に `"main_page"`, thumbnail の `UiImage` に `"thumbnail"`,
+"つぎへ" の Link に `"to_second_link"`)。`biwa dev` + Playwright で
+`document.querySelectorAll("[data-biwa-id]")` を直接読み、4 つすべてが
+意図した種類・意図したテキストを持つ DOM 要素に正しく付いていることを
+確認した (`window→つぎへもどる全体`, `page→つぎへ`, `image→空`,
+`link→つぎへ`)。コンソールエラー無し。クリック遷移 (main⇄second) も
+壊れていないことを確認済み。
+
+`cargo test` (compiler workspace 全体) はエラー無し。
+
+### 次にやること
+
+- Step3 本題: Page の `canvas`/`message_area` property (`sys_ui_set_property_with_string`
+  で id 文字列を運ぶだけで済むはず)。
+- `GameWindow::new()` のホスト export (`[[host_export="..."]]` のような
+  属性が要る、とユーザーが指摘している。コンパイラに新しい attribute を
+  足す必要があり、biwac 側の変更が要る)。
+- `on_new_game()` の signature を `GameWindow` を受け取る形に変える
+  (現状は引数無し)。ホスト側 (`worker.ts`) が scene 開始前に
+  `resolveId()` で canvas/message_area の ui_id を引き、
+  `GameWindow::new(canvas_id, message_area_id)` 相当を呼んで
+  `on_new_game()` に渡す、という配線が要る。

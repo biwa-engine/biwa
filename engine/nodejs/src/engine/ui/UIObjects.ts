@@ -29,6 +29,12 @@ interface UiNode {
   onClickLink: string | null;
   /** Page 自身の識別子。Page 以外では使わない。 */
   pageId: string | null;
+  /**
+   * すべての Element が持てる任意の識別子 (`docs/ui-api.md`)。
+   * `UIObjects.idsByName` に登録された自分のキーで、
+   * 上書き・削除のときに古いキーを引くのに使う。
+   */
+  idKey: string | null;
 }
 
 /** 親が子をいくつ持てるか。`docs/ui-api.md` の push_child の規則そのもの。 */
@@ -59,6 +65,13 @@ function childCapacity(kind: number): ChildCapacity {
 export class UIObjects {
   private readonly root: HTMLElement;
   private readonly nodes = new Map<number, UiNode>();
+  /**
+   * `id` property (文字列) → ui_id の逆引き。
+   *
+   * `docs/ui-api.md`: Page の `canvas`/`message_area` property (Step3) や、
+   * ホストが scene 開始前に ui_id を引く仕組みの土台になる。
+   */
+  private readonly idsByName = new Map<string, number>();
   private nextId = 1;
 
   constructor(root: HTMLElement) {
@@ -73,6 +86,16 @@ export class UIObjects {
    */
   allocId(): number {
     return this.nextId++;
+  }
+
+  /**
+   * `id` property (文字列) から ui_id を引く。
+   *
+   * Step3 (Page の `canvas`/`message_area`) やホスト側から使う想定。
+   * 見つからなければ `undefined`。
+   */
+  resolveId(name: string): number | undefined {
+    return this.idsByName.get(name);
   }
 
   // --- syscall の実体 -----------------------------------------------------
@@ -103,6 +126,7 @@ export class UIObjects {
       children: [],
       onClickLink: null,
       pageId: null,
+      idKey: null,
     };
     this.nodes.set(id, node);
 
@@ -233,6 +257,9 @@ export class UIObjects {
     for (const child of [...node.children]) {
       this.destroy(child);
     }
+    if (node.idKey !== null && this.idsByName.get(node.idKey) === node.id) {
+      this.idsByName.delete(node.idKey);
+    }
     this.nodes.delete(node.id);
   }
 
@@ -273,9 +300,38 @@ export class UIObjects {
         }
         node.dom.style.backgroundImage = `url(${resolveAssetUrl(valS)})`;
         return;
+      case PropertyKind.Id:
+        this.setId(node, valS);
+        return;
       default:
         console.error(`[biwa] unhandled string ui property: ${kind}`);
     }
+  }
+
+  /**
+   * Element の `id` property を設定する。すべての Element が持てる
+   * (`docs/ui-api.md`)。同じ名前が既に別の Element に使われていれば、
+   * 取り違えに気づけるようログだけ出して上書きする。
+   */
+  private setId(node: UiNode, name: string): void {
+    if (node.idKey !== null && node.idKey !== name) {
+      // 付け替え。古いキーが今も自分を指しているときだけ消す。
+      if (this.idsByName.get(node.idKey) === node.id) {
+        this.idsByName.delete(node.idKey);
+      }
+    }
+
+    const existing = this.idsByName.get(name);
+    if (existing !== undefined && existing !== node.id) {
+      console.error(
+        `[biwa] ui element id "${name}" is already used by element ${existing}; overwriting with ${node.id}`,
+      );
+    }
+
+    node.idKey = name;
+    this.idsByName.set(name, node.id);
+    // DOM 上でも見えるようにしておく (devtools・自動テストからの確認用)。
+    node.dom.dataset["biwaId"] = name;
   }
 
   /**

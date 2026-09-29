@@ -59,9 +59,16 @@ fn app() -> Window {
     // on_new_game() は引数に save_id: Option[SaveId] を受け取り、
     // Some のときは save_data_list からそのデータを使用して Game::load(),
     // None のときは Game::new(), した値を返すべき
-    <Page page_id="scene" >
-      <Canvas />
-      <MessageArea />
+    //
+    // すべての Element には id: String を設定でき、
+    // Page 側からcanvas, message_area を id で設定する。
+    // on_new_game() は引数に GameWindow を受け取る。
+    // GameWindow は GameWindow::new() で この2つの ui_id (u32) をそれぞれ Option で受け取っている。
+    // (fn GameWindow::new() はホストにexport済み( [[host_export="<function name>"]] 的なホストに露出させるattributeを作ったほうが良い ))
+    // 以降そのidを介して Canvas API や Content API の出力先が決定される。
+    <Page page_id="scene" canvas=("canvas") message_area=("message_area") >
+      <Canvas id=("canvas") />
+      <MessageArea id=("message_area") />
     </Page>
   </Window>
 }

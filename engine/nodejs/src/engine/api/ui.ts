@@ -79,6 +79,14 @@ export const PropertyKind = {
   BackgroundImage: 104,
   /** `Image` Element が表示する画像のパス (`assets/` 基準)。 */
   Image: 105,
+  /**
+   * すべての Element が持てる任意の識別子。
+   *
+   * `docs/ui-api.md` の Page の `canvas`/`message_area` property (Step3) や、
+   * ホストから ui_id を引く仕組みの土台になる。id からその Element の
+   * ui_id を引けるようにするのがエンジン側の `UIObjects` の役目である。
+   */
+  Id: 106,
 } as const;
 
 const NUMERIC_PROPERTY_KINDS = new Set<number>([
@@ -106,6 +114,7 @@ const STRING_PROPERTY_KINDS = new Set<number>([
   PropertyKind.TextFont,
   PropertyKind.BackgroundImage,
   PropertyKind.Image,
+  PropertyKind.Id,
 ]);
 
 export function isKnownNumericProperty(kind: number): boolean {
