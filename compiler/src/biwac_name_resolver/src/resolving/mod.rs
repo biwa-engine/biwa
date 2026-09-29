@@ -15,6 +15,7 @@ use crate::{
 
 mod context;
 pub(crate) mod def_collector;
+pub(crate) mod host_export_collector;
 pub(crate) mod lang_item_collector;
 mod symbols;
 

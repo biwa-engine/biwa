@@ -36,6 +36,7 @@ pub fn generate(
         std::sync::Arc<biwac_dependency_metadata::DepMetadata>,
     )],
     well_known: &biwac_scene::WellKnownSymbols,
+    host_exports: &biwac_host_export::HostExportTable,
 ) -> String {
     let allocator = oxc_allocator::Allocator::default();
     let ctx = AstBuildCtx::new(hir, interner, srcs, ext_pkgs, &allocator);
@@ -255,6 +256,19 @@ pub fn generate(
                 &allocator,
             ));
         }
+    }
+
+    // `[[host_export="..."]]` が付いた関数も同じ形で別名 export する。
+    //
+    // TypeScript バックエンドは単相化も到達性による除去も行わない
+    // (トップレベルの定義をすべて `export` している) ので、
+    // wasm 側のように roots へ加える必要は無い。
+    for (def_id, export_name) in host_exports.iter() {
+        body.push(export_alias(
+            &ctx.get_value_mangled(&def_id),
+            export_name,
+            &allocator,
+        ));
     }
 
     let oxc_ast = oxc_ast::ast::Program {

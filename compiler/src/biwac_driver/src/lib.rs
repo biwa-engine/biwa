@@ -578,7 +578,11 @@ fn load_analyze_and_codegen_single_package(
     let pkg_kind = pkg.pkg_kind;
     let root_mod_id = pkg.root_module.mod_id;
 
-    let biwac_name_resolver::ResolveOutput { hir, lang_items } =
+    let biwac_name_resolver::ResolveOutput {
+        hir,
+        lang_items,
+        host_exports,
+    } =
         biwac_name_resolver::NameResolver::new(
             metadata,
             external_packages,
@@ -644,6 +648,7 @@ fn load_analyze_and_codegen_single_package(
                 &ext_pkgs_for_ty,
                 &dep_mirs,
                 &well_known_scenes,
+                &host_exports,
                 interner,
             )?;
             println!(
@@ -687,6 +692,7 @@ fn load_analyze_and_codegen_single_package(
                 &srcs,
                 &ext_pkgs_for_ty,
                 &well_known_scenes,
+                &host_exports,
             );
 
             write_bin(
@@ -707,6 +713,7 @@ fn load_analyze_and_codegen_single_package(
                     &ext_pkgs_for_ty,
                     &dep_mirs,
                     &well_known_scenes,
+                    &host_exports,
                     interner,
                 )?;
 
@@ -715,7 +722,12 @@ fn load_analyze_and_codegen_single_package(
                 let mangler =
                     biwac_generator::mangle::Mangler::new(&hir, interner, &srcs, &ext_pkgs_for_ty);
 
-                let wat = biwac_generator::arch::wasm::emit(&mono, &mangler, &well_known_scenes)
+                let wat = biwac_generator::arch::wasm::emit(
+                    &mono,
+                    &mangler,
+                    &well_known_scenes,
+                    &host_exports,
+                )
                     .map_err(|e| {
                         eprintln!("Error: wasm code generation failed: {e}");
                         biwac_base::print_error_finish_message(1);
@@ -833,13 +845,17 @@ fn monomorphize_program(
     ext_pkgs: &[(PackageId, Arc<DepMetadata>)],
     dep_mirs: &[(PackageId, biwac_mir::Mir)],
     well_known_scenes: &biwac_scene::WellKnownSymbols,
+    host_exports: &biwac_host_export::HostExportTable,
     interner: &mut IdentInterner,
 ) -> Result<biwac_mir::MonoMir, ()> {
-    // 根はランタイムが名前で呼ぶ scene だけである。
+    // 根はランタイムが名前で呼ぶ scene と、host export された関数である。
     // そこから辿れない関数は成果物に入らない (到達性による除去がここで効く)。
+    // host export された関数はどこからも呼ばれていなくても
+    // ホストから直接呼ばれうるので、除去されては困る。
     let roots: Vec<biwac_span::ValDefId> = biwac_scene::WellKnownSymbol::ALL
         .iter()
         .filter_map(|s| well_known_scenes.get(*s))
+        .chain(host_exports.iter().map(|(def_id, _)| def_id))
         .collect();
 
     let deps: Vec<(PackageId, &DepMetadata, &biwac_mir::Mir)> = dep_mirs
@@ -1567,6 +1583,10 @@ mod tests {
         assert!(wat.contains("(export \"__biwa_entrypoint\""), "{wat}");
         // 初期 `Game` を組み立てる入口も export される。
         assert!(wat.contains("(export \"__biwa_on_new_game\""), "{wat}");
+        // `[[host_export="..."]]` が付いた関数も export される。
+        // scene main から辿れないので、これが出ているのは
+        // 単相化の roots に host export が正しく加わっている証拠でもある。
+        assert!(wat.contains("(export \"host_export_demo\""), "{wat}");
 
         // .wasm は検証を通ったものである
         // (通っていなければ compile がエラーになっている)。

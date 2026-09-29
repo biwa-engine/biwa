@@ -507,11 +507,105 @@ property で子の Canvas/MessageArea を id 参照する、`on_new_game()` へ
 
 - Step3 本題: Page の `canvas`/`message_area` property (`sys_ui_set_property_with_string`
   で id 文字列を運ぶだけで済むはず)。
-- `GameWindow::new()` のホスト export (`[[host_export="..."]]` のような
-  属性が要る、とユーザーが指摘している。コンパイラに新しい attribute を
-  足す必要があり、biwac 側の変更が要る)。
 - `on_new_game()` の signature を `GameWindow` を受け取る形に変える
   (現状は引数無し)。ホスト側 (`worker.ts`) が scene 開始前に
   `resolveId()` で canvas/message_area の ui_id を引き、
-  `GameWindow::new(canvas_id, message_area_id)` 相当を呼んで
-  `on_new_game()` に渡す、という配線が要る。
+  `GameWindow::new(canvas_id, message_area_id)` (下記 `[[host_export]]` で
+  export される) を呼んで `on_new_game()` に渡す、という配線が要る。
+  `[[host_export]]` 自体は実装済みなので、残るのは
+  `std::game::ui::GameWindow::new` へ実際に属性を付ける作業と、
+  ホスト側 (TS) の呼び出しコードだけ。
+
+## 12. コンパイラに `[[host_export="<name>"]]` を追加 (完了)
+
+`GameWindow::new()` をホストから直接呼べるようにする前段として、
+「属性で指定した名前で、トップレベルの `fn` を生成物から直接呼べる形で
+export する」汎用の仕組みをコンパイラに追加した。wasm では
+`(export "<name>" (func $...))`、TypeScript では別名 export
+(`export { <mangled> as <name> }`) を、`__biwa_entrypoint` /
+`__biwa_on_new_game` (`biwac_scene::WellKnownSymbol`) と同じ考え方・
+同じコード経路で出す。
+
+### 新設した crate: `biwac_host_export`
+
+`biwac_lang_item` (`[[lang="..."]]` の登録簿) と対になる、
+`[[host_export="..."]]` の登録簿。`HashMap<ValDefId, String>` 相当で、
+**export 名の重複だけを検証する** (同一定義への属性の重複は
+`biwac_attribute` の `AttrError::DuplicatedAttribute` が別に防ぐ)。
+`compiler/Cargo.toml` のワークスペースメンバに追加した。
+
+### 変更したパイプライン (`[[native(arch=...)]]` ではなく `[[lang="..."]]` を模倣)
+
+`[[native(arch=...)]]` は AST フィルタリング (`retain_for_target`) だけで
+完結し、値が codegen まで残らない。一方 `host_export` は
+`(ValDefId, export 名)` という事実が **単相化の roots** と
+**codegen の export 文** の両方まで生き残る必要があるため、
+`[[lang="..."]]` (→ `LangItemTable`) と同じ経路を辿らせた:
+
+1. **`biwac_attribute`**: `KnownAttr::HostExport` を追加
+   (`AttrShape::Value(String)`, 対象は `Target::Fn` のみ)。
+   `check.rs` に `host_export_name()` アクセサを追加 (`lang_key` と同形)。
+2. **`biwac_name_resolver`**: 新設した `resolving/host_export_collector.rs`
+   が `lang_item_collector.rs` と同じ構造で AST を再走査し (def collection
+   直後、DefId は AST ノードの `OnceCell` に入っている)、
+   `HostExportTable` を組み立てる。`ResolveOutput` に
+   `host_exports: HostExportTable` フィールドを追加した。
+3. **`biwac_driver`**:
+   - `monomorphize_program` の roots に host export された `ValDefId` を
+     追加 (`well_known_scenes` からの roots に `.chain(...)` するだけ)。
+     **これが無いと host_export された関数が到達性で消される** — 単体テストで
+     直接確認済み (後述)。
+   - `biwac_generator::arch::wasm::emit` / `arch::typescript::generate`
+     に `&host_exports` を引数で渡す。
+4. **`biwac_generator`**:
+   - `wasm/emit.rs`: `well_known` の `OnNewGame` export のすぐ後に、
+     `host_exports` を回して `MonoInstance` を `def_id` で引き、
+     `(export "<name>" (func $...))` を書く。見つからなければ
+     (roots に入れ忘れ等のコンパイラ側のバグでしか起きないはずだが)
+     `WasmError::MissingInstance` で落とす。
+   - `arch/typescript.rs`: `Main`/`OnNewGame` の別名 export ループのすぐ後に、
+     `host_exports` の分だけ同じ `export_alias(...)` を積む
+     (TypeScript は単相化も到達性除去もしないので roots は不要)。
+
+### 現状の制約: 自パッケージ限定
+
+`host_export_collector` は自パッケージの AST しか見ない。つまり
+**依存パッケージ (`std` 等) が `[[host_export="..."]]` を付けても、
+それを使う側 (playable package) のビルドでは export されない**。
+`[[lang="..."]]` は `.biwameta` に永続化して依存側が読み直す
+(`DiskLangItem` のバイナリエンコード) が、host_export はそこまでの
+汎用の需要がまだ無いと判断し、いったん見送った。
+
+**したがって `GameWindow::new` (std 側で定義) を host_export したい場合、
+今のままでは効かない。** 対応案:
+(a) `.biwameta` に host_export も持たせて lang item と同じ経路に乗せる
+(実装コストが大きい)、
+(b) playable package (test1) 側に `GameWindow::new` を呼ぶだけの薄い
+ラッパー関数を書き、そちらに `[[host_export]]` を付ける (今すぐ使える)。
+どちらを選ぶかはユーザー判断。
+
+### テスト
+
+- `biwac_host_export`: `HostExportTable::insert` の単体テスト
+  (別名同士は OK / 同名の重複はエラーになる / 同じ def_id への
+  再登録は自分自身との衝突と誤検出しない)。
+- `biwac_driver::wasm_output`: `compiler/assets/tests/test1/src/main.biwa`
+  に、**scene main からもどこからも呼ばれていない**
+  `[[host_export="host_export_demo"]] fn host_export_demo() -> Int`
+  を追加し、`.wat` に `(export "host_export_demo"` が現れることを確認。
+  「呼ばれていないのに現れる」ことそのものが roots 追加の回帰テストになっている。
+- ワークスペース全体 (`cargo test`) はすべて green。
+- TypeScript ターゲットは `library/std` 自体が既存の tier2 制限
+  (`content.biwa` の trait 境界付きジェネリック、本セッションの Step5 で
+  遭遇したものと同じ) に阻まれてこの環境では実機確認できなかった
+  (host_export とは無関係の既存の問題)。コードは wasm 側と同じパターンを
+  踏襲しており、`biwac_generator` 単体のビルドは通っている。
+
+### 余談: ディスク枯渇
+
+作業中に `/` の空き容量が尽き、リンカがクラッシュする事象が発生した。
+原因は Rust の incremental compilation キャッシュ
+(`compiler/target/debug/incremental` 等、長時間のセッションで肥大化) と、
+Step5 で導入した Playwright の Chromium キャッシュ (`~/.cache/ms-playwright`)
+だった。両方削除して 2.2GB 復旧した。再度ブラウザでの見た目確認が要る場合は
+`npx playwright install --with-deps chromium` からやり直しになる。

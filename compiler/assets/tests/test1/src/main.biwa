@@ -44,6 +44,17 @@ fn add(x: Int, y: Int) -> Int {
     return x + y;
 }
 
+// `[[host_export="..."]]` の検証用。
+//
+// scene main からもどこからも呼ばれていない。
+// これは意図的である: 到達性による除去 (単相化の roots) が
+// scene だけでなく host_export された関数も根として扱うことを、
+// この関数が実際に生成物へ現れることで確かめる。
+[[host_export="host_export_demo"]]
+fn host_export_demo() -> Int {
+  add(10, 20)
+}
+
 fn foo() {
   let x = add(3, 2);
   let y = math::fact(x);

@@ -9,6 +9,9 @@ pub enum ResolveError {
     /// lang item の回収時に検出したエラー。
     LangItem(biwac_lang_item::LangItemError),
 
+    /// host export の回収時に検出したエラー。
+    HostExport(biwac_host_export::HostExportError),
+
     // module 側から既存の symbol との重複を検知した場合
     DuplicatedSymbolAndModuleName {
         name: InternedIdent,
@@ -275,6 +278,12 @@ impl BiwacError for ResolveError {
                     Some(span) => diag.label(at(span), "here").print(),
                     None => diag.print(),
                 }
+            }
+
+            Self::HostExport(e) => {
+                ctx.diagnostic(e.message())
+                    .label(at(e.span()), "here")
+                    .print();
             }
 
             Self::DuplicatedSymbolAndModuleName {

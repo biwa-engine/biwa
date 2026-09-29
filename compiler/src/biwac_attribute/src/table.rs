@@ -142,4 +142,20 @@ attribute_table!(
             Target::Method,
             Target::NativeMethod,
         ];
+
+    // ホスト (エンジン) が名前で直接呼べる関数として export する。
+    //
+    // `[[lang="..."]]` が「コンパイラ自身が呼ぶ」ためのものであるのに対し、
+    // こちらは「ホスト側が呼ぶ」ためのもの。値は export する名前の文字列で、
+    // 実際にどう export するか (wasm の `(export "...")`、TypeScript の
+    // 別名 export) はバックエンドの仕事である。付与対象はトップレベルの
+    // `fn` のみに絞ってある (メソッドや native fn まで広げる需要が出たら足す)。
+    //
+    //  ```biwa
+    //  [[host_export="make_game_window"]]
+    //  fn make_game_window(canvas_id: Uint, message_area_id: Uint) -> GameWindow { ... }
+    //  ```
+    HostExport, "host_export",
+        AttrShape::Value(AttrValueKind::String),
+        &[Target::Fn];
 );

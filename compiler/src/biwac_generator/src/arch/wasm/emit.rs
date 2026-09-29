@@ -89,8 +89,9 @@ pub fn emit(
     mono: &MonoMir,
     mangler: &Mangler,
     well_known: &biwac_scene::WellKnownSymbols,
+    host_exports: &biwac_host_export::HostExportTable,
 ) -> Result<String, WasmError> {
-    Emitter::new(mono, mangler, well_known).run()
+    Emitter::new(mono, mangler, well_known, host_exports).run()
 }
 
 struct Emitter<'a> {
@@ -98,6 +99,8 @@ struct Emitter<'a> {
     mangler: &'a Mangler<'a>,
     /// ランタイムが名前で呼ぶシンボル。export を出すのに使う。
     well_known: &'a biwac_scene::WellKnownSymbols,
+    /// `[[host_export="..."]]` が付いた関数。export を出すのに使う。
+    host_exports: &'a biwac_host_export::HostExportTable,
     /// 実体 → wasm の関数名。
     fn_names: HashMap<InstanceKey, String>,
     /// 具体型 → wasm の型名 (struct と enum の親型)。
@@ -120,6 +123,7 @@ impl<'a> Emitter<'a> {
         mono: &'a MonoMir,
         mangler: &'a Mangler<'a>,
         well_known: &'a biwac_scene::WellKnownSymbols,
+        host_exports: &'a biwac_host_export::HostExportTable,
     ) -> Self {
         // 名前は実体の索引を添えて一意にする。
         // 同じシンボルでもジェネリック引数が違えば別の関数になるためである。
@@ -172,6 +176,7 @@ impl<'a> Emitter<'a> {
             mono,
             mangler,
             well_known,
+            host_exports,
             fn_names,
             ty_names,
             variant_ty_names,
@@ -287,6 +292,21 @@ impl<'a> Emitter<'a> {
         {
             let name = &self.fn_names[&inst.key];
             let _ = writeln!(out, "  (export \"{NEW_GAME_NAME}\" (func ${name}))");
+        }
+
+        // `[[host_export="..."]]` が付いた関数。
+        //
+        // 対象は `monomorphize_program` が roots に加えているので、
+        // 到達性による除去は受けていないはずである。
+        // それでも見つからない場合は静かに無視せず、要因を追えるよう名前を残す。
+        for (def_id, name) in self.host_exports.iter() {
+            let Some(inst) = self.mono.instances.iter().find(|i| i.key.def_id == def_id) else {
+                return Err(WasmError::MissingInstance {
+                    name: name.to_string(),
+                });
+            };
+            let fn_name = &self.fn_names[&inst.key];
+            let _ = writeln!(out, "  (export \"{name}\" (func ${fn_name}))");
         }
 
         out.push_str(")\n");

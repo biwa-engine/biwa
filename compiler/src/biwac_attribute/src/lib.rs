@@ -3,7 +3,7 @@ mod error;
 mod retain;
 mod table;
 
-pub use check::{check_mod_ast, lang_key, native_arch};
+pub use check::{check_mod_ast, host_export_name, lang_key, native_arch};
 pub use error::AttrError;
 pub use retain::retain_for_target;
 pub use table::{AttrShape, AttrValueKind, KnownAttr, attr_names};
