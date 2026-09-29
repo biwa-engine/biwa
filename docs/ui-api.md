@@ -241,3 +241,83 @@ fn sys_ui_push_child(
 // プリミティブなsyscallしかないがElementのpropertyを十分に設定したうえで
 // アトミックに UI Element を出現させることができる
 ```
+
+## UI XML-based Syntax
+
+UI Element 記法は以下のようなEBNFで表せる。
+なお、UI Element は式(expression)の1つの形態である。
+XMLのタグを閉じるための `>` は引数の値の`<expression>`に後続すると大なりと区別がつかず、
+優先度的に大なりとしてパースされてしまうため、引数の値の式にはカッコを必要とした。
+
+```ebnf
+<ui-element>
+::= `<` <path> (<identifier> `=` `(` <expression> `)` )* `>` (<expression> | <ui-element>* ) `</` <path> `>`
+  | `<` <path> (<identifier> `=` `(` <expression> `)` )* `/>`
+```
+
+以下のXML-based UI expressionは、
+
+```biwa
+<foo::bar baz=(a) qux=(b(1, 2)) >
+  <hoge/>
+  <fuga/>
+</foo::bar>
+```
+
+以下の関数呼び出しの糖衣構文にすぎない。
+
+```biwa
+foo::bar(
+  vec(
+    hoge(),
+    fuga(),
+  ),
+  baz = a,
+  qux = b(1, 2),
+)
+```
+
+子要素の位置にある値は第一引数に渡される。
+
+<identifier> `=` `(` <expression> `)` の代入表現は単にその名前の引数に値を渡しているに過ぎない。
+導入が検討されているデフォルト引数に対する名前による引数渡しに近い
+(ただしデフォルト引数に対する引数渡しが`Some()`でくくる必要がないのに対し、こちらではそのまま渡されるため`Some()`が必要になることが検討されている)。
+
+XML-based UI expression が使えるのは以下のようなシグニチャの関数の呼び出しである
+(`UiElement`, `UiPage`, `Window`, `Iterable`, `Vec`, `Vec::vec`(可変長引数により複数の値を渡して`Vec`を生成できる) はいずれも lang item)。
+
+子要素は `Iterable[_]` ならコンパイラにより `vec()`で括られるし、
+そうでないならそのまま渡される(コンパイラは当該関数の第一引数の型までは見に行く必要がある)。
+
+関数呼び出しであるため、当該関数のimport状況によってはパスで参照したいことがあるため、
+`<` のあとは <path> をパースする。
+
+```biwa
+fn(
+  // 子Elementは取らないが引数は0個以上取れる
+) -> UiElement;
+
+fn(
+  child: UiElement,
+  // 子Element以外の引数も0個以上取れる
+) -> UiElement;
+
+fn[C: Iterable[UiElement]](
+  children: C,
+  // 子Element以外の引数も0個以上取れる
+) -> UiElement;
+
+// UiPage を返す場合も同様
+fn[C: Iterable[UiElement]](
+  children: C,
+  // 子Element以外の引数も0個以上取れる
+) -> UiPage;
+
+fn[C: Iterable[UiPage]](
+  children: C,
+  // 子Element以外の引数も0個以上取れる
+) -> Window;
+```
+
+`UiElement` は `enum` として実装する。
+Element の種類ごとに分岐し適切な syscall を発行するため。

@@ -126,3 +126,98 @@ fn sys_ui_push_child(parent: u32, child: u32);                 // cast
 ### 次にやること (要ユーザー確認)
 
 Step4 (`library/std/src/game/ui.biwa` の Window/Page/Box/Link/Layout struct + chain API) に進む前に、Step1〜3 の設計判断 (特に上記の「実装しながら確定した内容」) に異論が無いか確認してもらう。
+
+## 8. Step4 実装 (完了)
+
+### 設計: `UiElement` は enum、生成中は具体型
+
+syscall はコンストラクタの都度発行しない。まず Biwa (Wasm runtime) 側で `UiElement`
+の値としての木を組み立て、`Window::show()` / 各 Element の `materialize()` という
+**唯一の消費点**で初めて木を再帰的に辿って `sys_ui_*` を発行し、エンジン側にデータ
+構造をコピーする。Biwa 側の値が正で、エンジンへは一方的に副作用として反映される
+だけ、という Biwa Engine 全体の構成をここでも踏襲した。
+
+- `enum UiElement { Box(Box), Link(Link), Horizontal(Horizontal), Vertical(Vertical), HorizontalGrid(HorizontalGrid) }`
+- `Window` / `Page` は `UiElement` の variant ではなく独立した型 (Window の子は
+  Page のみ、という木構造の制約を型で表すため。`docs/ui-api.md` の XML 節が
+  `UiElement` と `UiPage` を別の型として扱っているのに合わせた)
+- 各具体型 (`Box`/`Link`/`Horizontal`/`Vertical`/`HorizontalGrid`) のビルダー
+  メソッド (`.width(..)` 等) はその具体型に直接生やし、`UiElement` への変換
+  (`Into[UiElement]`) は子として親に渡す最後の瞬間にだけ行う。こうすることで
+  生成中・保持中は具体型のままなので、種類を取り違えたプロパティ呼び出しは
+  コンパイルエラーになる (`Content`/`Into[Content]` と同じ枠組みを踏襲)
+- variant で分岐する `match` は `impl UiElement { fn materialize(self) -> Uint }`
+  の中の 1 箇所だけ
+
+### ファイル構成
+
+ユーザー指示により、struct 定義は `game/ui.biwa` に集約し、コンストラクタ・
+ビルダーメソッド・`materialize()` は `game/ui/<element>.biwa` に分けた
+(Biwa Language にはまだ pub use 的なエクスポートも visibility も無いため、
+型定義自体は同じファイルに置かざるを得ない。将来的には定義自体も
+`ui/<element>.biwa` に置き、`pub import <element>::<Element>;` の形になる見込み)。
+
+- `game/ui.biwa`: `GameWindow`/`Canvas`/`MessageWindow`/`Position`/`Size` (既存、後述の通り一部リネーム) + `UiSize`/`vw`/`vh`/`percent` + element/property kind 番号 + `apply_layout_properties`/`set_size_property`/`push_children` (共通ヘルパ) + `enum UiElement` と `impl UiElement { materialize }` + Window/Page/Box/Link/Horizontal/Vertical/HorizontalGrid の struct 定義
+- `game/ui/window.biwa`: `impl Window { new, push, show }`
+- `game/ui/page.biwa`: `impl Page { new, push, materialize_into }` (Page は UiElement ではないので、木の消費点は `Window::show` 経由のここ)
+- `game/ui/box.biwa`, `link.biwa`, `horizontal.biwa`, `vertical.biwa`, `horizontal_grid.biwa`: それぞれのコンストラクタ・レイアウト系ビルダーメソッド・`materialize()`・`impl <Element>: Into[UiElement]`
+
+### 名前の衝突: `Window` を `GameWindow` にリネーム
+
+既存の `struct Window { canvas: Canvas, message_window: MessageWindow }`
+(`Game.window` が持つ、canvas と Message Window への参照の束。
+`content_push` などが `game.window.message_window.push_text(..)` の形で使う、
+UI Element とは無関係の既存の仕組み) が、新しい UI Element の root `Window`
+と名前が衝突した。影響範囲が小さい (`game.biwa` の import・フィールド型・
+コンストラクタ呼び出しのみ。`content.biwa` はフィールドアクセスなので無修正)
+既存側を `GameWindow` にリネームして解消した。ユーザーへの確認はせず、
+リバーシブルな内部リネームとして進めた。
+
+**同じ衝突が Step3 (`Canvas`/`MessageArea` UI Element) で `Canvas`/`MessageWindow`
+にも起こる。** そのときに同様のリネームが要る (`GameCanvas`/`GameMessageWindow` 等)。
+
+### `UiSize` を新設 (既存の `Size` とは別型)
+
+Message Window の `Size` (vw/vh のみ) を流用せず、`percent` を持つ別の enum
+`UiSize` を新設した。理由: `Size` を拡張すると `MessageWindow.push_text` の
+既存の match が非網羅になり (`Percent` に意味の無い text サイズへの対応を
+迫られる)、影響範囲が UI Element の外まで広がるため。
+
+### 実装中に踏んだ構文上の制限 (今後の参考に)
+
+- **空ブロック `{}` は match アーム・if の中では書けない。** `Option::None => {}`
+  はパースエラーになる (`{` の直後を構造体リテラルのフィールドとして読もうとして
+  `}` で落ちる)。回避策: `match` ではなく `if x.is_some() { .. }` の形にして
+  `None` 側の分岐そのものを書かない。
+- **`if` に `else` が要るかどうかは、then 節の中身が「文」か「式」かで決まり、
+  それは中身の構文形だけで決まる (前後の文脈やセミコロンの有無は無関係)。**
+  たとえば `if cond { match x { A => expr, B => expr } }` は、`match` の各アームが
+  「裸の式 (`pattern => expr,`)」なので `match` 全体が**式**として読まれ、
+  結果 `if` も式になり `else` が必須になる。`if` の then 節を「文」として
+  (= `else` 無しで) 書きたいなら、内側の `match` も文でなければならず、
+  そのためには**各アームを `{ expr; }` の形 (ブロック + セミコロン) で書く**
+  必要がある (1 つでもアームを裸の式にすると、その時点で `match` 全体が式になる)。
+  `if` 全体の後ろに `;` を付けても、`match`/`if` は「式のあとの `;`」を
+  それ自体では消費しないため効果が無い (`consume_expression_or_statement` が
+  `KwMatch`/`KwIf` を特別扱いしており、後続の `;` を見ない)。
+  `library/std/src/game/ui.biwa` の `set_size_property` / `apply_layout_properties`
+  がこの形の実例になっている。
+
+### 動作確認
+
+- `cargo run -p biwac -- -p /home/coder/test1 --target wasm` で `std` を含めて
+  コンパイルが通ることを確認 (test1 自体は新 API をまだ使っていない)。
+- 別途 probe パッケージ (`std` に依存するだけの使い捨てパッケージ) で、
+  実際に `Link::new("scene").width(vw(30.0)).into()` →
+  `Horizontal::new(children).into()` → `Page::new("main", ..)` →
+  `Window::new(..).show()` という一連の呼び出し連鎖が wasm ターゲットで
+  型エラー無くコンパイルできることを確認した。
+- ブラウザ上での実描画確認はまだ (Step5 で `biwa dev` を使って行う予定)。
+
+### 次にやること
+
+- Step5: `test1` で実際に `Window`/`Page`/`Link` を組み立てて `biwa dev` し、
+  ブラウザで表示・クリック遷移を確認する。
+- Step2: `Image`, text 系 property, `background_image`。
+- Step3: `Canvas`/`MessageArea` ポータル実装 (`Canvas`/`MessageWindow` の
+  リネームも一緒に行う)。
