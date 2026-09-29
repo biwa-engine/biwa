@@ -232,6 +232,15 @@ enum Enclosing {
     Block(BasicBlock),
     /// `if` の枝。`br` の対象にはならないが、深さは 1 つ増える。
     If,
+    /// `do_tree` がループの頭を包むときに一緒に出す、ループ本体を囲む
+    /// 合成の `block` (`Structured::Loop(Box::new(Structured::Block(inner)))` の
+    /// 内側の `Block`)。`br` の対象にはならない (対応する MIR の
+    /// BasicBlock が無い) が、実際に 1 段のネストを増やすので、
+    /// 深さの数え上げには `If` と同じく加える必要がある。
+    /// これを欠くと、ループ本体の中の `if` から後方辺へ戻る `br` の深さが
+    /// 1 つ浅く計算され、ループの先頭ではなくこの合成 `block` の外へ
+    /// 抜けてしまう (= 2 周目が実行されない)。
+    LoopBody,
 }
 
 struct Builder<'a> {
@@ -244,7 +253,11 @@ impl Builder<'_> {
     fn do_tree(&mut self, bb: BasicBlock) -> Vec<Structured> {
         if self.cfg.is_loop_header(bb) {
             self.context.push(Enclosing::Loop(bb));
+            // 出力する `Structured::Loop(Box::new(Structured::Block(inner)))` は
+            // ループの中に合成の `block` を 1 つ挟む。深さの数え上げも合わせる。
+            self.context.push(Enclosing::LoopBody);
             let inner = self.node_within(bb);
+            self.context.pop();
             self.context.pop();
             vec![Structured::Loop(Box::new(Structured::Block(inner)))]
         } else {
@@ -340,7 +353,7 @@ impl Builder<'_> {
         for (i, enclosing) in self.context.iter().rev().enumerate() {
             let matched = match enclosing {
                 Enclosing::Loop(bb) | Enclosing::Block(bb) => *bb == to,
-                Enclosing::If => false,
+                Enclosing::If | Enclosing::LoopBody => false,
             };
             if matched {
                 return i as u32;
@@ -623,6 +636,60 @@ mod tests {
             }
         }
         assert!(has_loop(&tree), "a back edge must produce a loop: {tree:?}");
+
+        // 後方辺 (bb2 -> bb1) の `br` が実際に `loop` を指していること。
+        //
+        // 回帰テスト: `do_tree` がループの頭を `Loop(Block(inner))` で包む際、
+        // 合成した `Block` の分だけ `context` (depth の数え上げ) にも
+        // 1 段積まないと、ループ本体の中の `if` から戻る `br` の深さが
+        // 1 つ浅く出て、ループの先頭ではなく合成 `block` の外へ抜けてしまう
+        // (= 2 周目が実行されない)。`well_formed`/`has_loop` だけでは
+        // 「深さが範囲内であること」と「loop が存在すること」しか見ないため、
+        // この種の「有効だが的の違う depth」を検出できない。
+        //
+        // この CFG (bb0 -> bb1(head) -> {bb2(body, 後方辺で bb1 へ), bb3(exit)})
+        // から出る木の形は一意に決まるので、それをそのまま照合する。
+        //
+        // `SwitchTargets::if_bool(true_bb, false_bb)` は
+        // `values=[0], targets=[false_bb], otherwise=true_bb` という形 (`body.rs`) なので、
+        // `Structured::If` の `then` (= arms[0], 値 0 と一致) は **false** 側、
+        // `els` (= otherwise) が **true** 側になる。`branch(2, 3)` (`t=2` = bb2 = 真/継続、
+        // `f=3` = bb3 = 偽/終了) では、後方辺 (bb2, 継続) は `els` に出る:
+        //
+        //   Block[
+        //     Block[ Simple(bb0), Br(0) ],                          // bb0 -> bb1 (合流点)
+        //     Loop(
+        //       Block[
+        //         Simple(bb1),
+        //         If { then: [Simple(bb3), Return], els: [Simple(bb2), Br(2)] },
+        //       ]
+        //     ),
+        //   ]
+        //
+        // `Br(2)` は「If (0) → ループの合成 Block (1) → Loop 自身 (2)」で、
+        // ちょうど `Loop` を指す深さである。バグがあると `Br(1)` (合成
+        // `Block` の外、`Loop` の 1 つ手前) になり、2 周目に進まない。
+        let Structured::Block(top) = &tree else {
+            panic!("top-level must be a Block: {tree:?}");
+        };
+        let [Structured::Block(_entry), Structured::Loop(loop_body)] = top.as_slice() else {
+            panic!("expected [entry-block, loop]: {tree:?}");
+        };
+        let Structured::Block(loop_items) = loop_body.as_ref() else {
+            panic!("loop body must be a Block: {loop_body:?}");
+        };
+        let [Structured::Simple(_), Structured::If { els, .. }] = loop_items.as_slice() else {
+            panic!("loop body must be [head, if]: {loop_items:?}");
+        };
+        let [Structured::Simple(_), Structured::Br(depth)] = els.as_slice() else {
+            panic!("the back edge (loop body's `els`, i.e. the true/continue branch) must be [body, Br]: {els:?}");
+        };
+        assert_eq!(
+            *depth, 2,
+            "the back edge must `br` past the `if` (0) and the loop's synthetic \
+             `block` (1) to reach the `loop` itself (2); got br {depth}, which \
+             would exit the loop instead of restarting it: {tree:?}"
+        );
     }
 
     #[test]

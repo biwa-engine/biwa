@@ -214,10 +214,135 @@ Message Window の `Size` (vw/vh のみ) を流用せず、`percent` を持つ�
   型エラー無くコンパイルできることを確認した。
 - ブラウザ上での実描画確認はまだ (Step5 で `biwa dev` を使って行う予定)。
 
-### 次にやること
+### 次にやること (この節の時点)
 
 - Step5: `test1` で実際に `Window`/`Page`/`Link` を組み立てて `biwa dev` し、
   ブラウザで表示・クリック遷移を確認する。
 - Step2: `Image`, text 系 property, `background_image`。
 - Step3: `Canvas`/`MessageArea` ポータル実装 (`Canvas`/`MessageWindow` の
   リネームも一緒に行う)。
+
+## 9. Step5: 実機確認 (完了) — ついでにコンパイラの `while` バグを発見・修正
+
+### やったこと
+
+`test1/src/main.biwa` の `scene main` に、コメントで区切った差分として以下を追加した
+(`// --- UI API 動作確認 (Phase1 Step5) ここから ---` 〜 `ここまで` で囲んである)。
+
+- import 群 (`UiElement`/`Window`/`Page`/`Link`/`Vertical`/`vw`/`vh`/`Into`) を
+  「UI API 動作確認用の追加」ブロックとして囲んで追加
+- `fn build_demo_window() -> Window`: `"main"` / `"second"` の 2 Page を持つ
+  Window を組み立てる。各 Page には、もう一方の page_id を `on_click_link` に
+  持つ Link (`main`=青、`second`=赤、`width(vw(30))`/`height(vh(8))`/
+  `margin_left(vw(5))`/`margin_top(vh(5))`) を 1 つ置いた
+- `scene main` の冒頭に `#build_demo_window().show()` を追加
+
+`biwa dev --target wasm` (既定) で起動し、Playwright (Chromium headless) で
+実際にページを開いてスクリーンショットを撮り、Link のクリックも自動化して確認した。
+このサンドボックスには Claude in Chrome 拡張が無かったため、代替手段として
+Playwright を使った。
+
+### 環境上の障害と対処 (今後のため記録)
+
+- **Node.js のバージョン**: この環境の `node` は v18.19.1 だが、
+  同梱エンジンの `vite@8`/`rolldown` は Node `^20.19.0 || >=22.12.0` を要求する。
+  v18 では `node:util` の `styleText` が無く即座に落ち、
+  v20.18.1 でも `rolldown` のネイティブバイナリ (optional dependency) が
+  `npm install` で解決されず落ちた (`npm install` 自体が `^20.19.0` を
+  満たさないと optional dependency を正しく解決しないように見える)。
+  **v22.14.0 を使うことで解消した。** システムの Node には触れず、
+  `/tmp/.../node-v22.14.0-linux-x64` に展開して `PATH` に前置するだけで
+  (`.biwa_runtime/node_modules` を一度削除して作り直す必要がある)。
+- **ブラウザでの確認手段**: Claude in Chrome が使えなかったため、
+  Playwright (`npx playwright install --with-deps chromium`) を別途
+  用意して headless Chromium でスクリーンショット・クリックを行った。
+
+### 発見したバグ: `while` ループがコンパイラのバグで 2 周目に進まない
+
+`Window::show()` (Page を 1 つずつ `materialize_into` する `while` ループ) を
+実行すると、**2 つ目の Page が Window の子として登録されない**
+(`no such page in this window: "second"`) という現象に遭遇した。
+
+切り分けの結果 (要旨のみ残す):
+
+- `Window::push`/`Vec.push` によるページの追加は正しく行われている
+  (`w.pages.len()` を novel テキストに埋め込んで確認 → `2`)
+- ページの順序を入れ替えると、**常に 2 番目に処理された要素だけ**が
+  欠落する (page_id の値には無関係)
+- 独立した最小の `while` ループ (`while i < 5 { total = total + 1; i = i + 1; }`)
+  ですら `0` を返す (5 でも 1 でもなく `0`)
+
+`.biwa_build/wasm/test1.wat` に出力された実際の wat を読んで特定した。
+原因は `compiler/src/biwac_generator/src/arch/wasm/structure.rs` の
+`Builder::do_tree`:
+
+```rust
+fn do_tree(&mut self, bb: BasicBlock) -> Vec<Structured> {
+    if self.cfg.is_loop_header(bb) {
+        self.context.push(Enclosing::Loop(bb));
+        let inner = self.node_within(bb);
+        self.context.pop();
+        vec![Structured::Loop(Box::new(Structured::Block(inner)))]  // ← Block を合成
+    } else {
+        self.node_within(bb)
+    }
+}
+```
+
+ループの頭を `Structured::Loop(Box::new(Structured::Block(inner)))` という、
+**`loop` の中にもう 1 段 `block` を合成する**形で包んでいるが、
+`br` の相対深さを数える `context`(`depth_of`)にはこの合成 `block` の分が
+積まれていなかった。そのため、ループ本体の中の `if`(= while の条件分岐)
+から後方辺 (先頭へ戻る辺) へ戻る `br` の深さが実際より 1 つ浅く計算され、
+**「ループの先頭に戻る」つもりが「合成した block の外(= ループそのものの外)」
+に `br` してしまい、2 周目に入らずループを抜けていた**。
+
+既存のテスト (`structure.rs` の `while_loop`) は「`Loop` ノードが存在すること」
+と「`br` の深さが囲みの数を超えていないこと」しか見ておらず、
+「有効だが的が違う深さ」を検出できていなかった
+(`br` は 1 段浅くても "合成 block" という別の有効な囲みに収まってしまうため、
+深さの上限チェックには引っかからない)。
+
+**修正** (`structure.rs`):
+
+- `Enclosing` に `LoopBody` variant を追加 (`br` の対象にはならないが、
+  `If` と同様に深さの数え上げには 1 段加える)
+- `do_tree` でループの頭を包む際、`Enclosing::Loop(bb)` に加えて
+  `Enclosing::LoopBody` も `context` に積んでから `node_within` を呼ぶ
+- `while_loop` テストを強化し、後方辺の `Br` が実際に `Loop` を指す深さに
+  なっていることを、既知の CFG 形状から一意に定まる木を直接パターンマッチして
+  検証するように変更 (単に「範囲内か」ではなく「意図した箇所を指しているか」
+  を見る回帰テスト)
+
+`cargo test`(workspace 全体)はすべて通過することを確認した。
+
+### 影響範囲の補足
+
+- MIR の `while` 文は、条件分岐 (`if`) を伴わない形ではおそらく存在しない
+  (条件判定自体が `SwitchInt`/`If` に落ちるため)。つまり
+  **要素 1 個より多く繰り返す `while` ループは、このバグの影響を
+  実質的に必ず受けていたはず**である。`compiler/assets/tests/mir_fixture`
+  に `while` の機能テストは存在したが、`--emit mir` で MIR 構築の形だけを
+  確認するものであり (「TypeScript の codegen が while 文を todo!() のまま
+  扱えていないため既定のビルド経路には乗せない」との注記どおり)、
+  **wasm ターゲットで実行して結果を検証するテストではなかった**ため、
+  これまで見つかっていなかったと考えられる。
+- 今回の UI API の実装 (`Window::show`/`push_children` の `while` ループ) が、
+  このリポジトリで `while` ループを実際に実行させた最初のケースだった
+  可能性が高い。
+
+### 動作確認 (最終)
+
+- `main` ページ (青 Link, `on_click_link="second"`) が起動時に表示される
+- クリックすると `second` ページ (赤 Link, `on_click_link="main"`) に切り替わる
+- 再度クリックすると `main` に戻る
+- コンソールエラー無し (`no such page` エラーは解消)
+- スクリーンショット3枚 (main → second → main) で相互遷移を確認済み
+
+### 次にやること
+
+- Step2: `Image`, text 系 property, `background_image`。
+- Step3: `Canvas`/`MessageArea` ポータル実装 (`Canvas`/`MessageWindow` の
+  リネームも一緒に行う)。
+- `test1/src/main.biwa` の動作確認用の追加分は、コメントで囲んだままリポジトリに
+  残っている (削除するかどうかはユーザー判断)。
