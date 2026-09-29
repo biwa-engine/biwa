@@ -21,6 +21,12 @@ import {
   startTransitions,
 } from "../../api/object";
 import {
+  createUiElement,
+  pushUiChild,
+  setUiProperty,
+  setUiPropertyString,
+} from "../../api/ui";
+import {
   completeCall,
   createChannelBuffer,
   failCall,
@@ -93,6 +99,33 @@ function createHandlers(): Record<string, SyscallHandler> {
     sys_await_transitions: () => awaitTransitions(),
 
     sys_sleep: (ms: number) => sleep(ms),
+
+    sys_ui_create: (id: number, kind: number) => createUiElement(id, kind),
+
+    sys_ui_set_property: (
+      id: number,
+      kind: number,
+      valU1: number,
+      valU2: number,
+      valU3: number,
+      valU4: number,
+      valI1: number,
+      valI2: number,
+      valF: number,
+    ) =>
+      setUiProperty(id, kind, valU1, valU2, valU3, valU4, valI1, valI2, valF),
+
+    sys_ui_set_property_with_string: (
+      id: number,
+      kind: number,
+      valU: number,
+      valI: number,
+      valF: number,
+      valS: string,
+    ) => setUiPropertyString(id, kind, valU, valI, valF, valS),
+
+    sys_ui_push_child: (parent: number, child: number) =>
+      pushUiChild(parent, child),
   };
 }
 

@@ -109,6 +109,17 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   sys_map_insert: "local",
   /** Map からの取得。 */
   sys_map_get: "local",
+
+  // UI Element (`docs/ui-api.md`)。kind の番号は `api/ui.ts` が正で、
+  // wasm 側の std はそれを `.wat` に直書きしている。
+  /** UI Element を作る。id を返すが、止まらない。 */
+  sys_ui_create: "alloc",
+  /** 数値の property を設定する。 */
+  sys_ui_set_property: "cast",
+  /** 文字列を伴う property を設定する。 */
+  sys_ui_set_property_with_string: "cast",
+  /** 子 Element を親に積む。 */
+  sys_ui_push_child: "cast",
 };
 
 /**

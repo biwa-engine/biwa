@@ -4,6 +4,7 @@ import { setEngineContext } from "./engine/api/context";
 import { CanvasObjects } from "./engine/canvas/CanvasObjects";
 import type { BiwaBackend } from "./engine/game";
 import { Renderer } from "./engine/Renderer";
+import { UIObjects } from "./engine/ui/UIObjects";
 import { Kernel } from "./engine/vm/kernel";
 import { createSyscallTable } from "./engine/vm/handlers";
 import { runWasm } from "./engine/vm/wasm/host";
@@ -14,6 +15,10 @@ const HEIGHT = 720;
 
 const MESSAGE_BOX_ID = "main-message-window";
 const MESSAGE_LAYER_ID = "message";
+// UI (Window/Page/Link/...) は Message Window より前面に置く。
+// クリック判定を奪うのは Link だけなので、下の演出やテキストを覆っても
+// リンクの無い場所ではクリックがそのまま `host` まで抜ける。
+const UI_LAYER_ID = "ui";
 
 const host = document.querySelector<HTMLDivElement>("#app")!;
 host.style.cursor = "pointer";
@@ -24,6 +29,7 @@ await renderer.init(WIDTH, HEIGHT);
 // canvas レイヤーは `create_object` の layer index から必要に応じて作られる。
 // ここで定義するのは DOM レイヤーだけでよい。
 renderer.layers.defineDom(MESSAGE_LAYER_ID, 20);
+renderer.layers.defineDom(UI_LAYER_ID, 25);
 
 const components = new ComponentRegistry();
 const messageBox = new TextBox(0, 460, WIDTH, 260);
@@ -34,6 +40,7 @@ components.register(
 );
 
 const objects = new CanvasObjects(renderer.layers, WIDTH, HEIGHT);
+const ui = new UIObjects(renderer.layers.dom(UI_LAYER_ID));
 // エンジンが Ticker に登録するコールバックはこれ 1 つだけである。
 // オブジェクトごとに生やさないのは、リークを避けるためでもあるし、
 // ポーズ・オート・スキップを 1 箇所の時間操作で効かせるためでもある。
@@ -49,6 +56,7 @@ setEngineContext({
   renderer,
   components,
   objects,
+  ui,
   host,
   messageBoxId: MESSAGE_BOX_ID,
 });
