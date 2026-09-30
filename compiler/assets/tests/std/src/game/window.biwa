@@ -12,12 +12,27 @@ import package::game::base_engine::sys_content_flush;
 import package::game::base_engine::sys_content_clear;
 import package::game::base_engine::wait;
 
-struct Window {
+// ゲームの出力先の束。ランタイムが組み立てて `on_new_game(window)` に渡す。
+//
+// フィクスチャ版は出力先の ui_id を持たない
+// (本物の std (`library/std`) は canvas / message area の ui_id を持つ)。
+// コンパイラの検査 (`on_new_game` のシグニチャ、host export) に要る形だけを揃えている。
+[[lang="game_window"]]
+struct GameWindow {
   canvas: Canvas,
   message_window: MessageWindow,
 }
 
-impl Window {
+// ランタイムが `GameWindow` を組み立てるための入口。
+//
+// 本物の std では ui_id を受け取り、0 を「無し」として `GameWindow::new` に渡す。
+// フィクスチャ版は ui_id を持たないので受け取るだけで使わない。
+[[host_export="__biwa_std_game_window_new"]]
+fn game_window_new_for_host(canvas_id: Uint, message_area_id: Uint) -> GameWindow {
+  GameWindow::new()
+}
+
+impl GameWindow {
   fn new() -> Self {
     Self {
       canvas = Canvas{},

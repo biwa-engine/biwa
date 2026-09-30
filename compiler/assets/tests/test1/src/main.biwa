@@ -7,6 +7,7 @@ import collections::Vec;
 // trait 越しの関連関数・メソッドは、その trait を import していないと引けない。
 import greeter::Describe;
 import std::game::Game;
+import std::game::window::GameWindow;
 import std::game::config::Config;
 // 装飾 API。埋め込み式で使うので、使う側が import する。
 import std::game::content::red;
@@ -199,8 +200,9 @@ type MyGame = Game[MyGameCharacters, MyGameState];
 // ランタイムがゲーム開始時にこれを呼び、返ってきた値を `scene main` に渡す。
 // `Game` は開発者が決める値 (characters / states / config) を含むので、
 // ランタイムには組み立てられない。
-fn on_new_game() -> MyGame {
-  Game::new("test1", MyGameCharacters {}, MyGameState {}, Config::default())
+// `window` (出力先の束) はランタイムが組み立てて渡すので、そのまま `Game::new` に渡す。
+fn on_new_game(window: GameWindow) -> MyGame {
+  Game::new(window, "test1", MyGameCharacters {}, MyGameState {}, Config::default())
 }
 
 // 埋め込み式で出す値。

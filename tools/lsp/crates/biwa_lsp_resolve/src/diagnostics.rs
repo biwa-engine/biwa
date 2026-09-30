@@ -103,6 +103,12 @@ fn to_diagnostic(err: &ResolveError, interner: &IdentInterner) -> Option<RawDiag
             raw(span, e.message())
         }
 
+        // 依存パッケージ由来の重複など、位置を持たないものは出さない。
+        E::HostExport(e) => {
+            let span = e.span()?.clone();
+            raw(span, e.message())
+        }
+
         E::DuplicatedSymbolAndModuleName {
             name: n,
             symbol_span,

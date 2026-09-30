@@ -1,0 +1,14 @@
+{
+  "name": "old_on_new_game",
+  "version": "0.1.0",
+  "description": "rejects the old `fn on_new_game() -> Game` signature",
+  "dependencies": [
+    {
+      "name": "std",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

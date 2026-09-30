@@ -1198,6 +1198,7 @@ mod tests {
         let deps: &[&str] = match pkg {
             "test1" => &["std", "color", "greeter"],
             "greeter" => &["std", "color"],
+            "old_on_new_game" => &["std"],
             _ => &[],
         };
         if deps.is_empty() {
@@ -1592,6 +1593,13 @@ mod tests {
         // scene main から辿れないので、これが出ているのは
         // 単相化の roots に host export が正しく加わっている証拠でもある。
         assert!(wat.contains("(export \"host_export_demo\""), "{wat}");
+        // std の `GameWindow` を組み立てる入口。ランタイムはこれで作った値を
+        // `on_new_game(window)` に渡す。std (依存) の host export なので、
+        // test1 の生成物から出ていることがパッケージ越しの export の実用上の確認になる。
+        assert!(
+            wat.contains("(export \"__biwa_std_game_window_new\""),
+            "{wat}"
+        );
         // 依存パッケージ (greeter) で `[[host_export="..."]]` が付いた関数も、
         // それを使う側である test1 の生成物から export される。
         // test1 はこれを呼んでいないので、依存由来の host export も
@@ -1692,6 +1700,30 @@ mod tests {
         // 読み戻したボディ (export 名を含む) から計算し直した SVH が、
         // 書いたときの SVH と一致する。
         assert_eq!(meta.compute_svh(), meta.svh);
+    }
+
+    /// 旧い契約 `fn on_new_game() -> Game[..]` の playable package が拒否されること。
+    ///
+    /// ランタイムは `on_new_game` に `GameWindow` を渡すので、
+    /// 引数を取らない `on_new_game` のままではビルドを通してはならない。
+    /// フィクスチャの本体は型としては正しく、失敗の理由はシグニチャ検査だけである。
+    #[test]
+    fn rejects_on_new_game_without_game_window() {
+        ensure_fixture_deps("old_on_new_game");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/old_on_new_game").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "`fn on_new_game()` without a `GameWindow` must be rejected"
+        );
     }
 
     /// `.biwamir` と `.biwameta` の対応が崩れていたら読み込みで止まること。

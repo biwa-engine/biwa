@@ -659,3 +659,169 @@ Step5 で導入した Playwright の Chromium キャッシュ (`~/.cache/ms-play
 - `GameWindow::new` は **関連関数** なので、`host_export` の付与対象
   (`Target::Fn` = トップレベル `fn` のみ) に入らない。std にトップレベルの
   ラッパー関数を置いて属性を付けるか、付与対象を関連関数へ広げる必要がある。
+  → §14 の S2 で std にトップレベルのラッパーを置いて解決する。
+
+## 14. `fn app() -> Window` までのロードマップ
+
+§0 で見送った `fn app() -> Window` エントリポイントを最終目標とし、
+そこに至るまでに先に済ませておくべき変更を段階に切る。
+**`app()` の実装そのものは最後の方 (S8)** に置く。
+どこまで進めるかはその都度ユーザーが指示する。途中に「その段階では
+通しで動かない」ステップがあるのは許容する (各ステップに明記する)。
+TypeScript バックエンドは tier 2 なので、各ステップとも wasm を優先し、
+TS 側の追従は後回しにしてよい (TS の経路が壊れる場合も明記する)。
+
+### 目指す最終形 (`docs/ui-api.md` より)
+
+- 起動時にエンジンは `app()` を呼び、返った `Window` を表示する。
+- `Window.scene_page_id` の Page に遷移したら、その Page の
+  `canvas` / `message_area` property (Element の `id` 文字列) から
+  エンジンが ui_id を引き (`UIObjects.resolveId`)、
+  `__biwa_std_game_window_new(canvas_id, message_area_id)` で `GameWindow` を作って
+  `on_new_game(window)` に渡し、返った `Game` で `scene main` を始める。
+- Canvas API / Content API は第一引数に ui_id を取り、出力先を指定して叩く。
+  `GameWindow` の `GameCanvas` / `GameMessageArea` は ui_id を持つだけの薄い struct で、
+  std がそこから ui_id を取り出して syscall に渡す。
+
+### 用語・命名
+
+- std の既存の `Canvas` / `MessageWindow` (`GameWindow` の中身) は
+  `GameCanvas` / `GameMessageArea` にリネームする。空いた `Canvas` / `MessageArea` の名前は
+  UI Element (`docs/ui-api.md` の `<Canvas>` / `<MessageArea>`) に使う
+  (§8 の `Window` → `GameWindow` と同じ判断)。
+- UI Element としての Canvas / MessageArea の kind 番号は 8 / 9 を使う
+  (§10 で空けてある)。
+
+### S1. コンパイラ: `on_new_game(window: GameWindow)` を契約にする
+
+- `biwac_lang_item` に `GameWindow` (`[[lang="game_window"]]`, 型, ジェネリクス 0) を追加。
+  lang item の discriminant が増えるので `.biwameta` を v9 → v10。
+- `biwac_scene` の `OnNewGame` の検査を `() -> Game[..]` から
+  `(GameWindow) -> Game[..]` に変える (エラーメッセージ・テストも)。
+- フィクスチャ (`compiler/assets/tests/std`, `test1`) を追従させる。
+  フィクスチャ std にも S2 と同じラッパーを置き、`wasm_output` で test1 の `.wat` に
+  `(export "__biwa_std_game_window_new"` が出ることを確かめる
+  (§13 の実用上の回帰テストも兼ねる)。
+- **この段階の動作**: コンパイラのテストは green。`library/std` は
+  `game_window` lang item を持たないのでビルドが通らない (S2 で解消)。
+
+#### S1 実装結果 (完了)
+
+- `biwac_lang_item`: `GameWindow, "game_window", Ty, Exact(0)` を `Character` の直後に追加。
+  discriminant がずれるので `.biwameta` を v10 にした。
+- `biwac_scene`: 既知シンボルの表 (`well_known_symbol_table!`) に
+  **期待する引数型の列と戻り値型** (`ContractTy`: `Game` / `GameWindow`) を持たせ、
+  検査は表に従う形にした。`WellKnownKind::Fn` を「引数なし」と決め打ちしていたのをやめたので、
+  S8 の `app: () -> Window` も表に 1 行 (と `ContractTy::Window`) を足すだけで済む。
+  - `SignatureProblem::ArgNotGame` / `ReturnNotGame` は `ArgType { index, expected }` /
+    `ReturnType { expected }` に一般化。メッセージ例:
+    `` `on_new_game` must take exactly (`GameWindow`) and return a `Game`, but it takes 0 argument(s) instead of 1 ``。
+  - 挙動の差: 以前は lang item `game` が無いと scene の検査を丸ごと飛ばしていたが、
+    今は型の照合だけを飛ばし、引数の個数とレシーバの有無は常に見る。
+- フィクスチャ std: `Window` を `GameWindow` にリネーム (本物の std と同名に。S8 で
+  `Window` は UI Element の名前になる) し、`[[lang="game_window"]]`、
+  `Game::new(window, ...)`、host export のラッパー `game_window_new_for_host` を追加。
+  フィクスチャ版の `GameWindow` は ui_id を持たないので、ラッパーは引数を受け取るだけ。
+- フィクスチャ test1: `on_new_game(window: GameWindow)` → `Game::new(window, ...)`。
+- テスト:
+  - `wasm_output`: test1 の `.wat` に `(export "__biwa_std_game_window_new"` が出る
+    (std = 依存の host export。§13 の実用上の確認)。
+  - 新フィクスチャ `old_on_new_game` (旧シグニチャのままの playable) と
+    `rejects_on_new_game_without_game_window`。本体は型として正しく、
+    シグニチャを `(window: GameWindow)` に直すとビルドが通ることを手で確認済み
+    (= 失敗の理由は契約違反だけ)。
+- ついでに `tools/lsp` の `biwa_lsp_resolve` が §12 の WIP 以降ビルドできていなかった
+  (`ResolveOutput.host_exports` と `ResolveError::HostExport` への追従漏れ) のを直した。
+- `cargo test` (compiler / tools/lsp) green、`cli` もビルド可。
+  想定どおり `library/std` は
+  `this no_std package requires the game_window lang item to be defined` で通らない。
+
+### S2. std: `GameWindow` を ui_id を持つ形にする
+
+- `Canvas` → `GameCanvas { ui_id: Uint }`、`MessageWindow` → `GameMessageArea { ui_id: Uint }`。
+- `GameWindow { canvas: Option[GameCanvas], message_area: Option[GameMessageArea] }`、
+  `GameWindow::new(canvas: Option[Uint], message_area: Option[Uint])`、
+  `[[lang="game_window"]]` を付与。
+- ホスト向けラッパー (同じモジュール):
+  `[[host_export="__biwa_std_game_window_new"]] fn game_window_new_for_host(canvas_id: Uint, message_area_id: Uint) -> GameWindow`。
+  ホスト (JS) は Biwa の `Option` を組み立てられない (wasm では WasmGC の値) ので、
+  引数は素の `Uint` にして **0 を「無し」** とする (ui_id は 1 から振られるので 0 は空いている)。
+  Page に `canvas` / `message_area` が設定されていない場合を表すのに使う。
+- `Game::new(window: GameWindow, name, characters, states, config)`。
+- Content API の syscall (`sys_content_push_text` / `flush` / `clear`) の第一引数を ui_id にし、
+  `content.biwa` は `game.window.message_area` から ui_id を取って呼ぶ。
+  `message_area` が `None` のときの扱い (panic か無視か) はここで決める。
+  `sys_wait` はクリック待ちであり出力先を持たないので変えない。
+- **この段階の動作**: std・利用側はビルドが通るが、エンジンがまだ旧 syscall と
+  旧 `on_new_game()` のままなので**実行はできない** (S3〜S5 で解消)。
+
+### S3. std + エンジン: UI Element `Canvas` / `MessageArea`
+
+- エンジン `ElementKind` に `Canvas = 8` / `MessageArea = 9` を追加。
+  `MessageArea` は 1 つの Element が 1 つの `TextBox` を持つ
+  (いまの `main.ts` 固定の `MESSAGE_BOX_ID` の `TextBox` を Element ごとに持てる形へ)。
+  `Canvas` は描画先の領域を表す (中身の実装は S6 で Canvas API と一緒に詰める。
+  この段階では既存の PIXI キャンバスを指す Element でよい)。
+- std に UI Element の `Canvas` / `MessageArea` 構造体・ビルダー・`UiElement` の variant を追加。
+- **この段階の動作**: Element を置けるようになるだけで、まだ何も出力されない。
+
+### S4. エンジン: Content API を ui_id で出力先を選ぶ形にする
+
+- `api/message.ts` の push/flush/clear が ui_id を受け取り、`UIObjects` から
+  その `MessageArea` の `TextBox` を引いて出力する。ui_id が MessageArea でなければ名指しで叱る。
+- `contract.ts` / `handlers.ts` / TS の kernel の引数を追従。
+- クリック待ち (`waitForClick`) の「進行中の文字送りを畳む」は、
+  対象を全 MessageArea に広げる (出力先が 1 つとは限らなくなるため)。
+
+### S5. エンジン: 暫定の配線 — 既定の Canvas / MessageArea で `on_new_game(window)` を呼ぶ
+
+`app()` (S8) が無い間は、`on_new_game` の時点でゲーム側の UI の木がまだ無い
+(UI は scene main の中で組まれる) ので、渡す ui_id の出どころが無い。
+そこで**暫定的に**エンジンが起動時に既定の `Canvas` / `MessageArea` Element を作り
+(いまの固定 `TextBox` の置き換え)、その ui_id を渡す。
+
+- wasm: ui_id の採番は Worker 側 (`sys_ui_create` が `alloc`)。メインスレッドが先に
+  作った既定 Element の ui_id を起動メッセージで Worker に渡し、Worker の採番をその後ろから始める。
+- Worker は `entrypoint(on_new_game(__biwa_std_game_window_new(canvas_id, message_area_id)))`
+  の順に呼ぶ。`game.ts` の `BiwaOnNewGame` を `(window) => BiwaGame` にし、
+  ラッパーの型も足す。
+- `biwa` CLI を再ビルドする (エンジンは `rust_embed` で埋め込まれている、§11)。
+- `~/test1` (実験用) とフィクスチャ test1 で `on_new_game(window: GameWindow)` →
+  `Game::new(window, ...)` に書き換え、`biwa dev` + Playwright で
+  テキスト表示・クリック送り・UI の Page 遷移が壊れていないことを確認する。
+- **この段階で S2 以降初めて通しで動く。** 既定 Element は S8 で消す。
+- TS: CLI の TS 用エントリスタブ (`cli/src/runtime.rs`) にラッパーの import を足す
+  (§13 により playable package のモジュールから再 export されている)。後回し可。
+
+### S6. Canvas API を ui_id で出力先を選ぶ形にする
+
+- `sys_create_object` などの第一引数を ui_id にし、std は `game.window.canvas` から取る。
+- エンジンは `Canvas` Element ごとに描画先を持つ形へ (`CanvasObjects` の分割、
+  または Element ごとのコンテナ)。複数 Canvas・ミラーリング (`docs/ui-api.md`) の土台。
+
+### S7. Page の `canvas` / `message_area` property と Window の `scene_page_id`
+
+- Page に `canvas` / `message_area` (文字列の Element id) を、Window に `scene_page_id` を
+  string property として追加 (std のビルダー + エンジンの property kind)。
+- エンジン側で「scene_page_id の Page に遷移した」ことを検知し、その Page の
+  property から `resolveId` で ui_id を引けるところまで (まだ scene は起動しない)。
+
+### S8. `fn app() -> Window` エントリポイント
+
+- コンパイラ: `biwac_scene` の既知シンボルに `app` (`() -> Window`, playable で必須) を追加し、
+  `__biwa_app` として export。`Window` (UI Element) を lang item にして型検査する。
+- ホストは `app()` が返した `Window` を表示する。ホストは Biwa のメソッドを直接呼べないので、
+  std に `Window::show()` のラッパーを `[[host_export="__biwa_std_window_show"]]` で置く。
+- 起動の流れを「`app()` → Window 表示 → scene_page_id の Page へ遷移したら
+  S7 で引いた ui_id で `GameWindow` を作る → `on_new_game(window)` → `scene main`」に変える。
+  wasm では遷移はメインスレッドの Link クリックで起きるので、Worker は `app()` の後で
+  「scene 開始」の指示 (ui_id 付き) を待つ。
+- S5 の既定 Canvas / MessageArea を消す。`~/test1` を `app()` の形に書き換えて確認。
+- **§0 の「含まない」から外れる**ので、ここで §0 も更新する。
+
+### S8 より後 (このロードマップの外)
+
+- `?save_id=` クエリと `on_new_game(window, save_id: Option[SaveId])`、`Game::load()`。
+- XML 構文 (Phase2)、`on_event` / `Button` (Phase3, funcref)。
+- TS バックエンドの追従 (各ステップで後回しにした分)。
+

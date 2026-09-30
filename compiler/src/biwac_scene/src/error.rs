@@ -1,16 +1,17 @@
 use biwac_span::Span;
 
-use crate::WellKnownSymbol;
+use crate::{ContractTy, WellKnownSymbol};
 
 #[derive(Debug)]
 pub enum SceneError {
     /// ランタイムが呼ぶシンボルのシグネチャが期待と違う。
     ///
-    /// scene は `(Game[..]) -> Game[..]`、
-    /// `on_new_game` のような関数は `() -> Game[..]` である。
+    /// scene は `(Game[..]) -> Game[..]`、`on_new_game` は
+    /// `(GameWindow) -> Game[..]` である (期待は表 `WellKnownSymbol` が持つ)。
     InvalidSceneSignature {
         scene: String,
-        kind: crate::WellKnownKind,
+        expected_args: &'static [ContractTy],
+        expected_ret: ContractTy,
         reason: SignatureProblem,
         span: Span,
     },
@@ -27,11 +28,11 @@ pub enum SignatureProblem {
     /// 引数の個数が期待と違う。
     ArgCount { found: usize, expected: usize },
 
-    /// 引数の型が lang item `game` ではない。
-    ArgNotGame,
+    /// `index` 番目 (0 始まり) の引数の型が期待した lang item ではない。
+    ArgType { index: usize, expected: ContractTy },
 
-    /// 戻り値の型が lang item `game` ではない。
-    ReturnNotGame,
+    /// 戻り値の型が期待した lang item ではない。
+    ReturnType { expected: ContractTy },
 
     /// レシーバ (`self`) を取っている。
     HasReceiver,
@@ -51,7 +52,8 @@ impl SceneError {
         match self {
             Self::InvalidSceneSignature {
                 scene,
-                kind,
+                expected_args,
+                expected_ret,
                 reason,
                 ..
             } => {
@@ -59,15 +61,24 @@ impl SceneError {
                     SignatureProblem::ArgCount { found, expected } => {
                         format!("it takes {found} argument(s) instead of {expected}")
                     }
-                    SignatureProblem::ArgNotGame => "its argument is not a `Game`".to_string(),
-                    SignatureProblem::ReturnNotGame => "it does not return a `Game`".to_string(),
+                    SignatureProblem::ArgType { index, expected } => format!(
+                        "its argument #{} is not a {}",
+                        index + 1,
+                        expected.describe()
+                    ),
+                    SignatureProblem::ReturnType { expected } => {
+                        format!("it does not return a {}", expected.describe())
+                    }
                     SignatureProblem::HasReceiver => "it takes a receiver".to_string(),
                 };
 
-                let expected = match kind {
-                    crate::WellKnownKind::Scene => "take exactly one `Game` and return a `Game`",
-                    crate::WellKnownKind::Fn => "take no argument and return a `Game`",
+                let args = if expected_args.is_empty() {
+                    "no argument".to_string()
+                } else {
+                    let list: Vec<&str> = expected_args.iter().map(|a| a.describe()).collect();
+                    format!("exactly ({})", list.join(", "))
                 };
+                let expected = format!("take {args} and return a {}", expected_ret.describe());
 
                 format!("`{scene}` must {expected}, but {detail}")
             }

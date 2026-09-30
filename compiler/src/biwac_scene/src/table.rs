@@ -14,13 +14,50 @@ pub enum SceneRequirement {
 }
 
 /// ランタイムが名前を知っているシンボルの種別。
+///
+/// 引数と戻り値の型はシンボルごとに表 ([`WellKnownSymbol::args`] /
+/// [`WellKnownSymbol::ret`]) が決める。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WellKnownKind {
-    /// `scene`。`(Game[..]) -> Game[..]` で、generator として出力される。
+    /// `scene`。generator として出力される。
     Scene,
-    /// 普通の関数。`() -> Game[..]`。
+    /// 普通の関数。
     Fn,
 }
+
+/// ランタイムとの規約に現れる型。すべて lang item である。
+///
+/// ジェネリック引数に何が入るかは問わない (`Game[..]` の中身は開発者が決める)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContractTy {
+    /// lang item `game`。
+    Game,
+    /// lang item `game_window`。
+    GameWindow,
+}
+
+impl ContractTy {
+    pub fn lang_item(&self) -> biwac_lang_item::LangItem {
+        match self {
+            Self::Game => biwac_lang_item::LangItem::Game,
+            Self::GameWindow => biwac_lang_item::LangItem::GameWindow,
+        }
+    }
+
+    pub fn describe(&self) -> &'static str {
+        match self {
+            Self::Game => "`Game`",
+            Self::GameWindow => "`GameWindow`",
+        }
+    }
+}
+
+/// すべての scene が守るシグニチャ `(Game[..]) -> Game[..]` の引数。
+///
+/// 既知シンボルでない scene もこれに従う。
+pub const SCENE_ARGS: &[ContractTy] = &[ContractTy::Game];
+/// すべての scene が守るシグニチャの戻り値。
+pub const SCENE_RET: ContractTy = ContractTy::Game;
 
 impl WellKnownKind {
     pub fn describe(&self) -> &'static str {
@@ -41,7 +78,7 @@ impl WellKnownKind {
 // どのターゲット言語でどんなシンボル名になるかは codegen 側の規約であり、
 // ここでは関知しない。
 macro_rules! well_known_symbol_table {
-    ( $( $variant:ident, $name:literal, $kind:expr, $requirement:expr ; )* ) => {
+    ( $( $variant:ident, $name:literal, $kind:expr, $args:expr, $ret:expr, $requirement:expr ; )* ) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub enum WellKnownSymbol {
             $($variant,)*
@@ -69,6 +106,20 @@ macro_rules! well_known_symbol_table {
                 }
             }
 
+            /// 期待する引数の型 (順序どおり)。
+            pub fn args(&self) -> &'static [ContractTy] {
+                match self {
+                    $(Self::$variant => $args,)*
+                }
+            }
+
+            /// 期待する戻り値の型。
+            pub fn ret(&self) -> ContractTy {
+                match self {
+                    $(Self::$variant => $ret,)*
+                }
+            }
+
             pub fn requirement(&self) -> SceneRequirement {
                 match self {
                     $(Self::$variant => $requirement,)*
@@ -81,7 +132,8 @@ macro_rules! well_known_symbol_table {
 well_known_symbol_table!(
     // ゲームのストーリー起動時にランタイムが呼ぶエントリポイント。
     // playable package では main.biwa に定義されていなければならない。
-    Main, "main", WellKnownKind::Scene, SceneRequirement::RequiredInPlayable;
+    Main, "main", WellKnownKind::Scene, SCENE_ARGS, SCENE_RET,
+        SceneRequirement::RequiredInPlayable;
 
     // 最初の `Game` を組み立てる。
     //
@@ -89,7 +141,14 @@ well_known_symbol_table!(
     // ランタイムには組み立てられない。wasm では `Game` が WasmGC の struct で、
     // そもそもホストから組めない。
     // したがってゲーム側が作り、ランタイムはそれを受け取って `main` に渡す。
-    OnNewGame, "on_new_game", WellKnownKind::Fn, SceneRequirement::RequiredInPlayable;
+    //
+    // 引数の `GameWindow` はランタイムが組み立てて渡す (出力先の canvas /
+    // message area の ui_id の束。std の host export
+    // `__biwa_std_game_window_new` で作る)。ゲーム側はこれを
+    // `Game::new()` にそのまま渡す。
+    OnNewGame, "on_new_game", WellKnownKind::Fn,
+        &[ContractTy::GameWindow], ContractTy::Game,
+        SceneRequirement::RequiredInPlayable;
 
     // 将来ここにイベントハンドラ的なものが増える想定:
     // OnSave, "on_save", WellKnownKind::Scene, SceneRequirement::Optional;
