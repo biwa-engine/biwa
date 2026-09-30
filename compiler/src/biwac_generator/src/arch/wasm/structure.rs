@@ -682,7 +682,9 @@ mod tests {
             panic!("loop body must be [head, if]: {loop_items:?}");
         };
         let [Structured::Simple(_), Structured::Br(depth)] = els.as_slice() else {
-            panic!("the back edge (loop body's `els`, i.e. the true/continue branch) must be [body, Br]: {els:?}");
+            panic!(
+                "the back edge (loop body's `els`, i.e. the true/continue branch) must be [body, Br]: {els:?}"
+            );
         };
         assert_eq!(
             *depth, 2,

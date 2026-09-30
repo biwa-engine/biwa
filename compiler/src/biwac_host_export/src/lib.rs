@@ -141,8 +141,12 @@ mod tests {
     #[test]
     fn distinct_names_are_ok() {
         let mut table = HostExportTable::new();
-        table.insert(def(0), "foo".to_string(), Span::dummy()).unwrap();
-        table.insert(def(1), "bar".to_string(), Span::dummy()).unwrap();
+        table
+            .insert(def(0), "foo".to_string(), Span::dummy())
+            .unwrap();
+        table
+            .insert(def(1), "bar".to_string(), Span::dummy())
+            .unwrap();
 
         assert_eq!(table.get(def(0)), Some("foo"));
         assert_eq!(table.get(def(1)), Some("bar"));
@@ -151,7 +155,9 @@ mod tests {
     #[test]
     fn duplicated_name_is_an_error() {
         let mut table = HostExportTable::new();
-        table.insert(def(0), "foo".to_string(), Span::dummy()).unwrap();
+        table
+            .insert(def(0), "foo".to_string(), Span::dummy())
+            .unwrap();
 
         let err = table
             .insert(def(1), "foo".to_string(), Span::dummy())
@@ -169,9 +175,15 @@ mod tests {
     #[test]
     fn iter_is_ordered_by_export_name() {
         let mut table = HostExportTable::new();
-        table.insert(def(0), "zeta".to_string(), Span::dummy()).unwrap();
-        table.insert(def(1), "alpha".to_string(), Span::dummy()).unwrap();
-        table.insert(def(2), "mid".to_string(), Span::dummy()).unwrap();
+        table
+            .insert(def(0), "zeta".to_string(), Span::dummy())
+            .unwrap();
+        table
+            .insert(def(1), "alpha".to_string(), Span::dummy())
+            .unwrap();
+        table
+            .insert(def(2), "mid".to_string(), Span::dummy())
+            .unwrap();
 
         let names: Vec<&str> = table.iter().map(|(_, n)| n).collect();
         assert_eq!(names, ["alpha", "mid", "zeta"]);
@@ -184,8 +196,12 @@ mod tests {
         // ここに来ること自体は想定していないが、少なくとも自分自身との
         // 重複として誤検出しないことは確認しておく)。
         let mut table = HostExportTable::new();
-        table.insert(def(0), "foo".to_string(), Span::dummy()).unwrap();
-        table.insert(def(0), "bar".to_string(), Span::dummy()).unwrap();
+        table
+            .insert(def(0), "foo".to_string(), Span::dummy())
+            .unwrap();
+        table
+            .insert(def(0), "bar".to_string(), Span::dummy())
+            .unwrap();
         assert_eq!(table.get(def(0)), Some("bar"));
     }
 }

@@ -584,16 +584,15 @@ fn load_analyze_and_codegen_single_package(
         hir,
         lang_items,
         host_exports,
-    } =
-        biwac_name_resolver::NameResolver::new(
-            metadata,
-            external_packages,
-            package_name_interned,
-            &mut pkg,
-        )
-        .unwrap()
-        .try_resolve(interner)
-        .map_err(|errs| print_errors(&errs, interner, &srcs, metadata))?;
+    } = biwac_name_resolver::NameResolver::new(
+        metadata,
+        external_packages,
+        package_name_interned,
+        &mut pkg,
+    )
+    .unwrap()
+    .try_resolve(interner)
+    .map_err(|errs| print_errors(&errs, interner, &srcs, metadata))?;
 
     // Scene contract check: scene のシグネチャと、
     // playable package のエントリポイント (scene main) の存在を検証する。
@@ -732,10 +731,10 @@ fn load_analyze_and_codegen_single_package(
                     &well_known_scenes,
                     &host_exports,
                 )
-                    .map_err(|e| {
-                        eprintln!("Error: wasm code generation failed: {e}");
-                        biwac_base::print_error_finish_message(1);
-                    })?;
+                .map_err(|e| {
+                    eprintln!("Error: wasm code generation failed: {e}");
+                    biwac_base::print_error_finish_message(1);
+                })?;
 
                 // .wat は成果物として残す。デバッグではこちらを読む。
                 let wat_path = target_dir(&build_dir_path, options.target)
