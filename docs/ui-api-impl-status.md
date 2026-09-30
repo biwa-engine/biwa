@@ -887,6 +887,47 @@ TS 側の追従は後回しにしてよい (TS の経路が壊れる場合も明
 - エンジンは `Canvas` Element ごとに描画先を持つ形へ (`CanvasObjects` の分割、
   または Element ごとのコンテナ)。複数 Canvas・ミラーリング (`docs/ui-api.md`) の土台。
 
+#### S6 実装結果 (完了)
+
+ユーザー判断: 描画範囲は **Canvas Element の矩形**。std の API は、画像を直接描く
+`show_in_canvas` は出力先を暫定的に第一引数で受け取り、`Character::new` は `Game` を受け取る
+(`Game[C, S]` はいずれ `Game[S]` にする予定なので、今は `GameWindow` だけを保持する暫定の形)。
+
+- syscall: `sys_create_object(canvas_ui_id, path, layer, x, y, w, h, alpha, theta)`
+  (TS / wasm の native と import 宣言)。遷移・削除などはオブジェクト id で指すので変えていない。
+- std:
+  - `Image::show_in_canvas(canvas: GameCanvas, layer, x, ...)`。`CanvasObject` は置いた先の
+    `canvas: GameCanvas` を覚える (`absent()` は ui_id 0)。
+  - `Character[P]::new[C, S](game: Game[C, S], name, ...)`。`Character` に
+    `window: GameWindow` を追加 (元からコメントで予約されていた場所)。
+    `appear` は `self.window.canvas` に出し、`change_visual` は元の立ち絵と同じ Canvas に出し直す。
+  - `Game::canvas() -> GameCanvas` (無ければ `unwrap` → abort。`message_area_of` と同じ扱い)。
+- エンジン:
+  - `engine/canvas/CanvasSurfaces.ts` を新設。`Canvas` の ui_id ごとに描画先
+    (`CanvasSurface`: PixiJS の Container + マスク + layer index ごとの Container) を初回に作る。
+    Canvas でない ui_id は `[biwa] ui element N is not a Canvas` と叱って作らない。
+  - 毎フレーム (唯一の Ticker コールバックの先頭で `surfaces.sync()`)、Element の DOM 矩形に
+    描画先の位置 (原点 = Element の中央) とマスクを合わせる。Element が消えた・祖先ごと
+    `display: none` なら描画先を隠す。host は拡大縮小しないので DOM と PixiJS の座標は 1:1。
+  - `CanvasObjects` は `LayerManager` の画面全体の canvas レイヤーの代わりに描画先を使い、
+    射影は `x`, `-y` をそのまま書くだけになった (`centerX/Y`・`resize` を削除)。
+  - `LayerManager` から canvas レイヤーを削除 (DOM レイヤーだけを持つ)。
+  - canvas の中身は今までどおり 1 枚の `<canvas>` にあり、UI (DOM) より下に描かれる。
+- 既定の出力先 (S5) を作り直した: Canvas を画面全体にし (描画範囲が Element の矩形になったので、
+  背景をメッセージ枠の裏まで描くにはこれが要る)、MessageArea は 2 つ目の Window の Page で
+  高さ 460/720 の空の Box の下に置いて Canvas に重ねる (位置指定の property が無いため)。
+- `~/test1`: `CharacterBiwa::new(g, ...)`、`show_in_canvas(g.canvas(), ...)`。
+
+##### 動作確認 (`biwa dev` wasm + Playwright)
+
+- S5 と同じ確認 (テキスト・クリック送り・演出の同期・装飾・Link の Page 遷移・最後まで進める・
+  コンソールエラー無し) がすべて通り、見た目も S5 と同じ (背景は画面全体、立ち絵は右、
+  メッセージ枠はその上)。
+- 矩形への追従: 生成物のコピー (`~/test1/.biwa_runtime`) の既定 Canvas だけを一時的に
+  640x360 (画面中央) にして確認し、描画がその矩形の中に限られること・背景がその中央を原点に
+  置かれてはみ出しが切り取られること・立ち絵 (x=700) が右端で切れることを確認。
+  Canvas の Page を `display: none` にすると canvas の描画も消えることも確認。確認後に元へ戻した。
+
 ### S7. Page の `canvas` / `message_area` property と Window の `scene_page_id`
 
 - Page に `canvas` / `message_area` (文字列の Element id) を、Window に `scene_page_id` を

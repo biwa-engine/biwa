@@ -1,5 +1,6 @@
 import { setEngineContext } from "./engine/api/context";
 import { CanvasObjects } from "./engine/canvas/CanvasObjects";
+import { CanvasSurfaces } from "./engine/canvas/CanvasSurfaces";
 import type { BiwaBackend } from "./engine/game";
 import { Renderer } from "./engine/Renderer";
 import { UIObjects } from "./engine/ui/UIObjects";
@@ -24,16 +25,20 @@ host.style.cursor = "pointer";
 const renderer = new Renderer(host);
 await renderer.init(WIDTH, HEIGHT);
 
-// canvas レイヤーは `create_object` の layer index から必要に応じて作られる。
+// canvas に描くものの層は、出力先の `Canvas` Element ごとの描画先が
+// `create_object` の layer index から必要に応じて作る。
 // ここで定義するのは DOM レイヤーだけでよい。
 renderer.layers.defineDom(UI_LAYER_ID, 25);
 
-const objects = new CanvasObjects(renderer.layers, WIDTH, HEIGHT);
 const ui = new UIObjects(renderer.layers.dom(UI_LAYER_ID));
+const surfaces = new CanvasSurfaces(renderer.app.stage, host, ui);
+const objects = new CanvasObjects(surfaces);
 // エンジンが Ticker に登録するコールバックはこれ 1 つだけである。
 // オブジェクトごとに生やさないのは、リークを避けるためでもあるし、
 // ポーズ・オート・スキップを 1 箇所の時間操作で効かせるためでもある。
 renderer.app.ticker.add((ticker) => {
+  // canvas の描画先を `Canvas` Element の今の矩形に合わせてから射影する。
+  surfaces.sync();
   objects.update(ticker.deltaMS);
   // 文字送りも同じ時計で進める (すべての MessageArea)。倍率を `objects` から借りるのは、
   // ポーズ・オート・スキップが 1 箇所の時間操作で効くようにするためである。

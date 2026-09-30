@@ -140,6 +140,17 @@ export class UIObjects {
   }
 
   /**
+   * ui_id が指す `Canvas` の DOM を引く。Canvas でなければ (消えていても) `null`。
+   *
+   * Canvas API の描画先 (`CanvasSurfaces`) がこの矩形に合わせる。
+   */
+  canvasElement(id: number): HTMLElement | null {
+    const node = this.nodes.get(id);
+    if (node === undefined || node.kind !== ElementKind.Canvas) return null;
+    return node.dom;
+  }
+
+  /**
    * すべての MessageArea の文字送りを進める。
    *
    * Ticker から毎フレーム呼ばれる (`main.ts`)。コールバックを
@@ -516,8 +527,9 @@ function createDom(kind: number): HTMLElement {
         backgroundRepeat: "no-repeat",
       });
     case ElementKind.Canvas:
-      // Canvas API の出力先の領域。中身 (描画先) は Canvas API を ui_id で
-      // 出し分けるとき (§14 S6) に持たせる。いまは領域を占めるだけである。
+      // Canvas API の出力先の領域。DOM としては空で、中身は PixiJS の
+      // `<canvas>` (UI より下) に描かれる。描画先 (`CanvasSurfaces`) が
+      // 毎フレームこの矩形に位置とマスクを合わせる。
       return styled(document.createElement("div"), {
         position: "relative",
       });

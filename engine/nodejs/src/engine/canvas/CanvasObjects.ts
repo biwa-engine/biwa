@@ -10,7 +10,7 @@ import {
   isPeriodic,
   waveAt,
 } from "../api/transition";
-import type { LayerManager } from "../LayerManager";
+import type { CanvasSurfaces } from "./CanvasSurfaces";
 
 /**
  * 遷移の 1 区間。
@@ -95,10 +95,13 @@ interface Timer {
  * 設計は `docs/media-object-model.md` にある。
  */
 export class CanvasObjects {
-  private readonly layers: LayerManager;
-  /** canvas の中心。biwa の原点はここに来る。 */
-  private centerX: number;
-  private centerY: number;
+  /**
+   * 出力先の `Canvas` Element ごとの描画先。
+   *
+   * 描画先の原点が Element の中央に置かれるので、ここでの射影は
+   * 中央原点の biwa 座標をそのまま (y だけ反転して) 書けばよい。
+   */
+  private readonly surfaces: CanvasSurfaces;
 
   private readonly objects = new Map<number, CanvasObject>();
   private nextId = 1;
@@ -124,15 +127,8 @@ export class CanvasObjects {
   private waiters: Array<() => void> = [];
   private timers: Timer[] = [];
 
-  constructor(layers: LayerManager, width: number, height: number) {
-    this.layers = layers;
-    this.centerX = width / 2;
-    this.centerY = height / 2;
-  }
-
-  resize(width: number, height: number): void {
-    this.centerX = width / 2;
-    this.centerY = height / 2;
+  constructor(surfaces: CanvasSurfaces) {
+    this.surfaces = surfaces;
   }
 
   /**
@@ -150,12 +146,15 @@ export class CanvasObjects {
   /**
    * オブジェクトを作る。
    *
+   * `canvasId` は出力先の UI Element `Canvas` の ui_id。Canvas でなければ叱って作らない。
+   *
    * テクスチャのロードは非同期だが、**オブジェクトは同期に作る**。
    * `create` は積んで返る syscall なので、ロードが終わる前に
    * `add_transition` が届くのが普通だからである。
    */
   create(
     id: number,
+    canvasId: number,
     path: string,
     layer: number,
     x: number,
@@ -169,6 +168,8 @@ export class CanvasObjects {
       console.error(`[biwa] canvas object ${id} already exists`);
       return;
     }
+    const surface = this.surfaces.get(canvasId);
+    if (surface === null) return;
 
     const sprite = new Sprite(Texture.EMPTY);
     // 回転の中心を画像の中心にする。位置も中心で指定する規約である。
@@ -186,7 +187,7 @@ export class CanvasObjects {
     object.value[Param.Theta] = theta;
 
     this.objects.set(id, object);
-    this.layers.canvas(layer).addChild(sprite);
+    surface.layer(layer).addChild(sprite);
 
     let url: string;
     try {
@@ -434,9 +435,10 @@ export class CanvasObjects {
     if (object.natural === null) return;
 
     const sprite = object.sprite;
-    sprite.x = this.centerX + object.at(Param.X);
+    // 描画先 (`CanvasSurface`) の原点が Canvas Element の中央にある。
+    sprite.x = object.at(Param.X);
     // biwa の y は上が正。Pixi は下が正なので反転する。
-    sprite.y = this.centerY - object.at(Param.Y);
+    sprite.y = -object.at(Param.Y);
     sprite.width = Math.max(object.at(Param.W), 0);
     sprite.height = Math.max(object.at(Param.H), 0);
     sprite.alpha = clamp(object.at(Param.Alpha), 0, 255) / 255;

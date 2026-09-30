@@ -25,11 +25,15 @@ std::game::base_engine        create_object / add_transition / start_transitions
 ## canvas オブジェクト
 
 ```biwa
-let bg = Image::new("background.jpg").show_in_canvas(0, 0, 0, 1280, -1, 255);
+let bg = Image::new("background.jpg").show_in_canvas(g.canvas(), 0, 0, 0, 1280, -1, 255);
 ```
 
-`show_in_canvas(layer, x, y, w, h, alpha)`。
-座標は canvas の中央が原点で、x は右が正、**y は上が正**。
+`show_in_canvas(canvas, layer, x, y, w, h, alpha)`。
+`canvas` は出力先 (UI Element `Canvas`) で、scene では `g.canvas()` (`Game::canvas`) で取れる。
+画像を直接描く API はいずれ std の抽象の内側に隠れる想定なので、この形は暫定である
+(`docs/ui-api-impl-status.md` §14 S6)。
+座標は出力先の Canvas の中央が原点で、x は右が正、**y は上が正**。
+Canvas の矩形からはみ出した部分は描かれない。
 位置も回転も画像の中心を基準にする。
 `w` / `h` が負なら「指定しない」で、画像の元のサイズから決まる。
 片方だけ正ならアスペクトを保つ。
@@ -106,11 +110,15 @@ biwa.and()
 ## Character
 
 ```biwa
-let biwa = Character::new("言葉 琵琶", "琵琶", BiwaProps {}, normal, normal);
+let biwa = Character::new(g, "言葉 琵琶", "琵琶", BiwaProps {}, normal, normal);
 biwa.appear(1, 700, -20, -1, 700, 0);
 biwa.change_visual(smile);
 biwa.disappear(ms(1200));
 ```
+
+`Character::new` は `Game` を受け取る。**暫定**で、今は描画の出力先の束
+(`GameWindow`) だけを保持する (`appear` はその Canvas に出す)。
+`Game` の状態を共有・更新する形は std の API を安定させるときに決める。
 
 立ち絵は `Option[CanvasObject]` で持つ。
 まだ出ていないときは `visual()` が「何もしないオブジェクト」を返すので、

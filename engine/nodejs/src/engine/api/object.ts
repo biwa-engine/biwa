@@ -26,11 +26,16 @@ export function allocObjectId(): number {
 /**
  * オブジェクトを作る。
  *
+ * `canvasId` は出力先の UI Element `Canvas` の ui_id (Canvas API の syscall は
+ * 出力先を第一引数で指定する。`docs/ui-api-impl-status.md` §14)。
+ * 以降の遷移・削除はオブジェクトの `id` で指すので出力先を取らない。
+ *
  * `w` / `h` が負なら「指定しない」で、テクスチャの元のサイズから決まる。
  * 片方だけ正ならアスペクトを保つ。
  */
 export function createObject(
   id: number,
+  canvasId: number,
   path: string,
   layer: number,
   x: number,
@@ -40,7 +45,7 @@ export function createObject(
   alpha: number,
   theta: number,
 ): void {
-  engine().objects.create(id, path, layer, x, y, w, h, alpha, theta);
+  engine().objects.create(id, canvasId, path, layer, x, y, w, h, alpha, theta);
 }
 
 /** `after` ミリ秒後にオブジェクトを消す。 */

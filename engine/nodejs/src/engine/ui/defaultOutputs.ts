@@ -8,11 +8,16 @@
  * エンジンが起動時に既定の Window → Page → (Canvas, MessageArea) を作り、その ui_id を渡す。
  * S8 (`app()`) でこのファイルごと消す。
  *
- * 見た目は、以前 `main.ts` に固定で置いていた Message Window
+ * 見た目は、以前の固定の canvas (画面全体) と Message Window
  * (`left: 0; top: 460px; 1280x260`、`rgba(0,0,0,0.75)`、`padding: 24px 32px`) を
- * UI Element の property で再現している。位置指定の property は無いので、
- * Page の中に Canvas (上 460/720) と MessageArea (下 260/720) を縦に積む。
- * padding の `%` は CSS の規則どおり親の**幅**に対する割合 (24/1280, 32/1280) である。
+ * UI Element の property で再現している。
+ *
+ * - Canvas は画面全体を覆う (Canvas API の描画範囲は Element の矩形なので、
+ *   背景をメッセージ枠の裏まで描くにはこうする必要がある)。
+ * - MessageArea はそれに重ねたいが、位置指定の property が無い。そこで Window を 2 つ作り
+ *   (Window はどれも画面全体に重なる)、2 つ目の Page の中で
+ *   高さ 460/720 の空の Box の下に MessageArea (260/720) を積む。
+ * - padding の `%` は CSS の規則どおり親の**幅**に対する割合 (24/1280, 32/1280) である。
  */
 
 import { ElementKind, PropertyKind, Unit } from "../api/ui";
@@ -35,17 +40,25 @@ const MESSAGE_AREA_HEIGHT = 260;
  * ゲーム側の Element より先に作るので、ゲームが後から出す Window はこれより前面に来る。
  */
 export function createDefaultOutputs(ui: UIObjects): DefaultOutputs {
-  const windowId = create(ui, ElementKind.Window);
-  const pageId = create(ui, ElementKind.Page);
-  const canvasId = create(ui, ElementKind.Canvas);
-  const messageAreaId = create(ui, ElementKind.MessageArea);
-
   const percent = (px: number, of: number): number => (px / of) * 100;
 
+  // 1 つ目の Window: 画面全体の Canvas。
+  const canvasWindowId = create(ui, ElementKind.Window);
+  const canvasPageId = create(ui, ElementKind.Page);
+  const canvasId = create(ui, ElementKind.Canvas);
   setSize(ui, canvasId, PropertyKind.Width, 100);
+  setSize(ui, canvasId, PropertyKind.Height, 100);
+
+  // 2 つ目の Window: 下端の MessageArea。Canvas の上に重なる。
+  const messageWindowId = create(ui, ElementKind.Window);
+  const messagePageId = create(ui, ElementKind.Page);
+  const spacerId = create(ui, ElementKind.Box);
+  const messageAreaId = create(ui, ElementKind.MessageArea);
+
+  setSize(ui, spacerId, PropertyKind.Width, 100);
   setSize(
     ui,
-    canvasId,
+    spacerId,
     PropertyKind.Height,
     percent(SCREEN_HEIGHT - MESSAGE_AREA_HEIGHT, SCREEN_HEIGHT),
   );
@@ -75,9 +88,11 @@ export function createDefaultOutputs(ui: UIObjects): DefaultOutputs {
   );
 
   // create → property → push_child の順で、組み上がってから出現させる。
-  ui.pushChild(pageId, canvasId);
-  ui.pushChild(pageId, messageAreaId);
-  ui.pushChild(windowId, pageId);
+  ui.pushChild(canvasPageId, canvasId);
+  ui.pushChild(canvasWindowId, canvasPageId);
+  ui.pushChild(messagePageId, spacerId);
+  ui.pushChild(messagePageId, messageAreaId);
+  ui.pushChild(messageWindowId, messagePageId);
 
   return { canvasId, messageAreaId };
 }

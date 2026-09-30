@@ -251,7 +251,9 @@ scene の生テキストと `$` の埋め込み式は、std の `Content` を経
 画像などを canvas に置き、パラメータの遷移でアニメーションさせる。
 規約と設計の理由は [`docs/media-object-model.md`](../../docs/media-object-model.md) にある。
 
-- 座標は **canvas の中央が原点**で、x は右が正、**y は上が正**。
+- 出力先は UI Element `Canvas` で、`sys_create_object` の第一引数の ui_id で指定する。
+  描画範囲はその Element の矩形で、はみ出しは切り取る (`engine/canvas/CanvasSurfaces.ts`)
+- 座標は **出力先の Canvas の中央が原点**で、x は右が正、**y は上が正**。
   位置も回転も画像の中心を基準にする (PixiJS とは向きも単位も違うので、
   biwa 側の値を正として毎フレーム射影している)
 - 遷移は `add_transition` で積み、`start_transitions` で発火する。

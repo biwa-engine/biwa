@@ -85,6 +85,7 @@ function createHandlers(): Record<string, SyscallHandler> {
 
     sys_create_object: (
       id: number,
+      canvasId: number,
       path: string,
       layer: number,
       x: number,
@@ -93,7 +94,7 @@ function createHandlers(): Record<string, SyscallHandler> {
       h: number,
       alpha: number,
       theta: number,
-    ) => createObject(id, path, layer, x, y, w, h, alpha, theta),
+    ) => createObject(id, canvasId, path, layer, x, y, w, h, alpha, theta),
 
     sys_delete_object: (id: number, after: number) => deleteObject(id, after),
 

@@ -25,7 +25,7 @@ canvas 上のオブジェクト (画像・将来は動画や GIF) を、
 fn create_object(
   path: String,
   layer: u32,                          // canvas レイヤーの index
-  x: i32, y: i32,                      // 画像の中心の座標 (canvas 中央が原点, y は上が正)
+  x: i32, y: i32,                      // 画像の中心の座標 (出力先の Canvas Element の中央が原点, y は上が正)
   w: i32, h: i32,                      // 負なら「指定しない」
   alpha: i32,                          // 0-255
   theta: i32,                          // 度。回転の中心は画像の中心

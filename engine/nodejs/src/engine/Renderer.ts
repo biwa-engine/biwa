@@ -9,7 +9,7 @@ export class Renderer {
   constructor(host: HTMLElement) {
     this.host = host;
     this.app = new Application();
-    this.layers = new LayerManager(this.app, host);
+    this.layers = new LayerManager(host);
   }
 
   async init(width: number, height: number): Promise<void> {
