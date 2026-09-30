@@ -913,7 +913,7 @@ TS 側の追従は後回しにしてよい (TS の経路が壊れる場合も明
   - `CanvasObjects` は `LayerManager` の画面全体の canvas レイヤーの代わりに描画先を使い、
     射影は `x`, `-y` をそのまま書くだけになった (`centerX/Y`・`resize` を削除)。
   - `LayerManager` から canvas レイヤーを削除 (DOM レイヤーだけを持つ)。
-  - canvas の中身は今までどおり 1 枚の `<canvas>` にあり、UI (DOM) より下に描かれる。
+  - (§15 の後で、描画先を Canvas Element ごとの `<canvas>` に作り直した。下記「§15 の後の修正」参照)
 - 既定の出力先 (S5) を作り直した: Canvas を画面全体にし (描画範囲が Element の矩形になったので、
   背景をメッセージ枠の裏まで描くにはこれが要る)、MessageArea は 2 つ目の Window の Page で
   高さ 460/720 の空の Box の下に置いて Canvas に重ねる (位置指定の property が無いため)。
@@ -1034,4 +1034,79 @@ TS 側の追従は後回しにしてよい (TS の経路が壊れる場合も明
 - `?save_id=` クエリと `on_new_game(window, save_id: Option[SaveId])`、`Game::load()`。
 - XML 構文 (Phase2)、`on_event` / `Button` (Phase3, funcref)。
 - TS バックエンドの追従 (各ステップで後回しにした分)。
+
+## 15. UI Element `Layers` (完了)
+
+`docs/ui-api.md` に追加された `Layers` (子を重ねる Element) を engine / std に実装した。
+
+### 仕様 (ユーザー指定)
+
+- Layers の子はそれぞれ **Layers の親の中にいるのと同じように配置**され、x / y 方向には互いに干渉しない。
+- 子は push された順に上へ積み上がる (後から push したものほど上)。std のメソッドチェーンも同じ
+  (`Layers::new(Vec::of(下)).push(上)`)。
+- エンジンは各 Element に z を持ち、Layers の子は「親 (Layers) の z + push された順番」、
+  それ以外の子は親の z を引き継ぐ。子は後から上に足されるだけで間に割って入ることは無い予定なので、
+  単純な足し算でよい。
+
+### 実装
+
+- kind 番号: `Layers = 10` (`api/ui.ts` の `ElementKind` / std の `element_kind_layers()`)。
+  持てる子は複数 (`childCapacity` の `many`)。property は `id` のみ (レイアウト系は持たない)。
+- エンジン (`UIObjects`):
+  - Layers の DOM は親の内側を埋める 1 マスのグリッド (`display: grid`、行・列とも `100%`、
+    `width` / `height: 100%`)。子はすべてそのマスに置く (`grid-area: 1 / 1`)。
+    マスは親と同じ大きさなので、子の `%` は親の中にいるときと同じく解決される。
+  - グリッドの子は既定で縦に引き伸ばされるが、普通の親の中では高さ指定の無い Element は
+    中身の高さになるので、Layers の子は `align-self: start` にした (横は普通どおり幅いっぱい)。
+  - `UiNode.z` を追加。子が繋がったとき (`attach`) に部分木ごと決め直す (`assignZ`、
+    部分木は create → property → push_child の順ですでに組み上がっているため)。
+    Layers の子の DOM には `z-index` として書く。外れたら (`detachFromParent`) 消す。
+  - canvas: 描画先が Canvas Element の DOM の中にあるので (下記「§15 の後の修正」)、
+    他の Element との前後も DOM の重なり (push 順) に従う。
+- std: `struct Layers { children, id }`、`UiElement::Layers`、`game/ui/layers.biwa`
+  (`new(children)` / `push(child)` / `id(value)` / `materialize()` / `Into[UiElement]`)。
+
+### `~/test1` での確認 (`biwa dev` wasm + Playwright)
+
+- scene 用 Page: `Layers::new(Vec::of(全面の Canvas)).push(メッセージ枠のレイヤー)`。
+  上のレイヤーは高さ 460/720 の空の Vertical の下に MessageArea
+  (`Color::new(0, 0, 0, 191)`、旧枠と同じ余白) を積む。S8 で失っていた
+  「背景の上にメッセージ枠を重ねる」見た目に戻った (枠は host 内 y=460, 1280x260、
+  背景 `rgba(0, 0, 0, 0.75)`)。Canvas は z 0、メッセージ枠のレイヤーは z 1。
+  テキスト・クリック送り・最後まで進めても コンソールエラー無し。
+- "second" Page: `Layers::new(Vec::of(既存のメニュー)).push(画像)`。
+  - 画像 (z 1) がメニューの Link (z 0) の上に描かれる。
+  - 画像の位置は自分の margin (15vw, 8vh) だけで決まり、メニューの位置に影響されない。
+  - メニュー (高さ指定の無い Vertical) の高さは中身の高さ (130px) で、Layers が無いときと同じ。
+    (`align-self: start` を入れる前はグリッドに引き伸ばされて 684px になっていた)
+  - 画像はクリックを奪わない (奪うのは Link だけ) ので、画像が重なった所をクリックすると
+    下の「もどる」が押されて main に戻る。
+
+### §15 の後の修正: canvas の描画先を Canvas Element ごとの `<canvas>` に
+
+S6 の描画先は、host 全体を覆う 1 枚の PixiJS の `<canvas>` (DOM レイヤーより下) の中の
+Container を Element の矩形に合わせる作りだった。これはエンジンが canvas を既定で
+用意していた頃の構造の名残で、canvas の中身が常にすべての DOM (UI) より下に描かれ、
+`Layers` で Canvas を DOM の Element より上に push しても上にならなかった。
+
+- `CanvasSurface` が自分の PixiJS `Application` を持ち、その `<canvas>` を Canvas Element の
+  DOM の中に置く (背景は透明、解像度 1)。位置・大きさ・はみ出しは Element そのもの、
+  前後は DOM の重なりに従う。大きさは `ResizeObserver` で合わせ、原点は中央。
+  毎フレームの矩形合わせとマスク、Canvas の z を PixiJS に写す処理は不要になったので消した。
+- 各 `Application` は `autoStart: false` で、描画は `main.ts` の唯一の Ticker コールバックの
+  最後で `surfaces.render()` から行う (ポーズ・スキップを 1 箇所で効かせる規約を保つ)。
+- Canvas Element が消えたら描画先 (WebGL コンテキスト) も捨て、そこに置かれていた
+  オブジェクトは `CanvasObjects` から外す。
+- `Renderer` は画面全体の `Application` をやめ、host の設定とエンジンの時計 (`Ticker`) だけを持つ。
+  何も置かれていない所は host の背景 (黒) が見える (以前は画面全体の PixiJS の背景が黒だった)。
+- 代償: Canvas Element の数だけ WebGL コンテキストができる (ブラウザの上限はおおよそ 16)。
+
+`~/test1` での確認 (`biwa dev` wasm + Playwright):
+
+- scene 用 Page の Layers を `[画像 (DOM, z 0), Canvas (z 1), メッセージ枠 (z 2)]` にした。
+  scene 中は Canvas に描かれた背景が下の画像を覆い、背景と立ち絵がフェードアウトした最後には
+  透明な canvas を通して下の画像が見える (= canvas の描画も push 順で DOM の上に重なる)。
+- `<canvas>` は Canvas Element の子として 1 枚だけでき (1280x720、Element と同じ矩形)、
+  scene 前 (`app()` の UI だけのとき) は 0 枚。起動直後の見た目・テキスト送り・Link・
+  最後まで進めてもコンソールエラー無し、は以前と同じ。
 

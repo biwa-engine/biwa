@@ -131,8 +131,8 @@ TypeScript ターゲットでは中断しない syscall はただの関数呼び
 背景・立ち絵・前景といった意味づけは std の仕事で、
 プリミティブには**レイヤーの index だけ**を渡す。
 
-`LayerManager` は index を受けて canvas レイヤーを必要に応じて作る
-(`LayerManager.canvas(index)`)。**レイヤーは安いので、たくさん使ってよい。**
+出力先の Canvas Element ごとの描画先が index を受けて canvas レイヤーを必要に応じて作る
+(`CanvasSurface.layer(index)`、`engine/canvas/CanvasSurfaces.ts`)。**レイヤーは安いので、たくさん使ってよい。**
 そのため同一レイヤー内の z 順は「作られた順」で足り、
 `set_z` のようなものは要らない。細かく前後を制御したければレイヤーを分ける。
 
@@ -462,7 +462,7 @@ CSS をはじめ既存のツールがすべてこの意味で使っているの�
 | param / kind の番号、曲線と波形     | `engine/src/engine/api/transition.ts`        |
 | オブジェクトと遷移の本体            | `engine/src/engine/canvas/CanvasObjects.ts`  |
 | syscall の入口 (両ターゲット共通)   | `engine/src/engine/api/object.ts`            |
-| canvas レイヤー (index で作られる)  | `engine/src/engine/LayerManager.ts`          |
+| canvas レイヤー (index で作られる)  | `engine/src/engine/canvas/CanvasSurfaces.ts` |
 | wasm の区分と `alloc`               | `engine/src/engine/vm/wasm/contract.ts`      |
 | cast のまとめ流し                   | `engine/src/engine/vm/wasm/bridge.ts`        |
 | wasm 側の対応表                     | `engine/src/engine/vm/wasm/host.ts`          |

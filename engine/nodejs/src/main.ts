@@ -12,8 +12,8 @@ import backend from "./game/entry";
 const WIDTH = 1280;
 const HEIGHT = 720;
 
-// UI (Window/Page/Link/MessageArea/...) は canvas より前面に置く。
-// Message Window も UI Element `MessageArea` の中身としてここに入る。
+// UI (Window/Page/Link/Canvas/MessageArea/...) を載せる層。
+// canvas の描画先も Message Window も、それぞれ UI Element の中身としてここに入る。
 // クリック判定を奪うのは Link だけなので、下の演出やテキストを覆っても
 // リンクの無い場所ではクリックがそのまま `host` まで抜ける。
 const UI_LAYER_ID = "ui";
@@ -22,7 +22,7 @@ const host = document.querySelector<HTMLDivElement>("#app")!;
 host.style.cursor = "pointer";
 
 const renderer = new Renderer(host);
-await renderer.init(WIDTH, HEIGHT);
+renderer.init(WIDTH, HEIGHT);
 
 // canvas に描くものの層は、出力先の `Canvas` Element ごとの描画先が
 // `create_object` の layer index から必要に応じて作る。
@@ -30,18 +30,18 @@ await renderer.init(WIDTH, HEIGHT);
 renderer.layers.defineDom(UI_LAYER_ID, 25);
 
 const ui = new UIObjects(renderer.layers.dom(UI_LAYER_ID));
-const surfaces = new CanvasSurfaces(renderer.app.stage, host, ui);
+const surfaces = new CanvasSurfaces(ui);
 const objects = new CanvasObjects(surfaces);
 // エンジンが Ticker に登録するコールバックはこれ 1 つだけである。
 // オブジェクトごとに生やさないのは、リークを避けるためでもあるし、
 // ポーズ・オート・スキップを 1 箇所の時間操作で効かせるためでもある。
-renderer.app.ticker.add((ticker) => {
-  // canvas の描画先を `Canvas` Element の今の矩形に合わせてから射影する。
-  surfaces.sync();
+renderer.ticker.add((ticker) => {
   objects.update(ticker.deltaMS);
   // 文字送りも同じ時計で進める (すべての MessageArea)。倍率を `objects` から借りるのは、
   // ポーズ・オート・スキップが 1 箇所の時間操作で効くようにするためである。
   ui.update(ticker.deltaMS * objects.timeScale);
+  // 射影し終えたものを、Canvas Element ごとの描画先に描く。
+  surfaces.render();
 });
 
 // 以降、syscall の実装はこのコンテキストを通してエンジンを触る。

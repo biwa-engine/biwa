@@ -218,7 +218,8 @@ src/
       CanvasObjects.ts  # canvas オブジェクトと遷移の本体。Ticker で回る
     ui/
       UIObjects.ts      # UI Element のツリーと DOM。MessageArea が TextBox を持つ
-    Renderer.ts         # PixiJS Application のラッパー
+    Renderer.ts         # host の大きさとエンジンの時計 (唯一の Ticker)
+    canvas/CanvasSurfaces.ts  # Canvas Element ごとの描画先 (Element の中の `<canvas>`)
     LayerManager.ts     # canvas / DOM レイヤーの生成・参照管理
   components/
     TextBox.ts          # メッセージウィンドウ。断片の列と文字送り。MessageArea ごとに 1 つ
@@ -295,17 +296,13 @@ Ticker に登録するコールバックは `main.ts` の 1 つだけである�
 
 ## レイヤーシステム
 
-canvas レイヤーと DOM レイヤーを積み重ねる。
-
-- **canvas レイヤー**: PixiJS の Container。**整数の index** で識別し、
-  `create_object` に渡された index のものが必要に応じて作られる。
-  背景・立ち絵・前景といった意味づけは std の仕事なのでここには無い。
-  レイヤーは安いので、前後を細かく分けたければ index を分ければよい
-- **DOM レイヤー**: テキスト・UI 描画 (HTMLElement, `pointer-events: none`)。名前で識別する
-
-canvas は 1 枚の `<canvas>` の中に積まれ、その `<canvas>` は
-すべての DOM レイヤーより下にある。
-つまり canvas レイヤーの index が DOM レイヤーを追い越すことはない。
+- **DOM レイヤー**: UI 描画 (HTMLElement, `pointer-events: none`)。名前で識別する。
+  UI Element はすべてここに入り、Element どうしの前後は `Layers` の push 順で決まる
+- **canvas レイヤー**: UI Element `Canvas` ごとの描画先 (`canvas/CanvasSurfaces.ts`) の中の
+  PixiJS の Container。**整数の index** で識別し、`create_object` に渡された index の
+  ものが必要に応じて作られる。背景・立ち絵・前景といった意味づけは std の仕事なので
+  ここには無い。レイヤーは安いので、前後を細かく分けたければ index を分ければよい。
+  描画先の `<canvas>` は Canvas Element の中にあるので、他の Element との前後は DOM の重なりに従う
 
 DOM レイヤーと UI コンポーネントの定義は将来 XML で行う。
 

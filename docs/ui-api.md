@@ -88,6 +88,11 @@ fn app() -> Window {
   - Properties:
     - `children: Iterable[Element]`
     - `page_id: String`
+- `Layers`
+  いくつかのレイヤー。
+  子 Element は syscall で渡された順に上のレイヤーに積み上がっていく。
+  - Properties:
+    - `children: Iterable[Element]`
 - `Box`
   領域を区切る最も基本的な Element.
   - Properties:

@@ -32,6 +32,11 @@ export const ElementKind = {
    * std の `GameMessageArea` がこの ui_id を持つ。子は持てない。
    */
   MessageArea: 9,
+  /**
+   * 子を重ねる Element。子は Layers の親の中にいるのと同じように配置され
+   * (x / y 方向には互いに干渉しない)、push された順に上に積み上がる。
+   */
+  Layers: 10,
   // Button は funcref 前提のため実装しない (`docs/ui-api.md`)。
 } as const;
 

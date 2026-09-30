@@ -354,6 +354,12 @@ export class CanvasObjects {
     const now = this.now;
 
     for (const object of this.objects.values()) {
+      // 出力先の Canvas Element ごと消えた (描画先が捨てられた) もの。
+      if (object.sprite.destroyed) {
+        object.alive = false;
+        this.objects.delete(object.id);
+        continue;
+      }
       if (object.deleteAt !== null && now >= object.deleteAt) {
         this.destroy(object);
         continue;

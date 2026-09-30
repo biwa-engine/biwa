@@ -1,11 +1,8 @@
 /**
- * DOM の描画の層。テキストや UI を載せる HTMLElement で、名前で識別する。
+ * DOM の描画の層。UI を載せる HTMLElement で、名前で識別する。
  *
  * canvas に描くもの (`create_object`) の層はここには無い。出力先の UI Element
  * `Canvas` ごとの描画先が自分のレイヤーを持つ (`engine/canvas/CanvasSurfaces.ts`)。
- * PixiJS の `<canvas>` は 1 枚で、すべての DOM レイヤーより下にある
- * (`Renderer` が z-index 0 に置く)。つまり canvas レイヤーの index が
- * DOM レイヤーを追い越すことはない。
  */
 export class LayerManager {
   private domLayers = new Map<string, HTMLElement>();

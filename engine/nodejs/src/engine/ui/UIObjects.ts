@@ -47,6 +47,15 @@ interface UiNode {
    * Content API はこれに出力する。
    */
   textBox: TextBox | null;
+  /**
+   * 重なりの高さ。親の値を引き継ぎ、`Layers` の子だけは
+   * 「Layers の値 + push された順番 (0 始まり)」になる。
+   *
+   * 子は後から上に足されるだけで間に割って入ることは無い (`docs/ui-api.md` の `Layers`)
+   * ので、単純な足し算で足りる。Layers の子の DOM の `z-index` に使う
+   * (canvas の描画先も Canvas Element の DOM の中にあるので、同じ重なりに従う)。
+   */
+  z: number;
 }
 
 /**
@@ -72,6 +81,7 @@ function childCapacity(kind: number): ChildCapacity {
   switch (kind) {
     case ElementKind.Window:
     case ElementKind.Page:
+    case ElementKind.Layers:
     case ElementKind.Horizontal:
     case ElementKind.Vertical:
     case ElementKind.HorizontalGrid:
@@ -168,7 +178,7 @@ export class UIObjects {
   /**
    * ui_id が指す `Canvas` の DOM を引く。Canvas でなければ (消えていても) `null`。
    *
-   * Canvas API の描画先 (`CanvasSurfaces`) がこの矩形に合わせる。
+   * Canvas API の描画先 (`CanvasSurface`) はこの中に自分の `<canvas>` を置く。
    */
   canvasElement(id: number): HTMLElement | null {
     const node = this.nodes.get(id);
@@ -241,6 +251,7 @@ export class UIObjects {
       pageMessageArea: null,
       scenePageId: null,
       textBox,
+      z: 0,
     };
     this.nodes.set(id, node);
     if (textBox !== null) {
@@ -354,6 +365,9 @@ export class UIObjects {
     parent.children.push(child);
     child.parent = parent;
     parent.dom.appendChild(child.dom);
+    // 子の部分木はすでに組み上がっている (create → property → push_child の順) ので、
+    // 繋がった時点で部分木ごと重なりの高さを決め直す。
+    this.assignZ(child, zOfChild(parent, parent.children.length - 1));
 
     if (child.kind === ElementKind.Page) {
       this.showFirstPageIfNoneVisible(parent, child);
@@ -366,6 +380,34 @@ export class UIObjects {
     parent.children = parent.children.filter((c) => c !== node);
     node.dom.remove();
     node.parent = null;
+    if (parent.kind === ElementKind.Layers) {
+      node.dom.style.gridArea = "";
+      node.dom.style.alignSelf = "";
+      node.dom.style.zIndex = "";
+    }
+  }
+
+  /**
+   * `node` を高さ `z` にし、部分木に伝える。
+   *
+   * Layers の子は、Layers の 1 つのマスに重ねて置き (`grid-area: 1 / 1`)、
+   * `z-index` で前後を決める。後から push されたものほど上になる。
+   *
+   * グリッドの子は既定で縦にも引き伸ばされる (`align-self: stretch`) が、
+   * 普通の親の中では高さ指定の無い Element は中身の高さになる。
+   * 「Layers の親の中にいるのと同じ配置」にするため、縦は `start` にする
+   * (横は普通の親の中と同じく幅いっぱいに伸びる)。
+   */
+  private assignZ(node: UiNode, z: number): void {
+    node.z = z;
+    if (node.parent?.kind === ElementKind.Layers) {
+      node.dom.style.gridArea = "1 / 1";
+      node.dom.style.alignSelf = "start";
+      node.dom.style.zIndex = String(z);
+    }
+    node.children.forEach((child, index) => {
+      this.assignZ(child, zOfChild(node, index));
+    });
   }
 
   /** ツリーから消す。子も道連れにする。 */
@@ -633,10 +675,23 @@ function createDom(kind: number): HTMLElement {
         backgroundPosition: "center",
         backgroundRepeat: "no-repeat",
       });
+    case ElementKind.Layers:
+      // 1 マスのグリッドにして、子をすべてそのマスに重ねる (`assignZ`)。
+      // 自分は親の内側を埋めるので、子はそれぞれ Layers の親の中にいるのと
+      // 同じように配置され、x / y 方向には互いに干渉しない
+      // (子の % は親と同じ大きさのマスに対して解決される)。
+      // 前後は子の z-index が決める。
+      return styled(document.createElement("div"), {
+        position: "relative",
+        display: "grid",
+        gridTemplateColumns: "100%",
+        gridTemplateRows: "100%",
+        width: "100%",
+        height: "100%",
+      });
     case ElementKind.Canvas:
-      // Canvas API の出力先の領域。DOM としては空で、中身は PixiJS の
-      // `<canvas>` (UI より下) に描かれる。描画先 (`CanvasSurfaces`) が
-      // 毎フレームこの矩形に位置とマスクを合わせる。
+      // Canvas API の出力先。描画先 (`CanvasSurface`) が自分の `<canvas>` を
+      // この中に置き、この要素の大きさに合わせる。
       return styled(document.createElement("div"), {
         position: "relative",
       });
@@ -749,6 +804,11 @@ function sizeToCss(unit: number, value: number): string {
       console.error(`[biwa] unknown ui size unit: ${unit}`);
       return "0";
   }
+}
+
+/** `parent` の `index` 番目の子の重なりの高さ。Layers の子だけが上に積み上がる。 */
+function zOfChild(parent: UiNode, index: number): number {
+  return parent.kind === ElementKind.Layers ? parent.z + index : parent.z;
 }
 
 /** property を付けてよい Element か。違えば名指しで叱る。 */
