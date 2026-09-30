@@ -1,4 +1,3 @@
-import type { ComponentRegistry } from "../../components/ComponentRegistry";
 import type { CanvasObjects } from "../canvas/CanvasObjects";
 import type { Renderer } from "../Renderer";
 import type { UIObjects } from "../ui/UIObjects";
@@ -12,15 +11,16 @@ import type { UIObjects } from "../ui/UIObjects";
  */
 export interface EngineContext {
   renderer: Renderer;
-  components: ComponentRegistry;
   /** canvas に置かれたオブジェクトと、その遷移。 */
   objects: CanvasObjects;
-  /** UI Element のツリー (`docs/ui-api.md`)。 */
+  /**
+   * UI Element のツリー (`docs/ui-api.md`)。
+   *
+   * Content API の出力先 (`MessageArea` が持つ Message Window) もここから引く。
+   */
   ui: UIObjects;
   /** 入力を受け取る要素 (クリック待ちの対象) */
   host: HTMLElement;
-  /** メッセージウィンドウとして使うコンポーネントの ID */
-  messageBoxId: string;
 }
 
 let current: EngineContext | null = null;

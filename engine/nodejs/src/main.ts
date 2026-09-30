@@ -1,5 +1,3 @@
-import { ComponentRegistry } from "./components/ComponentRegistry";
-import { TextBox } from "./components/TextBox";
 import { setEngineContext } from "./engine/api/context";
 import { CanvasObjects } from "./engine/canvas/CanvasObjects";
 import type { BiwaBackend } from "./engine/game";
@@ -13,9 +11,8 @@ import backend from "./game/entry";
 const WIDTH = 1280;
 const HEIGHT = 720;
 
-const MESSAGE_BOX_ID = "main-message-window";
-const MESSAGE_LAYER_ID = "message";
-// UI (Window/Page/Link/...) は Message Window より前面に置く。
+// UI (Window/Page/Link/MessageArea/...) は canvas より前面に置く。
+// Message Window も UI Element `MessageArea` の中身としてここに入る。
 // クリック判定を奪うのは Link だけなので、下の演出やテキストを覆っても
 // リンクの無い場所ではクリックがそのまま `host` まで抜ける。
 const UI_LAYER_ID = "ui";
@@ -28,16 +25,7 @@ await renderer.init(WIDTH, HEIGHT);
 
 // canvas レイヤーは `create_object` の layer index から必要に応じて作られる。
 // ここで定義するのは DOM レイヤーだけでよい。
-renderer.layers.defineDom(MESSAGE_LAYER_ID, 20);
 renderer.layers.defineDom(UI_LAYER_ID, 25);
-
-const components = new ComponentRegistry();
-const messageBox = new TextBox(0, 460, WIDTH, 260);
-components.register(
-  MESSAGE_BOX_ID,
-  messageBox,
-  renderer.layers.dom(MESSAGE_LAYER_ID),
-);
 
 const objects = new CanvasObjects(renderer.layers, WIDTH, HEIGHT);
 const ui = new UIObjects(renderer.layers.dom(UI_LAYER_ID));
@@ -46,19 +34,17 @@ const ui = new UIObjects(renderer.layers.dom(UI_LAYER_ID));
 // ポーズ・オート・スキップを 1 箇所の時間操作で効かせるためでもある。
 renderer.app.ticker.add((ticker) => {
   objects.update(ticker.deltaMS);
-  // 文字送りも同じ時計で進める。倍率を `objects` から借りるのは、
+  // 文字送りも同じ時計で進める (すべての MessageArea)。倍率を `objects` から借りるのは、
   // ポーズ・オート・スキップが 1 箇所の時間操作で効くようにするためである。
-  messageBox.update(ticker.deltaMS * objects.timeScale);
+  ui.update(ticker.deltaMS * objects.timeScale);
 });
 
 // 以降、syscall の実装はこのコンテキストを通してエンジンを触る。
 setEngineContext({
   renderer,
-  components,
   objects,
   ui,
   host,
-  messageBoxId: MESSAGE_BOX_ID,
 });
 
 document.title = `${backend.packageName} — Biwa`;

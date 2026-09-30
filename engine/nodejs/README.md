@@ -209,11 +209,12 @@ src/
     api/transition.ts   # param / kind の番号と曲線・波形 (std との合意点)
     canvas/
       CanvasObjects.ts  # canvas オブジェクトと遷移の本体。Ticker で回る
+    ui/
+      UIObjects.ts      # UI Element のツリーと DOM。MessageArea が TextBox を持つ
     Renderer.ts         # PixiJS Application のラッパー
     LayerManager.ts     # canvas / DOM レイヤーの生成・参照管理
   components/
-    ComponentRegistry.ts
-    TextBox.ts          # メッセージウィンドウ。断片の列と文字送り。Ticker で回る
+    TextBox.ts          # メッセージウィンドウ。断片の列と文字送り。MessageArea ごとに 1 つ
   game/
     entry.ts            # `biwa dev` が生成して上書きする (リポジトリのものはプレースホルダ)
 ```
@@ -224,6 +225,9 @@ scene の生テキストと `$` の埋め込み式は、std の `Content` を経
 `sys_content_push_text` としてエンジンに届く。
 設計と決めごとは [`docs/content-api.md`](../../docs/content-api.md) にある。
 
+- 出力先は UI Element `MessageArea` で、Content API の syscall は第一引数の
+  ui_id でそれを指定する。MessageArea が 1 つずつ `TextBox` を持つ
+  (`engine/ui/UIObjects.ts`)。枠の位置・大きさ・背景・余白は MessageArea の property が決める
 - 届く値は**すべて解決済みの絶対値**である。速度・大きさ・色の設定は
   `Game` が持ち、std が潰してから渡す。**エンジンは設定を知らない**
 - `push` は積むだけで何も起きない。`flush` で初めて文字送りが始まる
@@ -234,8 +238,9 @@ scene の生テキストと `$` の埋め込み式は、std の `Content` を経
 - クリックは**進行中のものをまず畳む**。文字送りの途中なら残りを全部出し、
   sync 印の演出が走っていれば終端へ飛ばす。両方を 1 回のクリックで畳むので、
   テキストが進むのは次のクリックである
-- 文字送りは `main.ts` の唯一の Ticker コールバックから駆動する。
-  倍率は `CanvasObjects.timeScale` を借りている
+- 文字送りは `main.ts` の唯一の Ticker コールバックから、すべての MessageArea を
+  まとめて駆動する (`UIObjects.update`)。倍率は `CanvasObjects.timeScale` を借りている。
+  クリックでの送りの完了もすべての MessageArea に効く
 - 装飾 (`$blue(bold("琵琶"))`) は std に閉じている。
   エンジンに届くのは解決済みの色・大きさ・太さ・速度だけで、
   **装飾 API が増えてもエンジンは変わらない**。

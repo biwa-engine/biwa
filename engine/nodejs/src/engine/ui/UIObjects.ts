@@ -8,6 +8,7 @@
  * 設計は `docs/ui-api.md`、実装方針は `docs/ui-api-impl-status.md` にある。
  */
 
+import { TextBox } from "../../components/TextBox";
 import { resolveAssetUrl } from "../api/assets";
 import {
   ElementKind,
@@ -35,6 +36,11 @@ interface UiNode {
    * 上書き・削除のときに古いキーを引くのに使う。
    */
   idKey: string | null;
+  /**
+   * `MessageArea` が持つ Message Window の実体。それ以外では `null`。
+   * Content API はこれに出力する。
+   */
+  textBox: TextBox | null;
 }
 
 /** 親が子をいくつ持てるか。`docs/ui-api.md` の push_child の規則そのもの。 */
@@ -72,6 +78,13 @@ export class UIObjects {
    * ホストが scene 開始前に ui_id を引く仕組みの土台になる。
    */
   private readonly idsByName = new Map<string, number>();
+  /**
+   * 生きている `MessageArea`。
+   *
+   * 文字送り (`update`) とクリックでの送りの完了 (`skipMessageAreas`) は
+   * すべての MessageArea に効かせる。毎回 `nodes` を舐めないよう別に持つ。
+   */
+  private readonly messageAreas = new Set<UiNode>();
   private nextId = 1;
 
   constructor(root: HTMLElement) {
@@ -98,6 +111,50 @@ export class UIObjects {
     return this.idsByName.get(name);
   }
 
+  /**
+   * ui_id が指す `MessageArea` の Message Window を引く。
+   *
+   * Content API の出力先の解決に使う。MessageArea でなければ名指しで叱って `null`。
+   */
+  messageArea(id: number): TextBox | null {
+    const node = this.nodes.get(id);
+    if (node === undefined) {
+      console.error(`[biwa] no such ui element (message area): ${id}`);
+      return null;
+    }
+    if (node.textBox === null) {
+      console.error(`[biwa] ui element ${id} is not a MessageArea`);
+      return null;
+    }
+    return node.textBox;
+  }
+
+  /**
+   * すべての MessageArea の文字送りを進める。
+   *
+   * Ticker から毎フレーム呼ばれる (`main.ts`)。コールバックを
+   * MessageArea ごとに生やさないのは、リークを避けるためと、
+   * ポーズ・オート・スキップを 1 箇所の時間操作で効かせるためである。
+   */
+  update(deltaMs: number): void {
+    for (const node of this.messageAreas) {
+      node.textBox?.update(deltaMs);
+    }
+  }
+
+  /**
+   * すべての MessageArea の文字送りを完了させる。飛ばすものがあったかを返す。
+   *
+   * クリック待ち (`waitForClick`) が最初に試す。短絡させず全部に効かせる。
+   */
+  skipMessageAreas(): boolean {
+    let skipped = false;
+    for (const node of this.messageAreas) {
+      if (node.textBox?.skip()) skipped = true;
+    }
+    return skipped;
+  }
+
   // --- syscall の実体 -----------------------------------------------------
 
   /**
@@ -118,17 +175,27 @@ export class UIObjects {
       return;
     }
 
+    const textBox = kind === ElementKind.MessageArea ? new TextBox() : null;
+    const dom = createDom(kind);
+    if (textBox !== null) {
+      dom.appendChild(textBox.element);
+    }
+
     const node: UiNode = {
       id,
       kind,
-      dom: createDom(kind),
+      dom,
       parent: null,
       children: [],
       onClickLink: null,
       pageId: null,
       idKey: null,
+      textBox,
     };
     this.nodes.set(id, node);
+    if (textBox !== null) {
+      this.messageAreas.add(node);
+    }
 
     if (kind === ElementKind.Window) {
       this.root.appendChild(node.dom);
@@ -260,6 +327,7 @@ export class UIObjects {
     if (node.idKey !== null && this.idsByName.get(node.idKey) === node.id) {
       this.idsByName.delete(node.idKey);
     }
+    this.messageAreas.delete(node);
     this.nodes.delete(node.id);
   }
 
@@ -436,6 +504,19 @@ function createDom(kind: number): HTMLElement {
         backgroundSize: "cover",
         backgroundPosition: "center",
         backgroundRepeat: "no-repeat",
+      });
+    case ElementKind.Canvas:
+      // Canvas API の出力先の領域。中身 (描画先) は Canvas API を ui_id で
+      // 出し分けるとき (§14 S6) に持たせる。いまは領域を占めるだけである。
+      return styled(document.createElement("div"), {
+        position: "relative",
+      });
+    case ElementKind.MessageArea:
+      // 中に Message Window (`TextBox`) を入れる。TextBox は絶対配置で
+      // この要素を埋めるので、ここを位置決めの基準にする。
+      // 大きさ・背景・余白は property が決める。
+      return styled(document.createElement("div"), {
+        position: "relative",
       });
     default:
       // `isKnownElementKind` を先に通しているので、ここには来ない想定。

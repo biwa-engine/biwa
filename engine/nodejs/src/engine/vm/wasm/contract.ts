@@ -68,6 +68,7 @@ export type SyscallKind =
  * その名前を挙げて失敗する (不透明な LinkError にはしない)。
  */
 export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
+  // Content API の 3 つは第一引数が出力先の MessageArea の ui_id。
   /** Message Window に content を積む。描画は始まらない。 */
   sys_content_push_text: "cast",
   /** 積まれた content を出し始める。 */

@@ -22,7 +22,16 @@ export const ElementKind = {
   HorizontalGrid: 6,
   /** std 側の型名は `UiImage` (`std::game::image::Image` との衝突を避けるため)。 */
   Image: 7,
-  // 8 以降は Phase1 Step3 (Canvas, MessageArea) で使う番号として空けてある。
+  /**
+   * Canvas API の出力先。std の `GameCanvas` がこの ui_id を持つ。
+   * 子は持てない。
+   */
+  Canvas: 8,
+  /**
+   * Content API (ノベル表現) の出力先。Message Window (`TextBox`) を 1 つ持つ。
+   * std の `GameMessageArea` がこの ui_id を持つ。子は持てない。
+   */
+  MessageArea: 9,
   // Button は funcref 前提のため実装しない (`docs/ui-api.md`)。
 } as const;
 

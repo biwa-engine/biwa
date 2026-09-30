@@ -53,6 +53,7 @@ type SyscallHandler = (...args: never[]) => unknown;
 function createHandlers(): Record<string, SyscallHandler> {
   return {
     sys_content_push_text: (
+      uiId: number,
       text: string,
       speed: number,
       sizeUnit: number,
@@ -63,11 +64,22 @@ function createHandlers(): Record<string, SyscallHandler> {
       b: number,
       a: number,
     ) =>
-      pushContentText(text, speed, sizeUnit, sizeValue, weight, r, g, b, a),
+      pushContentText(
+        uiId,
+        text,
+        speed,
+        sizeUnit,
+        sizeValue,
+        weight,
+        r,
+        g,
+        b,
+        a,
+      ),
 
-    sys_content_flush: () => flushContent(),
+    sys_content_flush: (uiId: number) => flushContent(uiId),
 
-    sys_content_clear: () => clearContent(),
+    sys_content_clear: (uiId: number) => clearContent(uiId),
 
     sys_wait: () => waitForClick(),
 

@@ -755,6 +755,22 @@ TS 側の追従は後回しにしてよい (TS の経路が壊れる場合も明
 - **この段階の動作**: std・利用側はビルドが通るが、エンジンがまだ旧 syscall と
   旧 `on_new_game()` のままなので**実行はできない** (S3〜S5 で解消)。
 
+#### S2 実装結果 (完了)
+
+- `game/ui.biwa`: `GameWindow { canvas: Option[GameCanvas], message_area: Option[GameMessageArea] }`
+  に `[[lang="game_window"]]`。`GameCanvas` / `GameMessageArea` は `ui_id: Uint` だけを持つ。
+  旧 `MessageWindow` の `push_text` / `flush` / `clear` は `GameMessageArea` に移し、
+  syscall に `self.ui_id` を渡す。`wait()` は出力先を持たないので `GameWindow` に残した。
+- ホスト向けラッパー `game_window_new_for_host(canvas_id, message_area_id)`
+  (`[[host_export="__biwa_std_game_window_new"]]`) は 0 を `None` に読み替える (`ui_id_or_none`)。
+- `Game::new(window, name, characters, states, config)`。
+- Content syscall (`sys_content_push_text` / `flush` / `clear`) の第一引数を ui_id に
+  (TS / wasm の native と wasm の import 宣言)。
+- **`message_area` が `None` のとき**: `content.biwa` の `message_area_of()` が
+  `Option::unwrap` で止める (`abort` → wasm では trap)。出力先の無いテキストを黙って捨てるより、
+  構成の誤りに早く気づけることを優先した。`abort` はメッセージを持てないので、
+  メッセージ付きの panic ができたらそちらに寄せたい。
+
 ### S3. std + エンジン: UI Element `Canvas` / `MessageArea`
 
 - エンジン `ElementKind` に `Canvas = 8` / `MessageArea = 9` を追加。
@@ -765,6 +781,17 @@ TS 側の追従は後回しにしてよい (TS の経路が壊れる場合も明
 - std に UI Element の `Canvas` / `MessageArea` 構造体・ビルダー・`UiElement` の variant を追加。
 - **この段階の動作**: Element を置けるようになるだけで、まだ何も出力されない。
 
+#### S3 実装結果 (完了)
+
+- std: `element_kind_canvas() = 8` / `element_kind_message_area() = 9`、
+  `struct Canvas` / `struct MessageArea` (id + レイアウト系 property + background。子は持たない)、
+  `UiElement::Canvas` / `UiElement::MessageArea`、`game/ui/canvas.biwa` /
+  `game/ui/message_area.biwa` (ビルダーと `materialize()`、`Into[UiElement]`)。
+- エンジン: `ElementKind.Canvas = 8` / `MessageArea = 9`。
+  - `MessageArea` は作成時に `TextBox` を 1 つ持ち、自分の DOM (位置決めの基準) に入れる。
+    `UIObjects` は生きている MessageArea の集合を持ち、`messageArea(uiId)` で引ける。
+  - `Canvas` はまだ領域を占めるだけの空の div (中身は S6)。
+
 ### S4. エンジン: Content API を ui_id で出力先を選ぶ形にする
 
 - `api/message.ts` の push/flush/clear が ui_id を受け取り、`UIObjects` から
@@ -772,6 +799,25 @@ TS 側の追従は後回しにしてよい (TS の経路が壊れる場合も明
 - `contract.ts` / `handlers.ts` / TS の kernel の引数を追従。
 - クリック待ち (`waitForClick`) の「進行中の文字送りを畳む」は、
   対象を全 MessageArea に広げる (出力先が 1 つとは限らなくなるため)。
+
+#### S4 実装結果 (完了)
+
+- `api/message.ts`: push / flush / clear が `uiId` を取り、`ui.messageArea(uiId)` の
+  TextBox に出す。MessageArea でない ui_id は `[biwa] ui element N is not a MessageArea`
+  と叱って捨てる (中断しない syscall なので投げても届かない)。
+- `waitForClick` はすべての MessageArea を畳む (`ui.skipMessageAreas()`)。
+  文字送りは `main.ts` の唯一の Ticker コールバックから `ui.update()` ですべての MessageArea を進める。
+- wasm の `host.ts` の handler に `uiId` を追加 (`contract.ts` の区分は `cast` のまま、
+  Worker は引数を型を見ずに中継するので変更不要)。
+- **固定の Message Window を撤去**: `main.ts` の `TextBox(0, 460, 1280, 260)`・
+  message レイヤー・`ComponentRegistry` (これにしか使われていなかったので削除)・
+  `EngineContext.components` / `messageBoxId`。
+  `TextBox` は親 (MessageArea) を絶対配置で埋めるだけになり、枠の見た目 (背景・余白) は
+  持たなくなった。見た目は MessageArea の property が決める。
+- 確認: `tsc --noEmit` 無エラー。`~/test1` のコピーを `on_new_game(window)` に直し
+  (greeter はハブ取得物なので手元にスタブを置いた)、新しい std で wasm までビルド・検証が通ること、
+  `.wat` に `__biwa_std_game_window_new` の export と ui_id 付きの Content syscall が出ることを確認。
+  **実行はまだできない** (Worker が旧 `on_new_game()` を引数無しで呼ぶ。S5 で解消)。
 
 ### S5. エンジン: 暫定の配線 — 既定の Canvas / MessageArea で `on_new_game(window)` を呼ぶ
 
@@ -782,6 +828,11 @@ TS 側の追従は後回しにしてよい (TS の経路が壊れる場合も明
 
 - wasm: ui_id の採番は Worker 側 (`sys_ui_create` が `alloc`)。メインスレッドが先に
   作った既定 Element の ui_id を起動メッセージで Worker に渡し、Worker の採番をその後ろから始める。
+  注意: Worker の `alloc` の連番 (`worker.ts` の `nextObjectId`) は canvas オブジェクトの id と
+  ui_id で**共有**されている。ずらすならこの 1 本をずらす (または ui 用に分ける)。
+- 既定の MessageArea には、S4 で撤去した固定枠の見た目
+  (`left: 0; top: 460px; 1280x260`、`rgba(0,0,0,0.75)`、`padding: 24px 32px`) を
+  property として与えて再現する。
 - Worker は `entrypoint(on_new_game(__biwa_std_game_window_new(canvas_id, message_area_id)))`
   の順に呼ぶ。`game.ts` の `BiwaOnNewGame` を `(window) => BiwaGame` にし、
   ラッパーの型も足す。
