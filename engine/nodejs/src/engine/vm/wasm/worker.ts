@@ -17,31 +17,34 @@ import {
 } from "./contract";
 
 /** メインスレッドから来る起動指示。 */
-interface StartMessage {
+export interface StartMessage {
   kind: "start";
   /** 生成物 (`.wasm`) の URL。 */
   url: string;
   /** ブロッキング syscall の結果を受け取る共有バッファ。 */
   buffer: SharedArrayBuffer;
-  /** `on_new_game` に渡す `GameWindow` の出力先 (Canvas / MessageArea) の ui_id。0 は「無し」。 */
+}
+
+/**
+ * scene を始めてよいという知らせ。
+ *
+ * `app()` の Window の `scene_page_id` の Page に遷移したときにメインスレッドが送る。
+ * 値はその Page の `canvas` / `message_area` から引いた出力先の ui_id (0 は「無し」)。
+ */
+export interface SceneMessage {
+  kind: "scene";
   canvasId: number;
   messageAreaId: number;
-  /**
-   * Worker が採番を始める id。
-   *
-   * メインスレッドが起動時に作った Element (既定の出力先) の ui_id と重ならないよう、
-   * その次から振る (`alloc` の連番は canvas オブジェクトと ui_id で共有している)。
-   */
-  firstFreeId: number;
 }
+
+type HostMessage = StartMessage | SceneMessage;
 
 /** DOM の型と衝突させずに Worker のグローバルを触るための最小の窓口。 */
 interface WorkerScope {
   postMessage(message: WorkerMessage): void;
   addEventListener(
     type: "message",
-    listener: (event: { data: StartMessage }) => void,
-    options?: { once?: boolean },
+    listener: (event: { data: HostMessage }) => void,
   ): void;
 }
 
@@ -53,28 +56,60 @@ const ENTRYPOINT = "__biwa_entrypoint";
 /** コンパイラが初期 `Game` の組み立てに付ける固定の名前。 */
 const NEW_GAME = "__biwa_on_new_game";
 
+/** コンパイラが UI の root の組み立て (`fn app()`) に付ける固定の名前。 */
+const APP = "__biwa_app";
+
 /**
  * std が `GameWindow` を組み立てる入口として host export している名前。
  * (`[[host_export="__biwa_std_game_window_new"]]`、`library/std/src/game/ui.biwa`)
  */
 const GAME_WINDOW_NEW = "__biwa_std_game_window_new";
 
+/**
+ * std が `Window` を表示する入口として host export している名前。
+ * (`[[host_export="__biwa_std_window_show"]]`、`library/std/src/game/ui/window.biwa`)
+ */
+const WINDOW_SHOW = "__biwa_std_window_show";
+
 const decoder = new TextDecoder();
 
-scope.addEventListener(
-  "message",
-  (event) => {
-    void start(event.data);
-  },
-  { once: true },
-);
+/** 届いた scene 開始の知らせ。まだ誰も待っていなければここに置いておく。 */
+let sceneMessage: SceneMessage | null = null;
+let sceneWaiter: ((message: SceneMessage) => void) | null = null;
+
+scope.addEventListener("message", (event) => {
+  const message = event.data;
+  switch (message.kind) {
+    case "start":
+      void start(message);
+      return;
+    case "scene":
+      // 2 回目以降の遷移で何をするかは未定義 (セーブ・ロードが整っていないため)。
+      // メインスレッドは 1 回しか送らない。
+      if (sceneWaiter !== null) {
+        sceneWaiter(message);
+        sceneWaiter = null;
+      } else {
+        sceneMessage = message;
+      }
+      return;
+  }
+});
+
+/** scene 開始の知らせを待つ。 */
+function waitForScene(): Promise<SceneMessage> {
+  if (sceneMessage !== null) {
+    return Promise.resolve(sceneMessage);
+  }
+  return new Promise((resolve) => {
+    sceneWaiter = resolve;
+  });
+}
 
 async function start(message: StartMessage): Promise<void> {
   const channel = new SyscallChannel(message.buffer, (m) =>
     scope.postMessage(m),
   );
-
-  nextObjectId = message.firstFreeId;
 
   try {
     await run(message, channel);
@@ -85,7 +120,7 @@ async function start(message: StartMessage): Promise<void> {
 }
 
 async function run(
-  { url, canvasId, messageAreaId }: StartMessage,
+  { url }: StartMessage,
   channel: SyscallChannel,
 ): Promise<void> {
   const response = await fetch(url);
@@ -112,15 +147,28 @@ async function run(
   const imports = buildImports(module, channel, memory);
   instance = await WebAssembly.instantiate(module, imports);
 
+  // 足りないものがあれば、何かを始める前に名前で叱る。
+  const app = exported(instance, APP);
+  const windowShow = exported(instance, WINDOW_SHOW);
   const entrypoint = exported(instance, ENTRYPOINT);
   const newGame = exported(instance, NEW_GAME);
   const gameWindowNew = exported(instance, GAME_WINDOW_NEW);
 
   channel.report({ kind: "ready" });
 
-  // `Game` も `GameWindow` も WasmGC の struct なので JS からは組み立てられない。
-  // 出力先の束 `GameWindow` は std の host export に作らせ、
-  // それを渡してゲーム側の `fn on_new_game(window)` に `Game` を作らせる。
+  // 1. UI を出す。UI はすべてゲーム側 (`fn app() -> Window`) が決める。
+  //    `Window` も WasmGC の struct なので、表示は std の host export に任せる。
+  //    UI の syscall は止まらない (まとめて流す) ので、ここで流し切っておく。
+  windowShow(app());
+  channel.flush();
+
+  // 2. Window の `scene_page_id` の Page に遷移するまで待つ。
+  //    Worker はその間イベントループに帰るので、メインスレッドからの知らせを受け取れる。
+  const { canvasId, messageAreaId } = await waitForScene();
+
+  // 3. scene を始める。`Game` も `GameWindow` も JS からは組み立てられないので、
+  //    出力先の束 `GameWindow` は std の host export に作らせ、
+  //    それを渡してゲーム側の `fn on_new_game(window)` に `Game` を作らせる。
   entrypoint(newGame(gameWindowNew(canvasId, messageAreaId)));
 }
 
@@ -257,8 +305,8 @@ const LOCAL_SYSCALLS: Record<string, (...args: never[]) => unknown> = {
  * 採番は Worker 側で行う (`contract.ts` の `alloc`)。
  * 単調増加なので決定的で、セーブ・ロードの記録再生とも噛み合う。
  *
- * ui_id (`sys_ui_create`) もこの連番から振る。メインスレッドが起動時に作った
- * Element と重ならないよう、起動時に `firstFreeId` から始め直す (`start`)。
+ * ui_id (`sys_ui_create`) もこの連番から振る (UI Element を作るのはゲーム側だけなので、
+ * メインスレッドの採番と重なることは無い)。
  */
 let nextObjectId = 1;
 

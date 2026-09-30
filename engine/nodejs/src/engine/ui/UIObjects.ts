@@ -127,16 +127,6 @@ export class UIObjects {
   }
 
   /**
-   * まだ誰にも振っていない最初の ui_id。
-   *
-   * wasm ターゲットで、メインスレッドが先に作った Element (既定の出力先) と
-   * Worker の採番が重ならないよう、Worker に渡すのに使う。
-   */
-  firstFreeId(): number {
-    return this.nextId;
-  }
-
-  /**
    * `id` property (文字列) から ui_id を引く。
    *
    * Step3 (Page の `canvas`/`message_area`) やホスト側から使う想定。
@@ -169,7 +159,7 @@ export class UIObjects {
    *
    * Page が隠れた状態から見える状態になったときだけ知らせる (最初の Page として
    * 表示されたときも含む)。既に見えている Page への Link では知らせない。
-   * scene の起動 (`on_new_game(window)` → `scene main`) は §14 S8 でここに繋ぐ。
+   * `main.ts` はこれで scene を起動する (`on_new_game(window)` → `scene main`)。
    */
   onScenePageEntered(listener: (entry: ScenePageEntry) => void): void {
     this.scenePageListeners.push(listener);

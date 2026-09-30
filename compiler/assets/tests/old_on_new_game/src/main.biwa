@@ -9,12 +9,17 @@
 import std::game::Game;
 import std::game::config::Config;
 import std::game::window::game_window_new_for_host;
+import std::game::window::Window;
 
 struct MyGameState {}
 
 struct MyGameCharacters {}
 
 type MyGame = Game[MyGameCharacters, MyGameState];
+
+fn app() -> Window {
+  Window::new()
+}
 
 fn on_new_game() -> MyGame {
   Game::new(

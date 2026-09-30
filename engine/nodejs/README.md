@@ -11,12 +11,19 @@ Biwa エンジンの基盤エンジン実装 (Node.js 版)。
 ## ゲームコードとの境界
 
 コンパイラは Biwa のコードを **wasm または TypeScript** に変換する。
-ゲーム本体はエントリポイント `__biwa_entrypoint` (= `scene main`) として現れ、
-`biwa dev` が生成するスタブ `src/game/entry.ts` を経由して呼ばれる。
+ゲーム側の入口は `biwa dev` が生成するスタブ `src/game/entry.ts` を経由して呼ばれる。
+起動の流れはどちらのターゲットでも同じである:
+
+1. `__biwa_app` (= `fn app() -> Window`) を呼び、返った Window を std の
+   `__biwa_std_window_show` で表示する。**エンジンは UI を何も置かない**
+2. Window の `scene_page_id` の Page に遷移するのを待つ (`UIObjects.onScenePageEntered`)
+3. その Page の `canvas` / `message_area` の ui_id で `__biwa_std_game_window_new` を呼び、
+   `__biwa_on_new_game(window)` → `__biwa_entrypoint` (= `scene main`) を始める
+   (2 回目以降の遷移は未定義。いまは最初の 1 回だけ)
 
 ```
 src/main.ts
-  ├─ kind: "wasm"        → runWasm(url)                     ← Worker で wasm を走らせる
+  ├─ kind: "wasm"        → runWasm(url, scenePage)          ← Worker で wasm を走らせる
   └─ kind: "typescript"  → kernel.run(entrypoint(game))     ← scene main (generator)
 ```
 

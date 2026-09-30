@@ -1199,6 +1199,7 @@ mod tests {
             "test1" => &["std", "color", "greeter"],
             "greeter" => &["std", "color"],
             "old_on_new_game" => &["std"],
+            "missing_app" => &["std"],
             _ => &[],
         };
         if deps.is_empty() {
@@ -1593,6 +1594,13 @@ mod tests {
         // scene main から辿れないので、これが出ているのは
         // 単相化の roots に host export が正しく加わっている証拠でもある。
         assert!(wat.contains("(export \"host_export_demo\""), "{wat}");
+        // UI の root を組み立てる `fn app()`。ランタイムが起動時に最初に呼ぶ。
+        assert!(wat.contains("(export \"__biwa_app\""), "{wat}");
+        // それを表示する std の入口 (依存の host export)。
+        assert!(
+            wat.contains("(export \"__biwa_std_window_show\""),
+            "{wat}"
+        );
         // std の `GameWindow` を組み立てる入口。ランタイムはこれで作った値を
         // `on_new_game(window)` に渡す。std (依存) の host export なので、
         // test1 の生成物から出ていることがパッケージ越しの export の実用上の確認になる。
@@ -1723,6 +1731,29 @@ mod tests {
         assert!(
             result.is_err(),
             "`fn on_new_game()` without a `GameWindow` must be rejected"
+        );
+    }
+
+    /// `fn app() -> Window` を持たない playable package が拒否されること。
+    ///
+    /// ランタイムは起動時にまず `app()` を呼ぶ。フィクスチャの他の部分は正しく、
+    /// 失敗の理由は `app` の欠落だけである。
+    #[test]
+    fn rejects_playable_without_app() {
+        ensure_fixture_deps("missing_app");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/missing_app").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "a playable package without `fn app() -> Window` must be rejected"
         );
     }
 

@@ -8,6 +8,7 @@ import collections::Vec;
 import greeter::Describe;
 import std::game::Game;
 import std::game::window::GameWindow;
+import std::game::window::Window;
 import std::game::config::Config;
 // 装飾 API。埋め込み式で使うので、使う側が import する。
 import std::game::content::red;
@@ -201,6 +202,11 @@ type MyGame = Game[MyGameCharacters, MyGameState];
 // `Game` は開発者が決める値 (characters / states / config) を含むので、
 // ランタイムには組み立てられない。
 // `window` (出力先の束) はランタイムが組み立てて渡すので、そのまま `Game::new` に渡す。
+// UI の root。ランタイムが起動時に最初に呼び、返った `Window` を表示する。
+fn app() -> Window {
+  Window::new()
+}
+
 fn on_new_game(window: GameWindow) -> MyGame {
   Game::new(window, "test1", MyGameCharacters {}, MyGameState {}, Config::default())
 }

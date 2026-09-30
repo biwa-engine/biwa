@@ -32,6 +32,31 @@ fn game_window_new_for_host(canvas_id: Uint, message_area_id: Uint) -> GameWindo
   GameWindow::new()
 }
 
+// UI の root Element。ランタイムは起動時に `fn app() -> Window` を呼んで表示する。
+//
+// フィクスチャ版は中身を持たない (本物の std (`library/std`) は Page を持ち、
+// `show()` で UI syscall を発行する)。コンパイラの検査 (`app` のシグニチャ、host export)
+// に要る形だけを揃えている。
+[[lang="ui_window"]]
+struct Window {}
+
+impl Window {
+  fn new() -> Self {
+    Window {}
+  }
+
+  // 本物の std では UI syscall を発行して root の ui_id を返す。
+  fn show(self) -> Uint {
+    0
+  }
+}
+
+// ランタイムが `app()` の返した `Window` を表示するための入口。
+[[host_export="__biwa_std_window_show"]]
+fn window_show_for_host(window: Window) -> Uint {
+  window.show()
+}
+
 impl GameWindow {
   fn new() -> Self {
     Self {

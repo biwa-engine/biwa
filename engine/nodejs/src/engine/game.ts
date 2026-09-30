@@ -37,6 +37,26 @@ export type BiwaGameWindowNew = (
 ) => BiwaGameWindow;
 
 /**
+ * std の `Window` (UI の root Element)。エンジンは中身を見ない。
+ * `__biwa_app` が返したものを `__biwa_std_window_show` に渡すだけである。
+ */
+export type BiwaUiWindow = unknown;
+
+/**
+ * `__biwa_app` の型。ゲーム側の `fn app() -> Window`。
+ *
+ * ランタイムは起動時にまずこれを呼び、返った Window を表示する。
+ * UI はすべてゲーム側が決める (エンジンは既定の UI を置かない)。
+ */
+export type BiwaApp = () => BiwaUiWindow;
+
+/**
+ * std が host export する `__biwa_std_window_show` の型。
+ * UI の syscall を発行して Window を表示し、root の ui_id を返す。
+ */
+export type BiwaWindowShow = (window: BiwaUiWindow) => number;
+
+/**
  * `__biwa_entrypoint` の型。
  *
  * scene は generator function として出力される (`scene main` のシグネチャ
@@ -74,6 +94,10 @@ export type BiwaBackend =
     onNewGame: BiwaOnNewGame;
     /** std の `__biwa_std_game_window_new` (playable package のモジュールから再 export されている)。 */
     gameWindowNew: BiwaGameWindowNew;
+    /** ゲーム側の `fn app() -> Window`。 */
+    app: BiwaApp;
+    /** std の `__biwa_std_window_show` (同じく再 export されている)。 */
+    windowShow: BiwaWindowShow;
   }
   | {
     /** 生成物が wasm。Worker で走らせ、syscall はスレッドを跨ぐ。 */

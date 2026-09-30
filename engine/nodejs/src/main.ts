@@ -3,8 +3,7 @@ import { CanvasObjects } from "./engine/canvas/CanvasObjects";
 import { CanvasSurfaces } from "./engine/canvas/CanvasSurfaces";
 import type { BiwaBackend } from "./engine/game";
 import { Renderer } from "./engine/Renderer";
-import { UIObjects } from "./engine/ui/UIObjects";
-import { createDefaultOutputs } from "./engine/ui/defaultOutputs";
+import { type ScenePageEntry, UIObjects } from "./engine/ui/UIObjects";
 import { Kernel } from "./engine/vm/kernel";
 import { createSyscallTable } from "./engine/vm/handlers";
 import { runWasm } from "./engine/vm/wasm/host";
@@ -55,38 +54,41 @@ setEngineContext({
 
 document.title = `${backend.packageName} — Biwa`;
 
-// scene を映す Page (Window の `scene_page_id`) への遷移。
-// scene の起動 (`on_new_game(window)` → `scene main`) は §14 S8 でここに繋ぐ。
-// それまでは引けた出力先を知らせるだけである。
-ui.onScenePageEntered((entry) => {
-  console.info(
-    `[biwa] entered scene page "${entry.pageId}" (window ${entry.windowId}): ` +
-      `canvas=${entry.canvasId}, message_area=${entry.messageAreaId}`,
-  );
+// scene を映す Page (Window の `scene_page_id`) への最初の遷移。
+// その Page の `canvas` / `message_area` が scene の出力先になる。
+//
+// 2 回目以降の遷移で何をするかは未定義である (セーブ・ロードが整っていないため)。
+// いまは最初の 1 回で scene を始め、以降は何もしない (Promise は一度しか解決しない)。
+const scenePage = new Promise<ScenePageEntry>((resolve) => {
+  ui.onScenePageEntered(resolve);
 });
 
-// `on_new_game(window)` に渡す出力先。`app()` (§14 S8) ができるまでの暫定で、
-// エンジンが既定の Canvas / MessageArea を作る (`engine/ui/defaultOutputs.ts`)。
-const outputs = createDefaultOutputs(ui);
-
-await runGame(backend);
+// エンジンは UI を何も置かない。`app()` の Window が表示されて初めて画面に何かが出る。
+await runGame(backend, scenePage);
 
 /**
  * ゲームを走らせる。
  *
+ * 流れはどちらのターゲットでも同じである:
+ * `app()` の Window を表示 → `scene_page_id` の Page へ遷移するのを待つ →
+ * その出力先で `GameWindow` を作り `on_new_game(window)` → `scene main`。
+ *
  * どちらのターゲットでも、エンジンから見えるのは syscall の流れだけである。
  * 違うのは「どこで動いていて、どうやって中断するか」でしかない。
  */
-async function runGame(backend: BiwaBackend): Promise<void> {
+async function runGame(
+  backend: BiwaBackend,
+  scenePage: Promise<ScenePageEntry>,
+): Promise<void> {
   switch (backend.kind) {
     case "typescript": {
+      backend.windowShow(backend.app());
+      const { canvasId, messageAreaId } = await scenePage;
+
       // scene は generator なので、呼んだだけでは何も起きない。
       // kernel が next() で駆動し、yield された syscall を処理して結果を書き戻す。
       const kernel = new Kernel(createSyscallTable());
-      const window = backend.gameWindowNew(
-        outputs.canvasId,
-        outputs.messageAreaId,
-      );
+      const window = backend.gameWindowNew(canvasId, messageAreaId);
       await kernel.run(backend.entrypoint(backend.onNewGame(window)));
       return;
     }
@@ -95,10 +97,7 @@ async function runGame(backend: BiwaBackend): Promise<void> {
       // buildId を付けるのは、再ビルドで同じ URL のまま中身が変わるためである。
       const url = new URL(backend.url, location.href);
       url.searchParams.set("v", backend.buildId);
-      await runWasm(url.href, {
-        ...outputs,
-        firstFreeId: ui.firstFreeId(),
-      });
+      await runWasm(url.href, scenePage);
       return;
     }
   }

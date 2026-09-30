@@ -57,6 +57,10 @@ const ENTRYPOINT_NAME: &str = "__biwa_entrypoint";
 /// 最初の `Game` を組み立てる関数。TypeScript と同じ規約である。
 const NEW_GAME_NAME: &str = "__biwa_on_new_game";
 
+/// UI の root `Window` を組み立てる関数 (`fn app()`)。ランタイムが起動時に最初に呼ぶ。
+/// TypeScript と同じ規約である。
+const APP_NAME: &str = "__biwa_app";
+
 #[derive(Debug)]
 pub enum WasmError {
     /// エントリポイントが無い。
@@ -287,11 +291,16 @@ impl<'a> Emitter<'a> {
         let entry_name = &self.fn_names[&self.mono.instances[entry].key];
         let _ = writeln!(out, "  (export \"{ENTRYPOINT_NAME}\" (func ${entry_name}))");
 
-        if let Some(def_id) = self.well_known.get(biwac_scene::WellKnownSymbol::OnNewGame)
-            && let Some(inst) = self.mono.instances.iter().find(|i| i.key.def_id == def_id)
-        {
-            let name = &self.fn_names[&inst.key];
-            let _ = writeln!(out, "  (export \"{NEW_GAME_NAME}\" (func ${name}))");
+        for (symbol, export_name) in [
+            (biwac_scene::WellKnownSymbol::OnNewGame, NEW_GAME_NAME),
+            (biwac_scene::WellKnownSymbol::App, APP_NAME),
+        ] {
+            if let Some(def_id) = self.well_known.get(symbol)
+                && let Some(inst) = self.mono.instances.iter().find(|i| i.key.def_id == def_id)
+            {
+                let name = &self.fn_names[&inst.key];
+                let _ = writeln!(out, "  (export \"{export_name}\" (func ${name}))");
+            }
         }
 
         // `[[host_export="..."]]` が付いた関数。

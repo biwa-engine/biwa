@@ -34,6 +34,8 @@ pub enum ContractTy {
     Game,
     /// lang item `game_window`。
     GameWindow,
+    /// lang item `ui_window` (UI の root Element `Window`)。
+    Window,
 }
 
 impl ContractTy {
@@ -41,6 +43,7 @@ impl ContractTy {
         match self {
             Self::Game => biwac_lang_item::LangItem::Game,
             Self::GameWindow => biwac_lang_item::LangItem::GameWindow,
+            Self::Window => biwac_lang_item::LangItem::UiWindow,
         }
     }
 
@@ -48,6 +51,7 @@ impl ContractTy {
         match self {
             Self::Game => "`Game`",
             Self::GameWindow => "`GameWindow`",
+            Self::Window => "`Window`",
         }
     }
 }
@@ -148,6 +152,14 @@ well_known_symbol_table!(
     // `Game::new()` にそのまま渡す。
     OnNewGame, "on_new_game", WellKnownKind::Fn,
         &[ContractTy::GameWindow], ContractTy::Game,
+        SceneRequirement::RequiredInPlayable;
+
+    // UI の root を組み立てる。ランタイムは起動時にまずこれを呼び、返った `Window` を
+    // 表示する (std の host export `__biwa_std_window_show`)。UI はすべてゲーム側が決める。
+    // Window の `scene_page_id` の Page に遷移すると `on_new_game` → `main` が始まる。
+    //
+    // `main` より後ろに置くこと。wasm の単相化は表の先頭 (`main`) をエントリとして扱う。
+    App, "app", WellKnownKind::Fn, &[], ContractTy::Window,
         SceneRequirement::RequiredInPlayable;
 
     // 将来ここにイベントハンドラ的なものが増える想定:

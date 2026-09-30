@@ -6,7 +6,8 @@
 - **含まない**:
   - XML構文 (Phase2)
   - funcref / 関数を値として渡す仕組み (Phase3) → `Button`, `Window.on_event` は mdの記載通り未実装
-  - `fn app() -> Window` エントリポイント、`scene_page_id` による scene 自動起動 (`on_new_game(save_id)` 配線)。これは `cli/src/runtime.rs` / `biwac_driver` の固定エントリ (`__biwa_entrypoint` / `__biwa_on_new_game`) を置き換える別の大きい変更であり、Phase1の「syscall+std抽象化」の範囲を超えるため見送る
+  - ~~`fn app() -> Window` エントリポイント、`scene_page_id` による scene 自動起動~~ → §14 S8 で実装した。
+    `on_new_game(save_id)` (セーブ・ロード) は引き続き範囲外
 - **Phase1でのUIの出し方**: 既存の `scene` / 通常の `fn` から命令的に呼び出す (`Window::new()...` のような chain API)。`Link.on_click_link` はページ遷移先が文字列なので funcref 不要 → 実装対象に含めるが、遷移は「同じ Window 内での Page 表示切り替え」に留め、scene 起動は行わない
 
 ## 1. 要素範囲 (段階実装)
@@ -982,6 +983,51 @@ TS 側の追従は後回しにしてよい (TS の経路が壊れる場合も明
   「scene 開始」の指示 (ui_id 付き) を待つ。
 - S5 の既定 Canvas / MessageArea を消す。`~/test1` を `app()` の形に書き換えて確認。
 - **§0 の「含まない」から外れる**ので、ここで §0 も更新する。
+
+#### S8 実装結果 (完了)
+
+- コンパイラ:
+  - lang item `UiWindow` (`"ui_window"`, 型, ジェネリクス 0) を追加。`.biwameta` を v11 に。
+  - `biwac_scene` の既知シンボルに `App, "app", Fn, () -> Window, RequiredInPlayable` を追加
+    (S1 で表に引数・戻り値を持たせたので 1 行と `ContractTy::Window` を足すだけで済んだ)。
+    wasm の単相化は表の先頭 (`main`) をエントリとして扱うので、`main` より後ろに置いた。
+  - wasm / TS の両方で `__biwa_app` として export (`on_new_game` と同じ経路)。
+  - フィクスチャ std に中身の無い `Window` (`[[lang="ui_window"]]`) と
+    `__biwa_std_window_show` のラッパーを置き、test1 / old_on_new_game に `app()` を足した。
+    新フィクスチャ `missing_app` + `rejects_playable_without_app`
+    (`this playable package must define a function \`app\` in the root module`)。
+    `wasm_output` で `__biwa_app` と `__biwa_std_window_show` の export を確認。
+- std: `Window` に `[[lang="ui_window"]]`、`Window::show` のラッパー
+  `[[host_export="__biwa_std_window_show"]] fn window_show_for_host(window: Window) -> Uint`。
+- エンジン:
+  - `engine/ui/defaultOutputs.ts` (S5 の暫定) を削除。エンジンは UI を何も置かない。
+    `app()` の Window が表示されるまで DOM には何も出ない (ローディング画面は今は置かない)。
+  - wasm: Worker は `__biwa_app` → `__biwa_std_window_show` の後に UI の syscall を流し切り
+    (`channel.flush()`)、イベントループに帰ってメインスレッドからの `{ kind: "scene", canvasId, messageAreaId }`
+    を待つ。メインスレッドは `onScenePageEntered` の最初の 1 回でそれを送る。
+    受け取ったら `entrypoint(on_new_game(game_window_new(canvasId, messageAreaId)))`。
+    起動時の `canvasId` / `messageAreaId` / `firstFreeId` は不要になったので消した
+    (UI Element を作るのはゲーム側だけになり、Worker の採番は 1 からでよい)。
+  - TS (tier 2): 同じ流れ (`backend.app` / `backend.windowShow` を足し、CLI のエントリスタブも import)。
+    std が TS にビルドできない既存の制限のため通しの確認はしていない (`tsc` は通る)。
+  - 2 回目以降の scene 用 Page への遷移は未定義 (セーブ・ロードが整っていないため)。
+    いまは最初の 1 回で scene を始め、以降は何もしない。
+- `~/test1`: `fn app() -> Window { build_demo_window() }` を足し、scene main の中の
+  `#build_demo_window().show()` を消した。scene 用 Page は Canvas (上 460/720) と
+  MessageArea (下 260/720、黒背景・旧枠と同じ余白) を縦に積む形にし、戻る Link は外した。
+  位置指定の property が無いので、以前のようにメッセージ枠を背景の上に重ねてはいない。
+
+##### 動作確認 (`biwa dev` wasm + Playwright)
+
+- 起動直後は `app()` の Window だけが出る (エンジンの既定 UI は無い)。Link 以外をクリックしても
+  scene は始まらない。
+- "つぎへ" → "シーンへ" で scene が始まり、背景・立ち絵はその Page の Canvas、
+  テキストはその Page の MessageArea に出る。クリック送り・演出の同期 (途中のクリックで
+  まず演出を畳む)・装飾が効き、最後まで進めてもコンソールエラー無し。
+- `cargo test` (compiler / tools/lsp) green、`tsc --noEmit` 無エラー、`cli` ビルド可。
+
+これで Biwa Language 側から UI を一通り制御できるようになった
+(UI の構成・scene の出力先・scene の開始点をすべてゲーム側が決める)。
 
 ### S8 より後 (このロードマップの外)
 

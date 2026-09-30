@@ -32,6 +32,8 @@ import {
   failCall,
   type WorkerMessage,
 } from "./bridge";
+import type { ScenePageEntry } from "../../ui/UIObjects";
+import type { SceneMessage, StartMessage } from "./worker";
 
 /**
  * syscall の実装。
@@ -143,23 +145,16 @@ function createHandlers(): Record<string, SyscallHandler> {
 }
 
 /**
- * メインスレッドが用意して Worker に渡す、起動時の値。
- *
- * - `canvasId` / `messageAreaId`: `on_new_game` に渡す `GameWindow` の出力先の ui_id (0 は「無し」)
- * - `firstFreeId`: Worker が採番を始める id。メインスレッドが先に作った Element と重ならないように
- */
-export interface WasmStartOutputs {
-  canvasId: number;
-  messageAreaId: number;
-  firstFreeId: number;
-}
-
-/**
  * wasm の生成物を Worker で走らせ、終わるまで待つ。
  *
+ * Worker はまず `app()` の Window を表示し、`scenePage` が解決したら
+ * (= `scene_page_id` の Page に遷移したら) その出力先で scene を始める。
  * 返る Promise はゲームが最後まで進んだときに解決する。
  */
-export function runWasm(url: string, outputs: WasmStartOutputs): Promise<void> {
+export function runWasm(
+  url: string,
+  scenePage: Promise<ScenePageEntry>,
+): Promise<void> {
   if (
     typeof SharedArrayBuffer === "undefined" ||
     !globalThis.crossOriginIsolated
@@ -218,7 +213,14 @@ export function runWasm(url: string, outputs: WasmStartOutputs): Promise<void> {
       );
     });
 
-    worker.postMessage({ kind: "start", url, buffer, ...outputs });
+    const start: StartMessage = { kind: "start", url, buffer };
+    worker.postMessage(start);
+
+    // scene を映す Page に遷移したら、その出力先で scene を始めさせる。
+    void scenePage.then(({ canvasId, messageAreaId }) => {
+      const scene: SceneMessage = { kind: "scene", canvasId, messageAreaId };
+      worker.postMessage(scene);
+    });
   });
 }
 
