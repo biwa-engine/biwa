@@ -64,16 +64,17 @@ export class TextBox {
   private carry = 0;
 
   /**
-   * 親 (UI Element `MessageArea` の DOM) をそのまま埋める。
+   * 親 (UI Element `MessageArea` の DOM) の内側 (padding の内側) を埋める。
    *
    * 位置・大きさ・背景・余白は `MessageArea` の property (width / padding /
    * background_color ...) が決める。TextBox 自身は枠の見た目を持たない。
+   * 絶対配置にしないのは、親の padding を効かせるためである。
    */
   constructor() {
     this.element = document.createElement("div");
     this.element.style.cssText = `
-      position: absolute;
-      inset: 0;
+      width: 100%;
+      height: 100%;
       color: #fff;
       font-size: 18px;
       line-height: 1.8;

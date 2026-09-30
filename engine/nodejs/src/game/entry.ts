@@ -3,6 +3,7 @@
 import type {
   BiwaBackend,
   BiwaEntrypoint,
+  BiwaGameWindowNew,
   BiwaOnNewGame,
 } from "../engine/game";
 
@@ -13,11 +14,16 @@ const entrypoint: BiwaEntrypoint = function*(game) {
   return game;
 };
 
-const onNewGame: BiwaOnNewGame = () => ({
+const gameWindowNew: BiwaGameWindowNew = (canvasId, messageAreaId) => ({
+  canvas: canvasId,
+  message_area: messageAreaId,
+});
+
+const onNewGame: BiwaOnNewGame = (window) => ({
   name: "(no game)",
   characters: {},
   states: {},
-  window: { canvas: {}, message_window: {} },
+  window,
 });
 
 const backend: BiwaBackend = {
@@ -25,6 +31,7 @@ const backend: BiwaBackend = {
   packageName: "(no game)",
   entrypoint,
   onNewGame,
+  gameWindowNew,
 };
 
 export default backend;

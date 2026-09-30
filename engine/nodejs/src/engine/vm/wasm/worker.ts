@@ -23,6 +23,16 @@ interface StartMessage {
   url: string;
   /** ブロッキング syscall の結果を受け取る共有バッファ。 */
   buffer: SharedArrayBuffer;
+  /** `on_new_game` に渡す `GameWindow` の出力先 (Canvas / MessageArea) の ui_id。0 は「無し」。 */
+  canvasId: number;
+  messageAreaId: number;
+  /**
+   * Worker が採番を始める id。
+   *
+   * メインスレッドが起動時に作った Element (既定の出力先) の ui_id と重ならないよう、
+   * その次から振る (`alloc` の連番は canvas オブジェクトと ui_id で共有している)。
+   */
+  firstFreeId: number;
 }
 
 /** DOM の型と衝突させずに Worker のグローバルを触るための最小の窓口。 */
@@ -43,6 +53,12 @@ const ENTRYPOINT = "__biwa_entrypoint";
 /** コンパイラが初期 `Game` の組み立てに付ける固定の名前。 */
 const NEW_GAME = "__biwa_on_new_game";
 
+/**
+ * std が `GameWindow` を組み立てる入口として host export している名前。
+ * (`[[host_export="__biwa_std_game_window_new"]]`、`library/std/src/game/ui.biwa`)
+ */
+const GAME_WINDOW_NEW = "__biwa_std_game_window_new";
+
 const decoder = new TextDecoder();
 
 scope.addEventListener(
@@ -58,15 +74,20 @@ async function start(message: StartMessage): Promise<void> {
     scope.postMessage(m),
   );
 
+  nextObjectId = message.firstFreeId;
+
   try {
-    await run(message.url, channel);
+    await run(message, channel);
     channel.report({ kind: "exit" });
   } catch (e) {
     channel.report({ kind: "error", message: describe(e) });
   }
 }
 
-async function run(url: string, channel: SyscallChannel): Promise<void> {
+async function run(
+  { url, canvasId, messageAreaId }: StartMessage,
+  channel: SyscallChannel,
+): Promise<void> {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(
@@ -93,12 +114,14 @@ async function run(url: string, channel: SyscallChannel): Promise<void> {
 
   const entrypoint = exported(instance, ENTRYPOINT);
   const newGame = exported(instance, NEW_GAME);
+  const gameWindowNew = exported(instance, GAME_WINDOW_NEW);
 
   channel.report({ kind: "ready" });
 
-  // `Game` は WasmGC の struct なので JS からは組み立てられない。
-  // ゲーム側の `fn on_new_game()` に作らせて、そのまま参照を渡す。
-  entrypoint(newGame());
+  // `Game` も `GameWindow` も WasmGC の struct なので JS からは組み立てられない。
+  // 出力先の束 `GameWindow` は std の host export に作らせ、
+  // それを渡してゲーム側の `fn on_new_game(window)` に `Game` を作らせる。
+  entrypoint(newGame(gameWindowNew(canvasId, messageAreaId)));
 }
 
 /** 固定名の export を取り出す。無ければ名前を添えて叱る。 */
@@ -233,6 +256,9 @@ const LOCAL_SYSCALLS: Record<string, (...args: never[]) => unknown> = {
  * メインスレッドと往復せずに `create_object` の戻り値を返すため、
  * 採番は Worker 側で行う (`contract.ts` の `alloc`)。
  * 単調増加なので決定的で、セーブ・ロードの記録再生とも噛み合う。
+ *
+ * ui_id (`sys_ui_create`) もこの連番から振る。メインスレッドが起動時に作った
+ * Element と重ならないよう、起動時に `firstFreeId` から始め直す (`start`)。
  */
 let nextObjectId = 1;
 

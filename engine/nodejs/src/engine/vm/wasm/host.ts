@@ -142,11 +142,23 @@ function createHandlers(): Record<string, SyscallHandler> {
 }
 
 /**
+ * メインスレッドが用意して Worker に渡す、起動時の値。
+ *
+ * - `canvasId` / `messageAreaId`: `on_new_game` に渡す `GameWindow` の出力先の ui_id (0 は「無し」)
+ * - `firstFreeId`: Worker が採番を始める id。メインスレッドが先に作った Element と重ならないように
+ */
+export interface WasmStartOutputs {
+  canvasId: number;
+  messageAreaId: number;
+  firstFreeId: number;
+}
+
+/**
  * wasm の生成物を Worker で走らせ、終わるまで待つ。
  *
  * 返る Promise はゲームが最後まで進んだときに解決する。
  */
-export function runWasm(url: string): Promise<void> {
+export function runWasm(url: string, outputs: WasmStartOutputs): Promise<void> {
   if (
     typeof SharedArrayBuffer === "undefined" ||
     !globalThis.crossOriginIsolated
@@ -205,7 +217,7 @@ export function runWasm(url: string): Promise<void> {
       );
     });
 
-    worker.postMessage({ kind: "start", url, buffer });
+    worker.postMessage({ kind: "start", url, buffer, ...outputs });
   });
 }
 

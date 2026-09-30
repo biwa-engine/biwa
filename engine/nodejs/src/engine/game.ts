@@ -10,11 +10,31 @@ export interface BiwaGame {
   name: string;
   characters: unknown;
   states: unknown;
-  window: {
-    canvas: unknown;
-    message_window: unknown;
-  };
+  window: BiwaGameWindow;
 }
+
+/**
+ * std の `GameWindow` (出力先の Canvas / MessageArea の ui_id の束)。
+ *
+ * エンジンは中身を見ない。`__biwa_std_game_window_new` で作り、
+ * そのまま `on_new_game` に渡すだけである
+ * (wasm では JS から作れない WasmGC の struct でもある)。
+ */
+export interface BiwaGameWindow {
+  canvas: unknown;
+  message_area: unknown;
+}
+
+/**
+ * std が host export する `__biwa_std_game_window_new` の型。
+ *
+ * 引数は出力先の UI Element (`Canvas` / `MessageArea`) の ui_id。
+ * **0 は「無し」**を表す (std 側で `None` に読み替える。ui_id は 1 から振られる)。
+ */
+export type BiwaGameWindowNew = (
+  canvasId: number,
+  messageAreaId: number,
+) => BiwaGameWindow;
 
 /**
  * `__biwa_entrypoint` の型。
@@ -30,12 +50,13 @@ export type BiwaEntrypoint = (
 /**
  * `__biwa_on_new_game` の型。
  *
- * ゲーム開始時の `Game` はゲーム側の `fn on_new_game() -> Game[..]` が組み立てる。
- * エンジンが組み立てられないのは、`characters` と `states` の型を
+ * ゲーム開始時の `Game` はゲーム側の `fn on_new_game(window: GameWindow) -> Game[..]`
+ * が組み立てる。エンジンが組み立てられないのは、`characters` と `states` の型を
  * ゲーム開発者が決めるからである
  * (wasm ではさらに、`Game` が JS から作れない WasmGC の struct でもある)。
+ * 出力先の束 `window` だけはエンジンが用意して渡す。
  */
-export type BiwaOnNewGame = () => BiwaGame;
+export type BiwaOnNewGame = (window: BiwaGameWindow) => BiwaGame;
 
 /**
  * ゲーム本体の受け渡し方。`biwa dev` が生成する `src/game/entry.ts` の形である。
@@ -51,6 +72,8 @@ export type BiwaBackend =
     packageName: string;
     entrypoint: BiwaEntrypoint;
     onNewGame: BiwaOnNewGame;
+    /** std の `__biwa_std_game_window_new` (playable package のモジュールから再 export されている)。 */
+    gameWindowNew: BiwaGameWindowNew;
   }
   | {
     /** 生成物が wasm。Worker で走らせ、syscall はスレッドを跨ぐ。 */

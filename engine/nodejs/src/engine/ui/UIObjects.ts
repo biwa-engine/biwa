@@ -102,6 +102,16 @@ export class UIObjects {
   }
 
   /**
+   * まだ誰にも振っていない最初の ui_id。
+   *
+   * wasm ターゲットで、メインスレッドが先に作った Element (既定の出力先) と
+   * Worker の採番が重ならないよう、Worker に渡すのに使う。
+   */
+  firstFreeId(): number {
+    return this.nextId;
+  }
+
+  /**
    * `id` property (文字列) から ui_id を引く。
    *
    * Step3 (Page の `canvas`/`message_area`) やホスト側から使う想定。
@@ -512,11 +522,12 @@ function createDom(kind: number): HTMLElement {
         position: "relative",
       });
     case ElementKind.MessageArea:
-      // 中に Message Window (`TextBox`) を入れる。TextBox は絶対配置で
-      // この要素を埋めるので、ここを位置決めの基準にする。
-      // 大きさ・背景・余白は property が決める。
+      // 中に Message Window (`TextBox`) を入れ、TextBox が padding の内側を埋める。
+      // 大きさ・背景・余白は property が決める。padding を足しても
+      // width / height で決めた枠の大きさが変わらないよう border-box にする。
       return styled(document.createElement("div"), {
         position: "relative",
+        boxSizing: "border-box",
       });
     default:
       // `isKnownElementKind` を先に通しているので、ここには来ない想定。

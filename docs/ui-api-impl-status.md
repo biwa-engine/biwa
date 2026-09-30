@@ -844,6 +844,43 @@ TS 側の追従は後回しにしてよい (TS の経路が壊れる場合も明
 - TS: CLI の TS 用エントリスタブ (`cli/src/runtime.rs`) にラッパーの import を足す
   (§13 により playable package のモジュールから再 export されている)。後回し可。
 
+#### S5 実装結果 (完了)
+
+- `engine/ui/defaultOutputs.ts` (**暫定、S8 でファイルごと消す**): 起動時に
+  Window → Page → (Canvas, MessageArea) を作り、その ui_id を返す。
+  位置指定の property が無いので、Page の中に Canvas (高さ 460/720) と
+  MessageArea (高さ 260/720) を縦に積んで旧固定枠の位置を再現し、
+  MessageArea に `background_color` rgba(0,0,0,0.75) と padding (24/32px を幅に対する % で) を与えた。
+  ゲーム側の Element より先に作るので、ゲームの Window はこれより前面に来る。
+- 枠の見た目を property で決めるため、S4 の `TextBox` の配置を直した:
+  絶対配置 (`inset: 0`) だと親の padding が効かないので、通常フローで
+  `width/height: 100%` にし、`MessageArea` の DOM を `box-sizing: border-box` にした
+  (padding を足しても width / height で決めた枠の大きさが変わらない)。
+- wasm: 起動メッセージに `canvasId` / `messageAreaId` / `firstFreeId` を載せる
+  (`runWasm(url, outputs)`、`UIObjects.firstFreeId()`)。Worker は `alloc` の連番を
+  `firstFreeId` から始め、`entrypoint(on_new_game(__biwa_std_game_window_new(canvasId, messageAreaId)))`
+  の順に呼ぶ。
+- TS (tier 2): `BiwaBackend` (typescript) に `gameWindowNew` を足し、`main.ts` で同じ順に呼ぶ。
+  CLI の TS 用エントリスタブも `__biwa_std_game_window_new` を import する。
+  std が TS にビルドできない既存の制限のため通しの確認はしていない (`tsc` は通る)。
+- `game.ts`: `BiwaGame.window` を `BiwaGameWindow { canvas, message_area }` に、
+  `BiwaOnNewGame` を `(window) => BiwaGame` に、`BiwaGameWindowNew` を追加。
+- `~/test1`: `on_new_game(window: GameWindow)` → `Game::new(window, ...)`。
+
+##### 動作確認 (`biwa dev` wasm + Playwright headless Chromium)
+
+- 依存の `greeter` はハブからの取得物だが、この環境ではハブ URL が未設定で取得できなかったので、
+  `~/test1/.biwa_build/deps/greeter` (ビルドキャッシュ) に `Character` に `greet()` を生やすだけの
+  スタブを置いて代用した (`$biwa.greet()` の出力は本物と違う)。
+- 既定の MessageArea は旧固定枠と同じ位置・大きさ (host 内 y=460, 1280x260)、
+  背景 `rgba(0, 0, 0, 0.75)`、padding `24px 32px` になっている。
+- テキストが出る / クリックで進む / 演出と同期したテキストの途中のクリックで
+  まず演出と文字送りを畳み、次のクリックで進む / 装飾 (色・太字・大きさ・速度) が効く。
+- UI の Link (`つぎへ` ⇄ `もどる`) で Page が切り替わり、そのクリックではテキストが進まない。
+- 最後まで進めてもコンソールエラー・pageerror 無し。
+- 以前との違い: 旧固定枠は最初のテキストが来るまで `display: none` だったが、
+  既定の MessageArea は最初から背景が見えている (起動直後にテキストが来るので実質差は無い)。
+
 ### S6. Canvas API を ui_id で出力先を選ぶ形にする
 
 - `sys_create_object` などの第一引数を ui_id にし、std は `game.window.canvas` から取る。

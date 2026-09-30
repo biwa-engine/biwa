@@ -3,6 +3,7 @@ import { CanvasObjects } from "./engine/canvas/CanvasObjects";
 import type { BiwaBackend } from "./engine/game";
 import { Renderer } from "./engine/Renderer";
 import { UIObjects } from "./engine/ui/UIObjects";
+import { createDefaultOutputs } from "./engine/ui/defaultOutputs";
 import { Kernel } from "./engine/vm/kernel";
 import { createSyscallTable } from "./engine/vm/handlers";
 import { runWasm } from "./engine/vm/wasm/host";
@@ -49,6 +50,10 @@ setEngineContext({
 
 document.title = `${backend.packageName} — Biwa`;
 
+// `on_new_game(window)` に渡す出力先。`app()` (§14 S8) ができるまでの暫定で、
+// エンジンが既定の Canvas / MessageArea を作る (`engine/ui/defaultOutputs.ts`)。
+const outputs = createDefaultOutputs(ui);
+
 await runGame(backend);
 
 /**
@@ -63,7 +68,11 @@ async function runGame(backend: BiwaBackend): Promise<void> {
       // scene は generator なので、呼んだだけでは何も起きない。
       // kernel が next() で駆動し、yield された syscall を処理して結果を書き戻す。
       const kernel = new Kernel(createSyscallTable());
-      await kernel.run(backend.entrypoint(backend.onNewGame()));
+      const window = backend.gameWindowNew(
+        outputs.canvasId,
+        outputs.messageAreaId,
+      );
+      await kernel.run(backend.entrypoint(backend.onNewGame(window)));
       return;
     }
     case "wasm": {
@@ -71,7 +80,10 @@ async function runGame(backend: BiwaBackend): Promise<void> {
       // buildId を付けるのは、再ビルドで同じ URL のまま中身が変わるためである。
       const url = new URL(backend.url, location.href);
       url.searchParams.set("v", backend.buildId);
-      await runWasm(url.href);
+      await runWasm(url.href, {
+        ...outputs,
+        firstFreeId: ui.firstFreeId(),
+      });
       return;
     }
   }
