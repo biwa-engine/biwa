@@ -96,6 +96,18 @@ export const PropertyKind = {
    * ui_id を引けるようにするのがエンジン側の `UIObjects` の役目である。
    */
   Id: 106,
+  /**
+   * Page が scene を映すときの Canvas API の出力先。Page の中の `Canvas` の `id` 文字列。
+   * Page 以外には付けられない。
+   */
+  PageCanvas: 107,
+  /** Page が scene を映すときの Content API の出力先。`MessageArea` の `id` 文字列。 */
+  PageMessageArea: 108,
+  /**
+   * Window の、scene を映す Page の page_id。Window 以外には付けられない。
+   * この Page に遷移したら、その Page の `canvas` / `message_area` から出力先を引く (§14 S7/S8)。
+   */
+  WindowScenePageId: 109,
 } as const;
 
 const NUMERIC_PROPERTY_KINDS = new Set<number>([
@@ -124,6 +136,9 @@ const STRING_PROPERTY_KINDS = new Set<number>([
   PropertyKind.BackgroundImage,
   PropertyKind.Image,
   PropertyKind.Id,
+  PropertyKind.PageCanvas,
+  PropertyKind.PageMessageArea,
+  PropertyKind.WindowScenePageId,
 ]);
 
 export function isKnownNumericProperty(kind: number): boolean {

@@ -55,6 +55,16 @@ setEngineContext({
 
 document.title = `${backend.packageName} — Biwa`;
 
+// scene を映す Page (Window の `scene_page_id`) への遷移。
+// scene の起動 (`on_new_game(window)` → `scene main`) は §14 S8 でここに繋ぐ。
+// それまでは引けた出力先を知らせるだけである。
+ui.onScenePageEntered((entry) => {
+  console.info(
+    `[biwa] entered scene page "${entry.pageId}" (window ${entry.windowId}): ` +
+      `canvas=${entry.canvasId}, message_area=${entry.messageAreaId}`,
+  );
+});
+
 // `on_new_game(window)` に渡す出力先。`app()` (§14 S8) ができるまでの暫定で、
 // エンジンが既定の Canvas / MessageArea を作る (`engine/ui/defaultOutputs.ts`)。
 const outputs = createDefaultOutputs(ui);

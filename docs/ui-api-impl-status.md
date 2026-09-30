@@ -935,6 +935,41 @@ TS 側の追従は後回しにしてよい (TS の経路が壊れる場合も明
 - エンジン側で「scene_page_id の Page に遷移した」ことを検知し、その Page の
   property から `resolveId` で ui_id を引けるところまで (まだ scene は起動しない)。
 
+#### S7 実装結果 (完了)
+
+- property kind (文字列帯の続き): `PageCanvas = 107` / `PageMessageArea = 108` /
+  `WindowScenePageId = 109` (`api/ui.ts` と std の `property_kind_*` で対)。
+- std: `Page` に `canvas: Option[String]` / `message_area: Option[String]` とビルダー
+  `.canvas(id)` / `.message_area(id)`、`Window` に `scene_page_id: Option[String]` と
+  `.scene_page_id(page_id)`。発行は共通の `set_optional_string_property`。
+  `Window::show()` は `scene_page_id` を **Page を積む前**に設定する
+  (最初の Page は積まれた時点で表示されるので、その時点で分かっている必要がある)。
+- エンジン (`UIObjects`):
+  - `canvas` / `message_area` は Page、`scene_page_id` は Window にしか付けられない
+    (違えば名指しで叱る)。
+  - Page が**隠れた状態から見える状態になったとき** (最初の Page として表示された時も、
+    Link での遷移も) に、それが所属 Window の `scene_page_id` なら、その Page の
+    `canvas` / `message_area` を `id` から引いて `onScenePageEntered` の購読者に
+    `ScenePageEntry { windowId, pageId, canvasId, messageAreaId }` を知らせる。
+    既に見えている Page への遷移では知らせない。`scene_page_id` が後から設定された場合は、
+    その時点で見えている Page を確かめる。
+  - 引けない id・種類違い (Canvas でない / MessageArea でない) は名指しで叱って **0 (「無し」)**。
+    未設定も 0。0 はそのまま `__biwa_std_game_window_new` に渡せる。
+  - `main.ts` の購読者は今は `console.info` で知らせるだけ (S8 で scene の起動に繋ぐ)。
+- `~/test1`: デモ Window に scene 用の Page (`"scene"`: もどる Link・Canvas `id("canvas")`・
+  MessageArea `id("message_area")`、`.canvas("canvas").message_area("message_area")`) を足し、
+  Window に `.scene_page_id("scene")`、"second" に "シーンへ" の Link を足した。
+
+##### 動作確認 (`biwa dev` wasm + Playwright)
+
+- "つぎへ" → "シーンへ" で `[biwa] entered scene page "scene" (window 8): canvas=19, message_area=20`。
+  main に戻って再び scene に入るともう一度知らせ、scene 以外への遷移では知らせない。
+  Link のクリックでテキストは進まない。コンソールエラー無し。
+- 一時的に `.canvas("nope").message_area("canvas")` にして、
+  `canvas refers to "nope", but no ui element has that id` と
+  `message_area refers to "canvas" (ui element 19), which is not a MessageArea` が出て
+  `canvas=0, message_area=0` で知らせることを確認 (確認後に元へ戻した)。
+
 ### S8. `fn app() -> Window` エントリポイント
 
 - コンパイラ: `biwac_scene` の既知シンボルに `app` (`() -> Window`, playable で必須) を追加し、
