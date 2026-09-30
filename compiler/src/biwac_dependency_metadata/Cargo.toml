@@ -8,4 +8,5 @@ biwac_base = { path = "../biwac_base"}
 biwac_hash = { path = "../biwac_hash"}
 biwac_hir = { path = "../biwac_hir"}
 biwac_lang_item = { path = "../biwac_lang_item"}
+biwac_host_export = { path = "../biwac_host_export"}
 biwac_span = { path = "../biwac_span"}

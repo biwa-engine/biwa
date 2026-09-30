@@ -12,6 +12,9 @@ pub enum DepMetadataError {
     SymbolIndexOutOfBounds { index: u32, sym_count: u32 },
     FileIndexOutOfBounds { index: u32, file_count: u32 },
     BodySizeMismatch { declared: u32, available: usize },
+    /// ヘッダに host export のフラグが立っているのに、
+    /// ボディが fn でないか export 名を持っていない。
+    InconsistentHostExport { sym_idx: u32 },
 }
 
 impl std::fmt::Display for DepMetadataError {
@@ -59,6 +62,12 @@ impl std::fmt::Display for DepMetadataError {
                 write!(
                     f,
                     "body size {declared} exceeds available bytes {available}"
+                )
+            }
+            Self::InconsistentHostExport { sym_idx } => {
+                write!(
+                    f,
+                    "symbol {sym_idx} is flagged as a host export but has no export name"
                 )
             }
         }

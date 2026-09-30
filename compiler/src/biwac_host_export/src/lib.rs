@@ -11,11 +11,14 @@ use biwac_span::{Span, ValDefId};
 // が固定名・固定シグネチャの特別扱いなのに対し、こちらは属性で好きな関数を
 // 好きな名前で export できる汎用の仕組みである。
 //
-// 対象は現状トップレベルの `fn` のみで、自パッケージ内で完結する。
-// 依存パッケージ (例えば std) が host_export した関数を、
-// その依存元のビルドでも export する仕組みはまだ無い
-// (lang item のように `.biwameta` に載せて越境させる必要があるが、
-//  lang item ほど汎用の需要が無いため、いったん自パッケージ限定にしてある)。
+// 対象は現状トップレベルの `fn` のみ。
+//
+// 依存パッケージ (例えば std) が host_export した関数も、依存元のビルドで
+// export される。`.biwameta` のシンボルヘッダに host export のフラグが、
+// fn のボディに export 名が載っており、依存元は名前解決の段階で
+// 推移閉包すべての依存からそれを読み戻してこの表に加える
+// (lang item と同じ経路)。表の `ValDefId` が自パッケージのものか
+// 依存のものかは `def_id.pkg().is_self()` で区別できる。
 
 #[derive(Debug, Clone, Default)]
 pub struct HostExportTable {
@@ -29,17 +32,23 @@ pub enum HostExportError {
     /// 同一の定義に `[[host_export="..."]]` が 2 回付いた場合は
     /// biwac_attribute の検証パス (`AttrError::DuplicatedAttribute`) が
     /// 別に検出するので、ここに来るのは必ず異なる定義同士である。
+    ///
+    /// 依存パッケージ由来の登録は位置を持たないので、`span` はダミーになりうる。
     DuplicatedName {
         name: String,
         previous: ValDefId,
         span: Span,
     },
+    /// 依存パッケージの `.biwameta` から host export を読み戻せなかった。
+    BrokenDependencyMetadata { package: String, reason: String },
 }
 
 impl HostExportError {
-    pub fn span(&self) -> &Span {
+    /// ソース上の位置。依存パッケージ由来で位置を持たない場合は `None`。
+    pub fn span(&self) -> Option<&Span> {
         match self {
-            Self::DuplicatedName { span, .. } => span,
+            Self::DuplicatedName { span, .. } if !span.is_dummy() => Some(span),
+            Self::DuplicatedName { .. } | Self::BrokenDependencyMetadata { .. } => None,
         }
     }
 
@@ -48,6 +57,21 @@ impl HostExportError {
             Self::DuplicatedName { name, .. } => {
                 format!("host export name \"{name}\" is used by more than one function")
             }
+            Self::BrokenDependencyMetadata { package, reason } => {
+                format!("failed to read host exports of the dependency `{package}`: {reason}")
+            }
+        }
+    }
+
+    /// 補足。重複の相手が依存パッケージにあるときにそれを伝える。
+    pub fn note(&self) -> Option<String> {
+        match self {
+            Self::DuplicatedName { previous, .. } if !previous.pkg().is_self() => Some(
+                "the other function is defined in a dependency package; \
+                 host export names must be unique across the whole program"
+                    .to_string(),
+            ),
+            _ => None,
         }
     }
 }
@@ -61,8 +85,18 @@ impl HostExportTable {
         self.by_def.get(&def_id).map(String::as_str)
     }
 
+    /// export 名の順に返す。
+    ///
+    /// 単相化の roots や生成物の export の並びがビルドごとに揺れないよう、
+    /// `HashMap` の順序をそのまま見せない。
     pub fn iter(&self) -> impl Iterator<Item = (ValDefId, &str)> + '_ {
-        self.by_def.iter().map(|(def_id, name)| (*def_id, name.as_str()))
+        let mut entries: Vec<(ValDefId, &str)> = self
+            .by_def
+            .iter()
+            .map(|(def_id, name)| (*def_id, name.as_str()))
+            .collect();
+        entries.sort_by(|a, b| a.1.cmp(b.1));
+        entries.into_iter()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -128,7 +162,19 @@ mod tests {
                 assert_eq!(name, "foo");
                 assert_eq!(previous, def(0));
             }
+            other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn iter_is_ordered_by_export_name() {
+        let mut table = HostExportTable::new();
+        table.insert(def(0), "zeta".to_string(), Span::dummy()).unwrap();
+        table.insert(def(1), "alpha".to_string(), Span::dummy()).unwrap();
+        table.insert(def(2), "mid".to_string(), Span::dummy()).unwrap();
+
+        let names: Vec<&str> = table.iter().map(|(_, n)| n).collect();
+        assert_eq!(names, ["alpha", "mid", "zeta"]);
     }
 
     #[test]

@@ -15,7 +15,7 @@ pub use format::BIWAC_DEPENDENCY_METADATA_FORMAT_VERSION;
 use format::{
     BIWAC_DEPENDENCY_METADATA_MAGIC, DiskBodyOffset, DiskDepSvh, DiskExternalSymbol, DiskFileIndex,
     DiskSourceInfo, DiskSpan, DiskSymbolHeader, DiskSymbolIndex, DiskSymbolKind, DiskTy,
-    DiskTyHeader, DiskTyKind, DiskVisibility,
+    DiskTyHeader, DiskTyKind, DiskVisibility, SYMBOL_FLAG_HOST_EXPORT,
 };
 use lang_item::DiskLangItem;
 use table::{LazyDiskVec, SourceFileTable, StringTable};
@@ -64,6 +64,7 @@ impl DepMetadata {
         source_holder: &biwac_base::SourceHolder,
         interner: &biwac_base::IdentInterner,
         lang_item_table: &biwac_lang_item::LangItemTable,
+        host_exports: &biwac_host_export::HostExportTable,
         dep_svhs: &[(biwac_base::PackageId, biwac_hash::Hash64)],
     ) -> (Self, crate::SymbolIndexMap) {
         let mut symbol_index = crate::SymbolIndexMap::new();
@@ -295,6 +296,9 @@ impl DepMetadata {
             name: &'h biwac_hir::Ident,
             signature: &'h biwac_hir::FnSignature,
             impl_genargs: &'h [biwac_hir::GenArgDef],
+            // `[[host_export="..."]]` の export 名。
+            // 属性の付与対象はトップレベルの `fn` だけなので、assoc fn には無い。
+            host_export: Option<&'h str>,
         }
         let mut top_fn_items: Vec<TopFnItem> = hir
             .vals
@@ -312,6 +316,7 @@ impl DepMetadata {
                     name,
                     signature: sig,
                     impl_genargs: ig,
+                    host_export: host_exports.get(*def_id),
                 })
             })
             .collect();
@@ -510,10 +515,16 @@ impl DepMetadata {
                          kind: DiskSymbolKind,
                          body: SymbolBody| {
             let offset = builder.push(&body);
+            // フラグはボディから導く。別々に渡すと食い違いうるため。
+            let flags = match &body {
+                SymbolBody::Fn(d) if !d.host_export.0.is_empty() => SYMBOL_FLAG_HOST_EXPORT,
+                _ => 0,
+            };
             hdrs.push(DiskSymbolHeader {
                 kind: kind as u32,
                 vis: DiskVisibility::Public as u32,
                 offset,
+                flags,
             });
             let lock = OnceLock::new();
             let _ = lock.set(body);
@@ -822,6 +833,7 @@ impl DepMetadata {
                 item.impl_genargs,
                 Some(&item.impl_self_ty),
                 item.trait_of.as_ref(),
+                None,
                 &HashMap::new(),
                 &ty_to_sym,
                 &mod_to_file_idx,
@@ -851,6 +863,7 @@ impl DepMetadata {
                 item.impl_genargs,
                 None,
                 None,
+                item.host_export,
                 &HashMap::new(),
                 &ty_to_sym,
                 &mod_to_file_idx,
@@ -981,6 +994,7 @@ impl DepMetadata {
                     &decl.signature,
                     &[],
                     decl.signature.impl_self_ty.as_ref(),
+                    None,
                     None,
                     &trait_gen_ord,
                     &ty_to_sym,
@@ -1479,6 +1493,13 @@ impl DepMetadata {
                     for t in &d.trait_of.0 {
                         self.svh_ty(&mut h, t);
                     }
+                    // host export もインタフェースである。
+                    // 依存側の成果物に export として現れるため、
+                    // 付け外し・改名で依存側を建て直さなければならない。
+                    h.write_usize(d.host_export.0.len());
+                    for n in &d.host_export.0 {
+                        h.write_str(self.get_str(*n).unwrap_or(""));
+                    }
                 }
                 SymbolBody::Trait(d) => {
                     h.write_str("trait");
@@ -1644,6 +1665,47 @@ impl DepMetadata {
                 biwac_span::DefId::new(pkg_id, biwac_span::PackageLocalDefId::new(li.sym_idx.0));
             Some((item, def_id))
         })
+    }
+
+    /// このパッケージが `[[host_export="..."]]` で export した関数の一覧。
+    ///
+    /// `pkg_id` は依存側が割り当てたパッケージ ID。[`Self::lang_items`] と同じく
+    /// sym_idx がそのまま `PackageLocalDefId` になる。
+    ///
+    /// ヘッダのフラグで絞るので、host export でない関数のボディはデコードしない。
+    /// フラグが立っているのに export 名が読めない場合はファイルが壊れているので、
+    /// その項目を黙って飛ばさずエラーにする。
+    pub fn host_exports(
+        &self,
+        pkg_id: biwac_base::PackageId,
+    ) -> Result<Vec<(biwac_span::ValDefId, &str)>, DepMetadataError> {
+        let mut out = Vec::new();
+        for (sym_idx, hdr) in self.sym_hdrs.iter().enumerate() {
+            if !hdr.is_host_export() {
+                continue;
+            }
+            let name = match self.get_symbol_body(sym_idx)? {
+                SymbolBody::Fn(d) => match d.host_export.0.first() {
+                    Some(n) => self.get_str(*n)?,
+                    None => {
+                        return Err(DepMetadataError::InconsistentHostExport {
+                            sym_idx: sym_idx as u32,
+                        });
+                    }
+                },
+                _ => {
+                    return Err(DepMetadataError::InconsistentHostExport {
+                        sym_idx: sym_idx as u32,
+                    });
+                }
+            };
+            let def_id = biwac_span::ValDefId::new(biwac_span::DefId::new(
+                pkg_id,
+                biwac_span::PackageLocalDefId::new(sym_idx as u32),
+            ));
+            out.push((def_id, name));
+        }
+        Ok(out)
     }
 
     /// 外部パッケージの fn シンボル1つを ValDefKind に変換する。
@@ -2820,6 +2882,8 @@ fn impl_encode_fn_data(
     impl_self_ty: Option<&biwac_hir::Ty>,
     // trait impl の項目なら、その trait への参照 (ジェネリック引数込み)。
     trait_of: Option<&biwac_hir::Ty>,
+    // `[[host_export="..."]]` の export 名。付いていなければ None。
+    host_export: Option<&str>,
     // シグニチャに現れる `GenDefId` の序数。
     //
     // trait の項目だけがこれを使う。`Self` と trait のジェネリック引数が
@@ -2967,5 +3031,6 @@ fn impl_encode_fn_data(
         args: disk_args,
         rty,
         impl_self_ty: disk_impl_self_ty,
+        host_export: DiskVec(host_export.map(|n| strings.push(n)).into_iter().collect()),
     }
 }

@@ -132,9 +132,10 @@ impl<'p> NameResolver<'p> {
 
         // host export の回収。
         //
-        // lang item と同じく def collection の直後に行う。
+        // lang item と同じく def collection の直後に行い、依存パッケージの分も
+        // `.biwameta` から取り込む。
         // 名前解決にもその逆にも関与しない、独立したパスである。
-        let host_exports = collect_host_exports(&self.pkg, interner)?;
+        let host_exports = collect_host_exports(&self.pkg, &external_packages, interner)?;
 
         // TODO: cache on disk
         // def_collector

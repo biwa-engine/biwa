@@ -281,9 +281,13 @@ impl BiwacError for ResolveError {
             }
 
             Self::HostExport(e) => {
-                ctx.diagnostic(e.message())
-                    .label(at(e.span()), "here")
-                    .print();
+                let diag = ctx
+                    .diagnostic(e.message())
+                    .label_opt(e.span().map(at), "here");
+                match e.note() {
+                    Some(note) => diag.note(note).print(),
+                    None => diag.print(),
+                }
             }
 
             Self::DuplicatedSymbolAndModuleName {

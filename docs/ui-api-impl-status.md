@@ -567,7 +567,7 @@ export する」汎用の仕組みをコンパイラに追加した。wasm で�
      `host_exports` の分だけ同じ `export_alias(...)` を積む
      (TypeScript は単相化も到達性除去もしないので roots は不要)。
 
-### 現状の制約: 自パッケージ限定
+### 現状の制約: 自パッケージ限定 (→ §13 で案 (a) により解消)
 
 `host_export_collector` は自パッケージの AST しか見ない。つまり
 **依存パッケージ (`std` 等) が `[[host_export="..."]]` を付けても、
@@ -609,3 +609,53 @@ export する」汎用の仕組みをコンパイラに追加した。wasm で�
 Step5 で導入した Playwright の Chromium キャッシュ (`~/.cache/ms-playwright`)
 だった。両方削除して 2.2GB 復旧した。再度ブラウザでの見た目確認が要る場合は
 `npx playwright install --with-deps chromium` からやり直しになる。
+
+## 13. `[[host_export]]` をパッケージ越しに効かせる (完了)
+
+§12 の制約 (自パッケージ限定) を案 (a) で解消した。std 等の依存パッケージが
+`[[host_export="..."]]` を付けた関数は、それを使う側 (playable package) の
+ビルドで生成物から export され、単相化の roots にも入るので到達性で刈り取られない。
+
+### `.biwameta` (フォーマットバージョン 8 → 9)
+
+- **`DiskSymbolHeader` に `flags: u32` を追加** (12B → 16B)。
+  ビット 0 が `SYMBOL_FLAG_HOST_EXPORT`。依存側はボディをデコードせず
+  ヘッダの走査だけで host export を拾える。
+- **`DiskFnData` に `host_export: DiskVec<DiskStringOffset>` を追加**。
+  export 名で、`trait_of` と同じく 0 個か 1 個で `Option` を表す。
+- フラグは `push_body` がボディ (`host_export` が空でないか) から導く。
+  別々に渡して食い違うことが無いようにするため。
+- SVH に export 名を混ぜた。付け外し・改名は依存側の生成物を変えるので、
+  インタフェースの変更として依存側を建て直させる。
+- 読み出しは `DepMetadata::host_exports(pkg_id) -> Result<Vec<(ValDefId, &str)>, _>`。
+  フラグが立っているのに export 名が無ければ `InconsistentHostExport` で落とす。
+
+### 依存側での取り込み
+
+- `collect_host_exports` が `external_packages` (推移閉包すべて) を受け取り、
+  依存 → 自パッケージの順に `HostExportTable` に登録する (lang item と同じ流れ)。
+  以降の単相化 roots・wasm の export は表をそのまま使うので変更不要だった。
+- export 名の重複はパッケージをまたいでも禁止 (生成物の export は 1 つの名前空間)。
+  相手が依存側にある場合は位置を持たないので、note でそれを伝える。
+- `HostExportTable::iter()` を export 名順にした。`HashMap` の順序のままだと
+  roots と `.wat` の export の並びがビルドごとに揺れうるため。
+- TypeScript: 依存の関数はこのモジュールに import されているとは限らないので、
+  `export { <mangled> as <name> } from "./<pkg>.ts"` で定義元から再 export する。
+
+### テスト
+
+- `greeter` フィクスチャ (ライブラリ) に、test1 から呼ばれない
+  `[[host_export="greeter_host_export_demo"]] fn greeter_host_export_demo()` を追加。
+  `wasm_output` で test1 の `.wat` に `(export "greeter_host_export_demo"` が出ることを確認
+  (依存からの取り込みを止めるとこのテストが落ちることも確認済み)。
+- `host_export_is_recorded_in_metadata`: `greeter.biwameta` から
+  `host_exports()` で export 名と greeter の DefId が読め、SVH が再計算と一致すること。
+- `biwac_host_export`: `iter()` が export 名順であること。
+- `biwac_generator`: `export_alias` の自パッケージ版と再 export 版の出力。
+- TypeScript の通しの確認は std の既存の tier2 制限 (`content.biwa`) により今回も不可。
+
+### 残り
+
+- `GameWindow::new` は **関連関数** なので、`host_export` の付与対象
+  (`Target::Fn` = トップレベル `fn` のみ) に入らない。std にトップレベルの
+  ラッパー関数を置いて属性を付けるか、付与対象を関連関数へ広げる必要がある。

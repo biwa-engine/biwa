@@ -507,6 +507,7 @@ fn load_dep_metadata(dep_root: &Path, target: Target, dep_name: &str) -> Result<
 fn persist_dep_metadata(
     hir: &biwac_hir::Hir,
     lang_items: &biwac_lang_item::LangItemTable,
+    host_exports: &biwac_host_export::HostExportTable,
     srcs: &biwac_base::SourceHolder,
     interner: &biwac_base::IdentInterner,
     dep_hashes: &[(PackageId, PackageHashes)],
@@ -517,7 +518,8 @@ fn persist_dep_metadata(
     // `.biwameta` が記録するのはインタフェースの伝播に使う SVH だけである。
     let dep_svhs: Vec<(PackageId, Hash64)> =
         dep_hashes.iter().map(|(id, h)| (*id, h.svh)).collect();
-    let (dep_meta, symbol_index) = DepMetadata::new(hir, srcs, interner, lang_items, &dep_svhs);
+    let (dep_meta, symbol_index) =
+        DepMetadata::new(hir, srcs, interner, lang_items, host_exports, &dep_svhs);
     let svh = dep_meta.svh;
     let meta_bytes = dep_meta.encode_file();
     let meta_path = metadata_path(build_dir_path, target, metadata.metadata.name.value());
@@ -600,10 +602,12 @@ fn load_analyze_and_codegen_single_package(
         .map_err(|errs| print_errors(&errs, interner, &srcs, metadata))?;
 
     // Persist self package's symbol metadata to disk for dependents.
-    // lang item テーブルも書き出すので、依存側はこれを読んで復元する。
+    // lang item テーブルと host export のフラグも書き出すので、
+    // 依存側はこれを読んで復元する。
     let (svh, symbol_index) = persist_dep_metadata(
         &hir,
         &lang_items,
+        &host_exports,
         &srcs,
         interner,
         dep_hashes,
@@ -852,6 +856,8 @@ fn monomorphize_program(
     // そこから辿れない関数は成果物に入らない (到達性による除去がここで効く)。
     // host export された関数はどこからも呼ばれていなくても
     // ホストから直接呼ばれうるので、除去されては困る。
+    // 依存パッケージ (std 等) が host export した関数もここに含まれる
+    // (名前解決が `.biwameta` から取り込んでいる)。
     let roots: Vec<biwac_span::ValDefId> = biwac_scene::WellKnownSymbol::ALL
         .iter()
         .filter_map(|s| well_known_scenes.get(*s))
@@ -1587,6 +1593,14 @@ mod tests {
         // scene main から辿れないので、これが出ているのは
         // 単相化の roots に host export が正しく加わっている証拠でもある。
         assert!(wat.contains("(export \"host_export_demo\""), "{wat}");
+        // 依存パッケージ (greeter) で `[[host_export="..."]]` が付いた関数も、
+        // それを使う側である test1 の生成物から export される。
+        // test1 はこれを呼んでいないので、依存由来の host export も
+        // roots に入っていることの確認にもなる。
+        assert!(
+            wat.contains("(export \"greeter_host_export_demo\""),
+            "{wat}"
+        );
 
         // .wasm は検証を通ったものである
         // (通っていなければ compile がエラーになっている)。
@@ -1653,6 +1667,32 @@ mod tests {
             TyKind::Defined(dt) => dt.genargs.iter().all(is_concrete),
             TyKind::Fn(f) => f.args.iter().all(is_concrete) && is_concrete(&f.rty),
         }
+    }
+
+    /// `[[host_export="..."]]` が `.biwameta` に載り、依存側から読み戻せること。
+    ///
+    /// ヘッダのフラグが立っている関数だけが、export 名付きで返る。
+    #[test]
+    fn host_export_is_recorded_in_metadata() {
+        build_once("test1");
+
+        let data = std::fs::read(build_dir("greeter").join("greeter.biwameta")).unwrap();
+        let meta = biwac_dependency_metadata::DepMetadata::decode_file(&data).unwrap();
+
+        let greeter = package_id_of("greeter");
+        let exports = meta
+            .host_exports(greeter)
+            .expect("host exports should be readable");
+        let names: Vec<&str> = exports.iter().map(|(_, name)| *name).collect();
+        assert_eq!(names, ["greeter_host_export_demo"]);
+
+        // 返る DefId は依存側から見た greeter のものである。
+        let (def_id, _) = exports[0];
+        assert_eq!(def_id.pkg(), greeter);
+
+        // 読み戻したボディ (export 名を含む) から計算し直した SVH が、
+        // 書いたときの SVH と一致する。
+        assert_eq!(meta.compute_svh(), meta.svh);
     }
 
     /// `.biwamir` と `.biwameta` の対応が崩れていたら読み込みで止まること。

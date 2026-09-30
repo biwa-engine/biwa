@@ -233,6 +233,7 @@ dependencies = [
  "biwac_base",
  "biwac_hash",
  "biwac_hir",
+ "biwac_host_export",
  "biwac_lang_item",
  "biwac_span",
 ]
