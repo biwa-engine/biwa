@@ -48,6 +48,11 @@ interface UiNode {
    */
   textBox: TextBox | null;
   /**
+   * `text` property を入れる要素。子を持てる Element (Box) では子と分けて持つ
+   * (`textContent` を書くと子が消えるため)。まだ設定されていなければ `null`。
+   */
+  textEl: HTMLElement | null;
+  /**
    * 重なりの高さ。親の値を引き継ぎ、`Layers` の子だけは
    * 「Layers の値 + push された順番 (0 始まり)」になる。
    *
@@ -251,6 +256,7 @@ export class UIObjects {
       pageMessageArea: null,
       scenePageId: null,
       textBox,
+      textEl: null,
       z: 0,
     };
     this.nodes.set(id, node);
@@ -440,7 +446,7 @@ export class UIObjects {
         this.ensureLinkClickHandler(node);
         return;
       case PropertyKind.Text:
-        node.dom.textContent = valS;
+        this.setText(node, valS);
         return;
       case PropertyKind.TextFont:
         node.dom.style.fontFamily = valS;
@@ -484,6 +490,25 @@ export class UIObjects {
       default:
         console.error(`[biwa] unhandled string ui property: ${kind}`);
     }
+  }
+
+  /**
+   * `text` property を設定する。
+   *
+   * 子を持たない Element (Link) はそのまま中身を置き換える。子を持てる Box は、
+   * 子より前に置いた専用の要素に入れて子を残す。装飾 (`text_font` / `text_size` /
+   * `text_weight` / `text_color`) は Element 自身に設定し、テキストはそれを引き継ぐ。
+   */
+  private setText(node: UiNode, text: string): void {
+    if (node.kind !== ElementKind.Box) {
+      node.dom.textContent = text;
+      return;
+    }
+    if (node.textEl === null) {
+      node.textEl = document.createElement("span");
+      node.dom.prepend(node.textEl);
+    }
+    node.textEl.textContent = text;
   }
 
   /**

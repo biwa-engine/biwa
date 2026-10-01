@@ -19,13 +19,19 @@ export class Renderer {
     this.layers = new LayerManager(host);
   }
 
-  init(width: number, height: number): void {
+  /**
+   * host の大きさを決め、時計を動かす。
+   *
+   * `width` / `height` は px。省略すると画面全体 (`100vw` / `100vh`) になり、
+   * Biwa Language 側 (`fn app() -> Window`) が制御する UI の範囲が画面全体になる。
+   */
+  init(width?: number, height?: number): void {
     // host は拡大縮小しない。Canvas Element の中の座標は CSS の px と 1:1 で対応する。
     // 何も置かれていない所は黒く見せる (UI が出るまでも含めて)。
     this.host.style.cssText = `
       position: relative;
-      width: ${width}px;
-      height: ${height}px;
+      width: ${width === undefined ? "100vw" : `${width}px`};
+      height: ${height === undefined ? "100vh" : `${height}px`};
       overflow: hidden;
       background: #000;
     `;

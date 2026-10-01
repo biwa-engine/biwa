@@ -8,9 +8,7 @@ import { Kernel } from "./engine/vm/kernel";
 import { createSyscallTable } from "./engine/vm/handlers";
 import { runWasm } from "./engine/vm/wasm/host";
 import backend from "./game/entry";
-
-const WIDTH = 1280;
-const HEIGHT = 720;
+import "./style.css";
 
 // UI (Window/Page/Link/Canvas/MessageArea/...) を載せる層。
 // canvas の描画先も Message Window も、それぞれ UI Element の中身としてここに入る。
@@ -22,7 +20,8 @@ const host = document.querySelector<HTMLDivElement>("#app")!;
 host.style.cursor = "pointer";
 
 const renderer = new Renderer(host);
-renderer.init(WIDTH, HEIGHT);
+// 画面全体を host にする。UI の範囲はすべて Biwa Language 側が決める。
+renderer.init();
 
 // canvas に描くものの層は、出力先の `Canvas` Element ごとの描画先が
 // `create_object` の layer index から必要に応じて作る。

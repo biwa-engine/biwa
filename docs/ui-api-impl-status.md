@@ -1110,3 +1110,37 @@ Container を Element の矩形に合わせる作りだった。これはエン�
   scene 前 (`app()` の UI だけのとき) は 0 枚。起動直後の見た目・テキスト送り・Link・
   最後まで進めてもコンソールエラー無し、は以前と同じ。
 
+## 16. 画面全体を UI の範囲に / `Box` の子を省略可能に・テキスト対応 (完了)
+
+### host を画面全体に
+
+- `Renderer.init(width?, height?)`: 引数 (px) を省略すると host は `100vw` x `100vh`。
+  `main.ts` は引数なしで呼ぶ (以前は 1280x720 固定)。
+- `src/style.css` を新設して `main.ts` から import (Vite が処理する)。`html` / `body` の
+  margin・padding を 0、`width` / `height` を 100%、`overflow: hidden`、背景を黒にした。
+  Firefox で body の既定の margin のぶん UI がずれていた件はこれで解消する。
+  これで `fn app() -> Window` が制御する UI の範囲が画面全体になる。
+- canvas の描画先は Canvas Element の大きさに `ResizeObserver` で追従するので、
+  画面の大きさが変わってもそのまま追従する。
+
+### `Box`
+
+- std: `child: Option[UiElement]`。`Box::new()` は子もテキストも持たず、
+  `.child(element)` で子を (1 つまで) 設定する。Link と同じ text 系のビルダー
+  (`text` / `text_font` / `text_size` / `text_weight` / `text_color`) を足し、
+  `materialize` は `apply_text_properties` を発行してから (あれば) 子を積む。
+- エンジン: `text` property は、子を持てる Box では子とは別の専用の `<span>` に入れる
+  (`textContent` を書くと子が消えるため。`UiNode.textEl`)。子より前に並ぶ。
+  装飾 (font / size / weight / color) は Box 自身に設定し、テキストはそれを引き継ぐ。
+  Link は従来どおり中身をそのまま置き換える。
+
+### `~/test1` での確認 (`biwa dev` wasm + Playwright、Chromium と Firefox、1280x720 と 1600x900)
+
+- どちらのブラウザ・大きさでも body の margin は 0、host は画面と一致 (`0,0,幅,高さ`)、
+  スクロールは出ない。scene の `<canvas>` は画面全体 (描画バッファも画面と同じ大きさ)、
+  MessageArea は下端 36%。コンソールエラー無し。
+- main ページにテキストだけの Box (タイトル) と、テキストと子 (サムネイル画像) を両方持つ Box を
+  置き、テキストと子が両方表示されることを確認 (Box の中は `<span>` + 子)。
+- 観察: canvas の座標は px なので、画面が 1280x720 より大きいと 1280px 幅の背景の周りに
+  余白ができる (ゲーム側の描き方の問題で、今回の変更の範囲外)。
+

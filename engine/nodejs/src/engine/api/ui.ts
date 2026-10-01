@@ -85,7 +85,7 @@ export const PropertyKind = {
   PageId: 100,
   /** Link のクリック時の遷移先 page_id。 */
   OnClickLink: 101,
-  /** Link に表示する文字列。 */
+  /** Link / Box に表示する文字列。 */
   Text: 102,
   /** CSS の font-family としてそのまま使うフォント名。 */
   TextFont: 103,
