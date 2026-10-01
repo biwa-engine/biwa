@@ -1597,10 +1597,7 @@ mod tests {
         // UI の root を組み立てる `fn app()`。ランタイムが起動時に最初に呼ぶ。
         assert!(wat.contains("(export \"__biwa_app\""), "{wat}");
         // それを表示する std の入口 (依存の host export)。
-        assert!(
-            wat.contains("(export \"__biwa_std_window_show\""),
-            "{wat}"
-        );
+        assert!(wat.contains("(export \"__biwa_std_window_show\""), "{wat}");
         // std の `GameWindow` を組み立てる入口。ランタイムはこれで作った値を
         // `on_new_game(window)` に渡す。std (依存) の host export なので、
         // test1 の生成物から出ていることがパッケージ越しの export の実用上の確認になる。

@@ -488,7 +488,10 @@ scene main(g: MyGame) -> MyGame {{
             biwac_ast::NovelStmt::ContentPush(biwac_ast::NovelContent::Expr { .. })
         )
     });
-    assert!(has_embedded_expr, "expected an embedded-expression content push");
+    assert!(
+        has_embedded_expr,
+        "expected an embedded-expression content push"
+    );
 
     // `>>`
     let has_wait = scene
