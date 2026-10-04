@@ -25,7 +25,7 @@ std::game::base_engine        create_object / add_transition / start_transitions
 ## canvas オブジェクト
 
 ```biwa
-let bg = Image::new("background.jpg").show_in_canvas(g.canvas(), 0, 0, 0, 1280, -1, 255);
+let bg = Image::new("background.jpg").show_in_canvas(g.canvas(), 0, cx(0.0), cy(0.0), cw(100.0), ch(-1.0), 255);
 ```
 
 `show_in_canvas(canvas, layer, x, y, w, h, alpha)`。
@@ -34,6 +34,19 @@ let bg = Image::new("background.jpg").show_in_canvas(g.canvas(), 0, 0, 0, 1280, 
 (`docs/ui-api-impl-status.md` §14 S6)。
 座標は出力先の Canvas の中央が原点で、x は右が正、**y は上が正**。
 Canvas の矩形からはみ出した部分は描かれない。
+
+### canvas の単位 (`std::game::canvas`)
+
+座標と大きさは **canvas の範囲が -50.0 から 50.0 になる単位**で表す
+(x と幅は canvas の幅の 1/100、y と高さは canvas の高さの 1/100 が 1)。
+`Cx` / `Cy` / `Cw` / `Ch` (中身は Float) を使い、`cx(10.0)` のような初期化関数を import して作る。
+syscall を直接呼ぶ所以外では、座標と大きさはすべてこの型で扱う。
+
+- 幅 100.0 / 高さ 100.0 が canvas 全体。canvas の大きさが変わると中身もそれに合わせて伸び縮みする
+- `w` / `h` が負なら「指定しない」。片方だけ負なら、画像の縦横比を保つように
+  (canvas の縦横比も考えて) もう片方が決まる。両方負なら画像の元の大きさ (px) で出る
+  (決めるのはエンジンで、最初に canvas の大きさが分かったときの値になる)
+- alpha (0-255) と theta (度) は Int のまま
 位置も回転も画像の中心を基準にする。
 `w` / `h` が負なら「指定しない」で、画像の元のサイズから決まる。
 片方だけ正ならアスペクトを保つ。
@@ -57,7 +70,7 @@ Canvas の矩形からはみ出した部分は描かれない。
 
 ```biwa
 bg.x_then()
-  .sin_forever(24, ms(9000))     // 止めずに揺らし続ける
+  .sin_forever(cx(1.875), ms(9000))  // 止めずに揺らし続ける
   .animate_free();               // テキストとは無関係に走らせる
 
 bg.alpha_then()
@@ -69,6 +82,11 @@ bg.alpha_then()
 |                                                                   |                                              |
 | ----------------------------------------------------------------- | -------------------------------------------- |
 | `linear_then` / `easein_then` / `easeout_then` / `easeinout_then` | 一度限りの遷移                               |
+
+値は `TransitionValue` なもの: x / y / w / h には `cx()` / `cy()` / `cw()` / `ch()` の値、
+alpha / theta には Int を渡す。素の Float は渡せない。どのパラメータのチェーンかで
+型を分けてはいないので、`x_then()` に `cy()` を渡しても型では弾かれない。
+
 | `sin_then(振幅, 周期, 続ける時間)`                                | 揺らして、時間が来たら止める                 |
 | `sin_forever(振幅, 周期)`                                         | 次に同じパラメータを駆動するまで揺らし続ける |
 | `stop_then()`                                                     | その時点で止める                             |
@@ -81,15 +99,15 @@ bg.alpha_then()
 時間は最後の `animate_for()` でまとめて決まる。
 
 ```biwa
-biwa.appear(1, 700, -20, -1, 700, 0)   // 画面の外に透明で置いて
+biwa.appear(1, cx(54.7), cy(-2.8), cw(-1.0), ch(97.2), 0)  // 画面の外に透明で置いて
     .and()
-    .easeout_x_and(300)                 // 滑り込ませつつ
+    .easeout_x_and(cx(23.4))            // 滑り込ませつつ
     .be_visible_and()                   // 現れる
     .animate_for(ms(900));
 
 biwa.and()
-    .move_x_and(-260)                   // 左へ歩きながら
-    .sin_y_and(24, ms(500))             // 上下に揺れる
+    .move_x_and(cx(-20.3))              // 左へ歩きながら
+    .sin_y_and(cy(3.3), ms(500))        // 上下に揺れる
     .animate_for(ms(2000));             // 歩き終わると揺れも止まる
 ```
 
@@ -111,7 +129,7 @@ biwa.and()
 
 ```biwa
 let biwa = Character::new(g, "言葉 琵琶", "琵琶", BiwaProps {}, normal, normal);
-biwa.appear(1, 700, -20, -1, 700, 0);
+biwa.appear(1, cx(54.7), cy(-2.8), cw(-1.0), ch(97.2), 0);
 biwa.change_visual(smile);
 biwa.disappear(ms(1200));
 ```

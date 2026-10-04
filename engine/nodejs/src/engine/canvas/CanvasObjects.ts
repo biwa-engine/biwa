@@ -10,7 +10,7 @@ import {
   isPeriodic,
   waveAt,
 } from "../api/transition";
-import type { CanvasSurfaces } from "./CanvasSurfaces";
+import type { CanvasSurface, CanvasSurfaces } from "./CanvasSurfaces";
 
 /**
  * 遷移の 1 区間。
@@ -44,12 +44,18 @@ interface Batch {
  *
  * biwa 側のパラメータ (`value` / `deviation`) を正とし、
  * PixiJS へは毎フレーム射影する。座標系も単位も両者で違うためである。
+ * x / y / w / h は canvas の範囲が -50..50 の単位で持ち、射影のときに
+ * 描画先の今の大きさで px に直す (canvas の大きさが変われば追従する)。
  */
 class CanvasObject {
   readonly id: number;
   readonly sprite: Sprite;
-  /** テクスチャの元のサイズ。ロードが終わるまで null。 */
+  /** 置かれている描画先。座標・大きさを px に直すのに今の大きさを使う。 */
+  readonly surface: CanvasSurface;
+  /** テクスチャの元のサイズ [px]。ロードが終わるまで null。 */
   natural: { w: number; h: number } | null = null;
+  /** 負の `w` / `h` (= 指定しない) を決め終えたか (`resolveAutoSize`)。 */
+  autoSizeResolved = false;
   /** param ごとの落ち着いた値。周期系の偏差は含まない。 */
   readonly value = new Float64Array(PARAM_COUNT);
   /** param ごとの、活性な周期系が乗せている偏差。区間が終われば消える。 */
@@ -64,9 +70,10 @@ class CanvasObject {
   deleteAt: number | null = null;
   alive = true;
 
-  constructor(id: number, sprite: Sprite) {
+  constructor(id: number, sprite: Sprite, surface: CanvasSurface) {
     this.id = id;
     this.sprite = sprite;
+    this.surface = surface;
     for (let param = 0; param < PARAM_COUNT; param++) {
       this.active.push([]);
       this.pending.push([]);
@@ -178,7 +185,7 @@ export class CanvasObjects {
     // この間に width/height を書くと scale が壊れる。
     sprite.visible = false;
 
-    const object = new CanvasObject(id, sprite);
+    const object = new CanvasObject(id, sprite, surface);
     object.value[Param.X] = x;
     object.value[Param.Y] = y;
     object.value[Param.W] = w;
@@ -202,7 +209,6 @@ export class CanvasObjects {
         if (!object.alive) return;
         object.sprite.texture = texture;
         object.natural = { w: texture.width, h: texture.height };
-        this.resolveAutoSize(object);
         object.sprite.visible = true;
         this.project(object);
       })
@@ -435,38 +441,70 @@ export class CanvasObjects {
       (segment.value - segment.baseline) * curveAt(segment.kind, progress);
   }
 
-  /** biwa のパラメータを PixiJS の Sprite に射影する。 */
+  /**
+   * biwa のパラメータを PixiJS の Sprite に射影する。
+   *
+   * x / y / w / h は canvas の範囲が -50..50 の単位なので、描画先の今の大きさで px に直す
+   * (x と w は幅の、y と h は高さの 1/100 が 1)。
+   */
   private project(object: CanvasObject): void {
     // ロード前はサイズが分からないので触らない。
     if (object.natural === null) return;
+    // 描画先が見えていない (大きさが 0) 間は px に直せないので触らない。
+    const { width, height } = object.surface;
+    if (width === 0 || height === 0) return;
+    if (!object.autoSizeResolved) {
+      this.resolveAutoSize(object, width, height);
+    }
 
+    const unitX = width / 100;
+    const unitY = height / 100;
     const sprite = object.sprite;
     // 描画先 (`CanvasSurface`) の原点が Canvas Element の中央にある。
-    sprite.x = object.at(Param.X);
+    sprite.x = object.at(Param.X) * unitX;
     // biwa の y は上が正。Pixi は下が正なので反転する。
-    sprite.y = -object.at(Param.Y);
-    sprite.width = Math.max(object.at(Param.W), 0);
-    sprite.height = Math.max(object.at(Param.H), 0);
+    sprite.y = -object.at(Param.Y) * unitY;
+    sprite.width = Math.max(object.at(Param.W), 0) * unitX;
+    sprite.height = Math.max(object.at(Param.H), 0) * unitY;
     sprite.alpha = clamp(object.at(Param.Alpha), 0, 255) / 255;
     // y を反転した分、回転の向きも反転させる (正 = 反時計回り)。
     sprite.rotation = (-object.at(Param.Theta) * Math.PI) / 180;
   }
 
-  /** 負の `w` / `h` (= 指定しない) をテクスチャの元のサイズから決める。 */
-  private resolveAutoSize(object: CanvasObject): void {
+  /**
+   * 負の `w` / `h` (= 指定しない) を、テクスチャの元のサイズ [px] と描画先の大きさ [px]
+   * から canvas の単位で決める。
+   *
+   * - 両方負: 画像の元の大きさ (px) で出る
+   * - 片方だけ負: 画像の縦横比を保つ。canvas の単位は縦横で尺度が違うので
+   *   (幅は canvas の幅、高さは canvas の高さに対する割合)、一度 px に直して比を取る
+   *
+   * 決めるのは最初に描画先の大きさが分かったときの 1 回だけで、以降は canvas の単位の値として
+   * 遷移の起点にもなる。そのため canvas の大きさが後で変わると、それに合わせて伸び縮みする。
+   */
+  private resolveAutoSize(
+    object: CanvasObject,
+    width: number,
+    height: number,
+  ): void {
     const natural = object.natural;
     if (natural === null || natural.w <= 0 || natural.h <= 0) return;
+    object.autoSizeResolved = true;
 
     const w = object.value[Param.W];
     const h = object.value[Param.H];
+    const toUnitX = (px: number): number => (px / width) * 100;
+    const toUnitY = (px: number): number => (px / height) * 100;
 
     if (w < 0 && h < 0) {
-      object.value[Param.W] = natural.w;
-      object.value[Param.H] = natural.h;
+      object.value[Param.W] = toUnitX(natural.w);
+      object.value[Param.H] = toUnitY(natural.h);
     } else if (w < 0) {
-      object.value[Param.W] = natural.w * (h / natural.h);
+      const hPx = (h / 100) * height;
+      object.value[Param.W] = toUnitX(natural.w * (hPx / natural.h));
     } else if (h < 0) {
-      object.value[Param.H] = natural.h * (w / natural.w);
+      const wPx = (w / 100) * width;
+      object.value[Param.H] = toUnitY(natural.h * (wPx / natural.w));
     }
   }
 

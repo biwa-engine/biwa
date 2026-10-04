@@ -1,8 +1,8 @@
 use biwac_span::Span;
 
 use biwac_ast::{
-    BoolLiteral, Exprs, FnCall, Ident, IntegerLiteral, Literal, Primary, StringLiteral,
-    StructLiteral, Variable,
+    BoolLiteral, Exprs, FloatLiteral, FnCall, Ident, IntegerLiteral, Literal, Primary,
+    StringLiteral, StructLiteral, Variable,
 };
 
 use crate::{
@@ -30,6 +30,13 @@ impl<'src> NovelSourceStream<'src> {
                         span: t.span,
                     },
                 ))))
+            }
+            NCodeTkKind::LiteralFloat(val) => {
+                self.next_token()?;
+                Ok(Exprs::Primary(Primary::Literal(Literal::Float(FloatLiteral {
+                    val: *val,
+                    span: t.span,
+                }))))
             }
             NCodeTkKind::LiteralString(str) => {
                 self.next_token()?;

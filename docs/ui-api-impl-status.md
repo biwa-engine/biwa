@@ -1144,3 +1144,58 @@ Container を Element の矩形に合わせる作りだった。これはエン�
 - 観察: canvas の座標は px なので、画面が 1280x720 より大きいと 1280px 幅の背景の周りに
   余白ができる (ゲーム側の描き方の問題で、今回の変更の範囲外)。
 
+## 17. canvas の座標・大きさを canvas 基準の単位 (-50..50) に (完了)
+
+それまでは原点 (中央) と軸の向き (x 右が正、y 上が正) だけが予定どおりで、単位は
+docs・syscall・std・engine のすべてで px だった (調査結果はユーザーに報告済み)。
+
+### 決めたこと (ユーザー指定)
+
+- x / y は canvas の範囲が -50.0 から 50.0、w / h は 100.0 が canvas の幅 / 高さ。Float。
+- syscall では f32 で渡し、エンジンがその単位として解釈する。
+- std に `std::game::canvas` を新設し、`Cx` / `Cy` / `Cw` / `Ch` (中身は Float) と初期化関数
+  `cx()` / `cy()` / `cw()` / `ch()` を置く。syscall を直接呼ぶ所以外はすべてこの型で扱う。
+  `base_engine` の使われていなかった `X` / `Y` (`Size::Vw` / `Size::Vh` を包むもの) は削除。
+- w / h の片方だけ負なら canvas の大きさを考えて縦横比を保ち、両方負なら画像の元の px (エンジンが決める)。
+
+### 実装
+
+- syscall: `sys_create_object` の x / y / w / h / alpha / theta と `sys_add_transition` の value を f32 に
+  (wasm の import 宣言・TS / wasm の native)。値の変換用に `int_to_float` (wasm は `f32.convert_i32_s`) を追加。
+- std:
+  - `Image::show_in_canvas(canvas, layer, x: Cx, y: Cy, w: Cw, h: Ch, alpha: Int)`、
+    `Character::appear` も同じ。`CanvasObject` は目標値を `Cx` / `Cy` / `Cw` / `Ch` で覚える
+    (alpha / theta は Float で覚える)。`Position` も `Cx` / `Cy`。
+  - `and()` 系 (`move_x_and(Cx)` / `resize_w_and(Cw)` / `sin_y_and(Cy, ..)` など) は型で受ける。
+    alpha / theta は Int のまま。
+  - `*_then()` 系 (`linear_then` など) はパラメータを問わない 1 つのメソッドなので、
+    トレイト `TransitionValue` (`fn transition_value(self) -> Float`) を境界にした
+    ジェネリックメソッドにした。`Cx` / `Cy` / `Cw` / `Ch` と `Int` が実装し、素の Float は渡せない。
+    パラメータごとに型を分けてはいないので、`x_then()` に `cy()` を渡しても型では弾かれない。
+    (`Into[Float]` にしなかったのは、`Int` が既に `Into[Content]` を実装しており、
+    コンパイラが型引数違いの同じトレイトを同じ型に 2 つ実装することをまだ許さないため)
+- エンジン:
+  - `CanvasObject` が置かれた描画先 (`CanvasSurface`) を覚え、射影のときに描画先の今の大きさで px に直す
+    (x / w は幅の、y / h は高さの 1/100 が 1)。描画先は PixiJS の初期化を待たずに大きさを
+    `ResizeObserver` で追う (`width` / `height`)。
+  - 負の w / h は、テクスチャの読み込みが終わり描画先の大きさが分かった最初の射影で canvas の単位に決める
+    (`resolveAutoSize`)。以降は普通の値として遷移の起点にもなるので、canvas の大きさが後で変わると
+    それに合わせて伸び縮みする (「元の px」は最初の時点での px)。
+  - `transition.ts` の param の単位の記述を更新。
+- コンパイラ: scene の中のコード (`#` 行 / `$` 埋め込み式) は novel パーサー独自の字句解析器で読まれ、
+  **浮動小数リテラルが無かった** (`cx(0.0)` が「整数 0、`.`、整数 0」になる)。
+  `数字 . 数字` を浮動小数リテラル (`Literal::Float`) にした (通常のコードの字句解析と同じ規則。
+  `.` の後が数字でなければメソッド呼び出しなどの区切りのまま)。novel パーサーにテストを 2 つ追加。
+- docs: `media-object-model.md` (syscall の型と「座標の単位」節)、`media-syscall-wasm.md`、
+  `std-api.md` (canvas の単位の節と例)。
+
+### `~/test1` での確認 (`biwa dev` wasm + Playwright)
+
+- 値を 1280x720 の canvas 前提の px から換算 (背景 `cw(100.0)`、立ち絵 `cx(54.6875)` / `cy(-2.7778)` /
+  `ch(97.2222)`、`easeout_x_and(cx(23.4375))`、`move_x_and(cx(-20.3125))`、`sin_y_and(cy(3.3333), ..)`)。
+- 1280x720 では以前 (px) と同じ構図。1600x900 では canvas に合わせて全体が拡大され、
+  §16 で出ていた背景の周りの余白が無くなった。scene の途中で 960x540 に縮めると追従して縮む。
+  最後まで進めてもコンソールエラー無し。`cargo test` (compiler) green、`tsc --noEmit` 無エラー。
+- 未対応: コンパイラのフィクスチャの std (`compiler/assets/tests/std`) の canvas API は px / Int のまま
+  (エンジンでは走らせないので影響は無い)。
+

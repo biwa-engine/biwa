@@ -13,7 +13,9 @@
  * - Element が表示されていない (祖先の Page が隠れているなど) ときは描画先も見えない。
  *
  * 描画先の原点は Element の**中央**である (biwa の canvas 座標の規約そのまま)。
- * `<canvas>` は解像度 1 で Element と同じ大きさにするので、座標は CSS の px と 1:1 で対応する。
+ * `<canvas>` は解像度 1 で Element と同じ大きさにする。biwa の座標・大きさ
+ * (canvas の範囲が -50..50 の単位) を px に直すのは `CanvasObjects` の射影で、
+ * そのために描画先は今の大きさ (`width` / `height` [px]) を持っている。
  */
 
 import { Application, Container } from "pixi.js";
@@ -28,15 +30,20 @@ export class CanvasSurface {
   /** `init` が終わって描けるようになったか。 */
   private ready = false;
   private destroyed = false;
-  private width = 0;
-  private height = 0;
+  /** Element の今の大きさ [px]。見えていなければ 0。 */
+  private widthPx: number;
+  private heightPx: number;
 
   constructor(element: HTMLElement) {
     this.element = element;
     // `init` の前から stage はあるので、オブジェクトは同期に積める
     // (`create_object` は積んで返る syscall なので待てない)。
     this.app.stage.sortableChildren = true;
+    this.widthPx = element.clientWidth;
+    this.heightPx = element.clientHeight;
+    // 大きさは PixiJS の初期化を待たずに追う (射影が init の前から使うため)。
     this.observer = new ResizeObserver(() => this.fit());
+    this.observer.observe(element);
 
     void this.app
       .init({
@@ -65,7 +72,7 @@ export class CanvasSurface {
         this.element.appendChild(this.app.canvas);
         this.ready = true;
         this.fit();
-        this.observer.observe(this.element);
+        this.applySize();
       })
       .catch((e: unknown) => {
         console.error("[biwa] failed to initialize a canvas renderer:", e);
@@ -89,9 +96,19 @@ export class CanvasSurface {
     return container;
   }
 
+  /** Element の今の幅 [px]。見えていなければ 0。 */
+  get width(): number {
+    return this.widthPx;
+  }
+
+  /** Element の今の高さ [px]。見えていなければ 0。 */
+  get height(): number {
+    return this.heightPx;
+  }
+
   /** 1 フレーム描く。見えていない (大きさが 0 の) ときは描かない。 */
   render(): void {
-    if (!this.ready || this.width === 0 || this.height === 0) return;
+    if (!this.ready || this.widthPx === 0 || this.heightPx === 0) return;
     this.app.render();
   }
 
@@ -104,17 +121,21 @@ export class CanvasSurface {
     }
   }
 
-  /** Element の大きさに合わせ、原点を中央に置く。 */
+  /** Element の大きさを読み直す。変わっていれば描画先にも反映する。 */
   private fit(): void {
-    if (!this.ready) return;
     const width = this.element.clientWidth;
     const height = this.element.clientHeight;
-    if (width === this.width && height === this.height) return;
-    this.width = width;
-    this.height = height;
-    if (width === 0 || height === 0) return;
-    this.app.renderer.resize(width, height);
-    this.app.stage.position.set(width / 2, height / 2);
+    if (width === this.widthPx && height === this.heightPx) return;
+    this.widthPx = width;
+    this.heightPx = height;
+    this.applySize();
+  }
+
+  /** `<canvas>` を Element の大きさにし、原点を中央に置く。 */
+  private applySize(): void {
+    if (!this.ready || this.widthPx === 0 || this.heightPx === 0) return;
+    this.app.renderer.resize(this.widthPx, this.heightPx);
+    this.app.stage.position.set(this.widthPx / 2, this.heightPx / 2);
   }
 }
 

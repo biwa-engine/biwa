@@ -13,6 +13,8 @@ canvasは one of UI である(同様にノベルテキスト領域も one of UI 
 canvasを操作するsyscall APIにおいて、
 x軸、y軸の原点はcanvasの中央とし、
 x軸は右が正、y軸は上が正(元々のcanvasと逆)とする。
+座標と大きさの単位は canvas の範囲が -50.0 から 50.0 になるもので、f32 で渡す
+(実際に採った形と単位の詳細は `docs/media-object-model.md`)。
 
 ### 画像,動画
 
