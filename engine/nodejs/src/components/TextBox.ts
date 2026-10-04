@@ -1,5 +1,6 @@
 /**
- * Message Window の実体。
+ * Message Window の実体。UI Element `MessageArea` が 1 つずつ持つ
+ * (`engine/ui/UIObjects.ts`)。Content API はその ui_id で出力先を選ぶ。
  *
  * 積まれた content は**断片の列**として持つ。1 本の文字列にしないのは、
  * 断片ごとに色・大きさ・太さ・速度が違いうるからである
@@ -62,36 +63,29 @@ export class TextBox {
   private cursor = 0;
   private carry = 0;
 
-  constructor(x: number, y: number, width: number, height: number) {
+  /**
+   * 親 (UI Element `MessageArea` の DOM) の内側 (padding の内側) を埋める。
+   *
+   * 位置・大きさ・背景・余白は `MessageArea` の property (width / padding /
+   * background_color ...) が決める。TextBox 自身は枠の見た目を持たない。
+   * 絶対配置にしないのは、親の padding を効かせるためである。
+   */
+  constructor() {
     this.element = document.createElement("div");
     this.element.style.cssText = `
-      position: absolute;
-      left: ${x}px;
-      top: ${y}px;
-      width: ${width}px;
-      height: ${height}px;
-      background: rgba(0, 0, 0, 0.75);
+      width: 100%;
+      height: 100%;
       color: #fff;
-      padding: 24px 32px;
       font-size: 18px;
       line-height: 1.8;
       box-sizing: border-box;
       overflow-y: auto;
-      display: none;
     `;
 
     this.textEl = document.createElement("p");
     // ノベルテキストは改行や字下げを含んだまま渡ってくるので、そのまま見せる。
     this.textEl.style.cssText = "margin: 0; white-space: pre-wrap;";
     this.element.appendChild(this.textEl);
-  }
-
-  show(): void {
-    this.element.style.display = "block";
-  }
-
-  hide(): void {
-    this.element.style.display = "none";
   }
 
   /** 断片を 1 つ積む。まだ描かない。 */

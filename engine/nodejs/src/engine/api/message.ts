@@ -6,8 +6,13 @@ import { engine } from "./context";
  * syscall `sys_content_push_text` の実装。積むだけで描画は始まらない。
  * 引数はすべて std が設定を解決した**絶対値**である
  * (`docs/content-api.md` の決めたこと 3)。エンジンは設定を持たない。
+ *
+ * Content API の syscall はすべて第一引数 `uiId` で出力先の
+ * UI Element `MessageArea` を指定する (`docs/ui-api-impl-status.md` §14)。
+ * MessageArea でない ui_id が来たら叱って捨てる (中断しない syscall なので投げても届かない)。
  */
 export function pushContentText(
+  uiId: number,
   text: string,
   speed: number,
   sizeUnit: number,
@@ -18,10 +23,9 @@ export function pushContentText(
   b: number,
   a: number,
 ): void {
-  const { components, messageBoxId } = engine();
-  const box = components.getTextBox(messageBoxId);
-  box.show();
-  box.push({ text, speed, sizeUnit, sizeValue, weight, r, g, b, a });
+  engine()
+    .ui.messageArea(uiId)
+    ?.push({ text, speed, sizeUnit, sizeValue, weight, r, g, b, a });
 }
 
 /**
@@ -29,9 +33,8 @@ export function pushContentText(
  *
  * syscall `sys_content_flush` の実装。
  */
-export function flushContent(): void {
-  const { components, messageBoxId } = engine();
-  components.getTextBox(messageBoxId).flush();
+export function flushContent(uiId: number): void {
+  engine().ui.messageArea(uiId)?.flush();
 }
 
 /**
@@ -44,9 +47,8 @@ export function flushContent(): void {
  * 「待つが消さない」API を将来足すときに、
  * 変更がコンパイラと std に閉じるようにするための切り分けである。
  */
-export function clearContent(): void {
-  const { components, messageBoxId } = engine();
-  components.getTextBox(messageBoxId).clear();
+export function clearContent(uiId: number): void {
+  engine().ui.messageArea(uiId)?.clear();
 }
 
 /**
@@ -65,13 +67,13 @@ export function clearContent(): void {
  * 「進行中のものがあれば 1 回目で畳み、次で進む」で一貫する。
  */
 export function waitForClick(): Promise<void> {
-  const { host, components, messageBoxId, objects } = engine();
-  const box = components.getTextBox(messageBoxId);
+  const { host, ui, objects } = engine();
 
   return new Promise((resolve) => {
     const onClick = (): void => {
       // 短絡させない。どちらも必ず試す。
-      const skippedText = box.skip();
+      // クリックはどの出力先にも属さないので、文字送りはすべての MessageArea で畳む。
+      const skippedText = ui.skipMessageAreas();
       const skippedSync = objects.skipSync();
       if (skippedText || skippedSync) return;
 

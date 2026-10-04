@@ -263,3 +263,13 @@ pub fn lang_key<'a>(attrs: &'a Attrs, interner: &IdentInterner) -> Option<(&'a s
 
     val.as_str().map(|s| (s, attr.span.clone()))
 }
+
+/// `[[host_export="..."]]` の export 名を取り出す。
+pub fn host_export_name<'a>(attrs: &'a Attrs, interner: &IdentInterner) -> Option<(&'a str, Span)> {
+    let attr = attrs.find(attr_names::HostExport, interner)?;
+    let AttrBody::Value(val) = &attr.body else {
+        return None;
+    };
+
+    val.as_str().map(|s| (s, attr.span.clone()))
+}

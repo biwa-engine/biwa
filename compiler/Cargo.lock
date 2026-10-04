@@ -233,6 +233,7 @@ dependencies = [
  "biwac_base",
  "biwac_hash",
  "biwac_hir",
+ "biwac_host_export",
  "biwac_lang_item",
  "biwac_span",
 ]
@@ -249,6 +250,7 @@ dependencies = [
  "biwac_generator",
  "biwac_hash",
  "biwac_hir",
+ "biwac_host_export",
  "biwac_lang_item",
  "biwac_metadata_loader",
  "biwac_mir",
@@ -278,6 +280,7 @@ dependencies = [
  "biwac_base",
  "biwac_dependency_metadata",
  "biwac_hir",
+ "biwac_host_export",
  "biwac_lang_item",
  "biwac_mir",
  "biwac_package_loader",
@@ -305,6 +308,13 @@ version = "0.1.0"
 dependencies = [
  "biwac_ast",
  "biwac_base",
+ "biwac_span",
+]
+
+[[package]]
+name = "biwac_host_export"
+version = "0.1.0"
+dependencies = [
  "biwac_span",
 ]
 
@@ -379,6 +389,7 @@ dependencies = [
  "biwac_base",
  "biwac_dependency_metadata",
  "biwac_hir",
+ "biwac_host_export",
  "biwac_lang_item",
  "biwac_lexer",
  "biwac_metadata_loader",

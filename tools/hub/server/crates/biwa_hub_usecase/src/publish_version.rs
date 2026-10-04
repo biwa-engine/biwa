@@ -50,8 +50,8 @@ impl PublishVersionUseCase {
 
         let version = PackageVersion::from_str(&input.version)
             .map_err(|e| UseCaseError::Invalid(e.to_string()))?;
-        let commit =
-            CommitHash::from_str(&input.commit).map_err(|e| UseCaseError::Invalid(e.to_string()))?;
+        let commit = CommitHash::from_str(&input.commit)
+            .map_err(|e| UseCaseError::Invalid(e.to_string()))?;
 
         let mut dependencies = Vec::with_capacity(input.dependencies.len());
         for dep in input.dependencies {

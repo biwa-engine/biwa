@@ -12,15 +12,18 @@ use biwac_dependency_metadata::{
 use biwac_hir::{Ty, TyKind};
 use biwac_package_loader::{LoadedModule, Pkg};
 use biwac_span::{
-    DefId, DefIdKind, ImplId, PackageLocalDefId, Span, TraitAssocDefId, TraitDefId, TyDefId,
-    ValDefId, VariantDefId,
+    DefId, DefIdKind, GenDefId, ImplId, PackageLocalDefId, Span, TraitAssocDefId, TraitDefId,
+    TyDefId, ValDefId, VariantDefId,
 };
 
 use crate::{
     AssocNameTreeItem, ModuleNameTree, ModuleNameTreeItem, NameTree, PackageNameTree, ResolveError,
     ResolveErrorHandler, TyNameTree,
     name_tree::{AssocNameTree, AssocNameTreeItemKind},
-    resolving::context::{ResolveCtx, impl_level::ImplResolveCtx, module_level::ModuleResolveCtx},
+    resolving::context::{
+        ResolveCtx, impl_level::ImplResolveCtx, module_level::ModuleResolveCtx,
+        ty_def_level::TyDefResolveCtx,
+    },
 };
 
 pub(crate) enum TyOrVal<T, V> {
@@ -34,6 +37,12 @@ pub struct DefCollector {
     next_pkg_local_def_id: u32,
     /// Maps alias TyDefId → canonical (non-alias) TyDefId; populated during collect().
     pub(super) alias_canonical: HashMap<TyDefId, TyDefId>,
+    /// エイリアスのジェネリック引数と、ジェネリック引数まで解決した右辺。
+    ///
+    /// impl の対象がエイリアスのとき (`impl XChain` で `type XChain = Chain[Cx, Cw]`)、
+    /// 同名の関連アイテムの重複判定にはエイリアスを展開した型のジェネリック引数を使う
+    /// (`Chain[Cx, Cw]` と `Chain[Cy, Ch]` に同名のメソッドを生やせるように)。
+    pub(super) alias_defs: HashMap<TyDefId, (Vec<GenDefId>, TyKind)>,
     /// 自パッケージの trait が宣言した項目。宣言順。
     ///
     /// `T::guee()` の解決で「制限にある trait がこの名前を持つか」を引く。
@@ -52,6 +61,7 @@ impl DefCollector {
         Self {
             next_pkg_local_def_id: 0,
             alias_canonical: HashMap::new(),
+            alias_defs: HashMap::new(),
             trait_items: HashMap::new(),
             impl_collector: ImplCollector::new(),
         }
@@ -377,7 +387,7 @@ impl DefCollector {
 
     #[allow(clippy::too_many_arguments)]
     fn collect_alias_direct_targets(
-        &self,
+        &mut self,
         pkg_name: InternedIdent,
         pkg: &Pkg,
         name_tree: &NameTree,
@@ -403,7 +413,7 @@ impl DefCollector {
 
     #[allow(clippy::too_many_arguments)]
     fn collect_alias_direct_targets_in_module(
-        &self,
+        &mut self,
         pkg_name: InternedIdent,
         name_tree: &NameTree,
         ty_index: &HashMap<TyDefId, &TyNameTree>,
@@ -453,6 +463,17 @@ impl DefCollector {
 
                 if let Some(target_id) = target_id {
                     direct_map.insert(alias_id, target_id);
+                }
+
+                // 右辺をジェネリック引数まで解決しておく (`alias_defs` を参照)。
+                // 解決の失敗は本解決 (`symbols/globals.rs` の `TypeAlias`) が報告するので、
+                // ここでは黙って諦める (パスの解決結果は AST に残り、本解決で同じ結果になる)。
+                if let Ok(tctx) = TyDefResolveCtx::new(&mctx, &alias.genargs, self, alias_id)
+                    && tctx.resolve_typ(&alias.right).is_ok()
+                {
+                    let genargs = tctx.genarg_ids();
+                    let right = crate::lowering::ty_kind_from_typ_repr(&alias.right, None);
+                    self.alias_defs.insert(alias_id, (genargs, right));
                 }
             }
         }
@@ -545,6 +566,12 @@ impl DefCollector {
                 };
 
                 let self_ty = ictx.opt_self_ty().unwrap();
+                // 関連アイテムの重複判定に使うジェネリック引数。
+                // 対象がエイリアスなら展開した型のものを使う (`alias_defs` を参照)。
+                let impl_genargs = match expand_alias_ty(&self_ty, &self.alias_defs) {
+                    TyKind::Defined(defined_ty) => defined_ty.genargs,
+                    _ => Vec::new(),
+                };
                 let impl_id = self.impl_collector.register_self_ty(self_ty.clone());
                 impl_block.impl_id.set(impl_id).unwrap();
 
@@ -595,10 +622,7 @@ impl DefCollector {
                         assocs
                             .register_assoc(
                                 f.id.id,
-                                match &self_ty {
-                                    TyKind::Defined(defined_ty) => defined_ty.genargs.clone(),
-                                    _ => Vec::new(),
-                                },
+                                impl_genargs.clone(),
                                 AssocNameTreeItemKind::Val(def_id),
                             )
                             .handle(&mut errors);
@@ -609,10 +633,7 @@ impl DefCollector {
                             f.id.id,
                             AssocNameTree {
                                 assocs: vec![AssocNameTreeItem {
-                                    genargs: match &self_ty {
-                                        TyKind::Defined(defined_ty) => defined_ty.genargs.clone(),
-                                        _ => Vec::new(),
-                                    },
+                                    genargs: impl_genargs.clone(),
                                     kind: AssocNameTreeItemKind::Val(def_id),
                                 }],
                             },
@@ -627,10 +648,7 @@ impl DefCollector {
                         assocs
                             .register_assoc(
                                 m.id.id,
-                                match &self_ty {
-                                    TyKind::Defined(defined_ty) => defined_ty.genargs.clone(),
-                                    _ => Vec::new(),
-                                },
+                                impl_genargs.clone(),
                                 AssocNameTreeItemKind::Val(def_id),
                             )
                             .handle(&mut errors);
@@ -641,10 +659,7 @@ impl DefCollector {
                             m.id.id,
                             AssocNameTree {
                                 assocs: vec![AssocNameTreeItem {
-                                    genargs: match &self_ty {
-                                        TyKind::Defined(defined_ty) => defined_ty.genargs.clone(),
-                                        _ => Vec::new(),
-                                    },
+                                    genargs: impl_genargs.clone(),
                                     kind: AssocNameTreeItemKind::Val(def_id),
                                 }],
                             },
@@ -659,10 +674,7 @@ impl DefCollector {
                         assocs
                             .register_assoc(
                                 f.id.id,
-                                match &self_ty {
-                                    TyKind::Defined(defined_ty) => defined_ty.genargs.clone(),
-                                    _ => Vec::new(),
-                                },
+                                impl_genargs.clone(),
                                 AssocNameTreeItemKind::Val(def_id),
                             )
                             .handle(&mut errors);
@@ -673,10 +685,7 @@ impl DefCollector {
                             f.id.id,
                             AssocNameTree {
                                 assocs: vec![AssocNameTreeItem {
-                                    genargs: match &self_ty {
-                                        TyKind::Defined(defined_ty) => defined_ty.genargs.clone(),
-                                        _ => Vec::new(),
-                                    },
+                                    genargs: impl_genargs.clone(),
                                     kind: AssocNameTreeItemKind::Val(def_id),
                                 }],
                             },
@@ -691,10 +700,7 @@ impl DefCollector {
                         assocs
                             .register_assoc(
                                 m.id.id,
-                                match &self_ty {
-                                    TyKind::Defined(defined_ty) => defined_ty.genargs.clone(),
-                                    _ => Vec::new(),
-                                },
+                                impl_genargs.clone(),
                                 AssocNameTreeItemKind::Val(def_id),
                             )
                             .handle(&mut errors);
@@ -705,10 +711,7 @@ impl DefCollector {
                             m.id.id,
                             AssocNameTree {
                                 assocs: vec![AssocNameTreeItem {
-                                    genargs: match &self_ty {
-                                        TyKind::Defined(defined_ty) => defined_ty.genargs.clone(),
-                                        _ => Vec::new(),
-                                    },
+                                    genargs: impl_genargs.clone(),
                                     kind: AssocNameTreeItemKind::Val(def_id),
                                 }],
                             },
@@ -1117,6 +1120,54 @@ pub(super) fn collect_mod_trees<'a>(
 }
 
 /// Returns the canonical (non-alias) TyDefId for a TyKind, or None for non-defined types.
+/// エイリアスを、ジェネリック引数を置き換えながら展開する。
+///
+/// `alias_defs` に無い型 (エイリアスでない型・外部パッケージのエイリアス) はそのまま残す。
+/// エイリアスの循環は `detect_alias_cycles` が先に弾いている。
+fn expand_alias_ty(
+    kind: &TyKind,
+    alias_defs: &HashMap<TyDefId, (Vec<GenDefId>, TyKind)>,
+) -> TyKind {
+    match kind {
+        TyKind::Defined(biwac_hir::DefinedTy { def_id, genargs }) => {
+            let genargs: Vec<Ty> = genargs
+                .iter()
+                .map(|g| Ty::new(expand_alias_ty(&g.kind, alias_defs), g.span.clone()))
+                .collect();
+            match alias_defs.get(def_id) {
+                Some((params, right)) => {
+                    let assigns: HashMap<GenDefId, TyKind> = params
+                        .iter()
+                        .copied()
+                        .zip(genargs.iter().map(|g| g.kind.clone()))
+                        .collect();
+                    let substituted = Ty::new(right.clone(), Span::dummy())
+                        .embody_by_gen_ty_id(&assigns)
+                        .kind;
+                    expand_alias_ty(&substituted, alias_defs)
+                }
+                None => TyKind::Defined(biwac_hir::DefinedTy {
+                    def_id: *def_id,
+                    genargs,
+                }),
+            }
+        }
+        TyKind::Fn(f) => TyKind::Fn(biwac_hir::FnTy {
+            args: f
+                .args
+                .iter()
+                .map(|a| Ty::new(expand_alias_ty(&a.kind, alias_defs), a.span.clone()))
+                .collect(),
+            rty: Box::new(Ty::new(
+                expand_alias_ty(&f.rty.kind, alias_defs),
+                f.rty.span.clone(),
+            )),
+            genargs: f.genargs.clone(),
+        }),
+        other => other.clone(),
+    }
+}
+
 fn canonical_ty_def_id(
     ty_kind: &TyKind,
     alias_canonical: &HashMap<TyDefId, TyDefId>,

@@ -1,0 +1,14 @@
+{
+  "name": "uninferable",
+  "version": "0.1.0",
+  "description": "an expression whose type cannot be inferred is an error, not a compiler panic",
+  "dependencies": [
+    {
+      "name": "std",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

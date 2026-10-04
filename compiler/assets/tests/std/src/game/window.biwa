@@ -12,12 +12,52 @@ import package::game::base_engine::sys_content_flush;
 import package::game::base_engine::sys_content_clear;
 import package::game::base_engine::wait;
 
-struct Window {
+// ゲームの出力先の束。ランタイムが組み立てて `on_new_game(window)` に渡す。
+//
+// フィクスチャ版は出力先の ui_id を持たない
+// (本物の std (`library/std`) は canvas / message area の ui_id を持つ)。
+// コンパイラの検査 (`on_new_game` のシグニチャ、host export) に要る形だけを揃えている。
+[[lang="game_window"]]
+struct GameWindow {
   canvas: Canvas,
   message_window: MessageWindow,
 }
 
+// ランタイムが `GameWindow` を組み立てるための入口。
+//
+// 本物の std では ui_id を受け取り、0 を「無し」として `GameWindow::new` に渡す。
+// フィクスチャ版は ui_id を持たないので受け取るだけで使わない。
+[[host_export="__biwa_std_game_window_new"]]
+fn game_window_new_for_host(canvas_id: Uint, message_area_id: Uint) -> GameWindow {
+  GameWindow::new()
+}
+
+// UI の root Element。ランタイムは起動時に `fn app() -> Window` を呼んで表示する。
+//
+// フィクスチャ版は中身を持たない (本物の std (`library/std`) は Page を持ち、
+// `show()` で UI syscall を発行する)。コンパイラの検査 (`app` のシグニチャ、host export)
+// に要る形だけを揃えている。
+[[lang="ui_window"]]
+struct Window {}
+
 impl Window {
+  fn new() -> Self {
+    Window {}
+  }
+
+  // 本物の std では UI syscall を発行して root の ui_id を返す。
+  fn show(self) -> Uint {
+    0
+  }
+}
+
+// ランタイムが `app()` の返した `Window` を表示するための入口。
+[[host_export="__biwa_std_window_show"]]
+fn window_show_for_host(window: Window) -> Uint {
+  window.show()
+}
+
+impl GameWindow {
   fn new() -> Self {
     Self {
       canvas = Canvas{},

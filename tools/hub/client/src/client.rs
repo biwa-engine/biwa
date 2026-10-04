@@ -49,7 +49,11 @@ impl HubClient {
 
     pub fn get_package_by_uuid(&self, id: Uuid) -> Result<PackageDto, HubClientError> {
         let url = format!("{}/v1/packages/", self.base_url);
-        let resp = self.http.get(url).query(&[("uuid", id.to_string())]).send()?;
+        let resp = self
+            .http
+            .get(url)
+            .query(&[("uuid", id.to_string())])
+            .send()?;
         parse_response(resp)
     }
 

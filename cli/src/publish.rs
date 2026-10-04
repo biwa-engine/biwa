@@ -158,13 +158,15 @@ fn resolve_dependencies(
             );
         }
 
-        let hub_pkg = hub.get_package_by_name(dep.name.value()).map_err(|e| match e {
-            HubClientError::NotFound => anyhow::anyhow!(
-                "dependency `{}` is not registered on the hub yet; publish it first",
-                dep.name
-            ),
-            other => anyhow::anyhow!(other),
-        })?;
+        let hub_pkg = hub
+            .get_package_by_name(dep.name.value())
+            .map_err(|e| match e {
+                HubClientError::NotFound => anyhow::anyhow!(
+                    "dependency `{}` is not registered on the hub yet; publish it first",
+                    dep.name
+                ),
+                other => anyhow::anyhow!(other),
+            })?;
 
         dependencies.push(dto::PublishVersionDependencyRequest {
             id: hub_pkg.id,

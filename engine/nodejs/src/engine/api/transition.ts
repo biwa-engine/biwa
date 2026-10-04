@@ -13,13 +13,19 @@
 
 /** 遷移できるパラメータ。値は canvas オブジェクトの状態の添字でもある。 */
 export const Param = {
-  /** 画像の中心の x 座標 [px]。canvas の中央が原点で、右が正。 */
+  /**
+   * 画像の中心の x 座標。canvas の中央が原点で、右が正。
+   * **canvas の範囲が -50 から 50** になる単位 (canvas の幅の 1/100 が 1)。
+   */
   X: 0,
-  /** 画像の中心の y 座標 [px]。canvas の中央が原点で、**上が正**。 */
+  /**
+   * 画像の中心の y 座標。canvas の中央が原点で、**上が正**。
+   * canvas の範囲が -50 から 50 になる単位 (canvas の高さの 1/100 が 1)。
+   */
   Y: 1,
-  /** 幅 [px]。 */
+  /** 幅。100 が canvas の幅。負なら「指定しない」(`CanvasObjects.resolveAutoSize`)。 */
   W: 2,
-  /** 高さ [px]。 */
+  /** 高さ。100 が canvas の高さ。負なら「指定しない」。 */
   H: 3,
   /** 不透明度。0 (透明) 〜 255 (不透明)。 */
   Alpha: 4,
@@ -28,6 +34,17 @@ export const Param = {
 } as const;
 
 export const PARAM_COUNT = 6;
+
+/**
+ * 遷移の値を `val_i` (整数) で受け取るパラメータか。
+ *
+ * `sys_add_transition` は値を `val_i` (i32) と `val_f` (f32) の 2 枠で受け取り、
+ * どちらを使うかはパラメータで決まる (`sys_ui_set_property` と同じ運用)。
+ * alpha (0-255) だけが整数で、x / y / w / h / theta は浮動小数である。
+ */
+export function isIntegerParam(param: number): boolean {
+  return param === Param.Alpha;
+}
 
 /**
  * 遷移のかかり方。

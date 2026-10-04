@@ -20,8 +20,8 @@ impl RegisterPackageUseCase {
     }
 
     pub async fn execute(&self, input: RegisterPackageInput) -> Result<Package, UseCaseError> {
-        let name = PackageName::from_str(&input.name)
-            .map_err(|e| UseCaseError::Invalid(e.to_string()))?;
+        let name =
+            PackageName::from_str(&input.name).map_err(|e| UseCaseError::Invalid(e.to_string()))?;
         let repository = RepositoryUrl::from_str(&input.repository)
             .map_err(|e| UseCaseError::Invalid(e.to_string()))?;
 

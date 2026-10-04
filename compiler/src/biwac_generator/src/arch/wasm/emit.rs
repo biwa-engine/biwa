@@ -57,6 +57,10 @@ const ENTRYPOINT_NAME: &str = "__biwa_entrypoint";
 /// 最初の `Game` を組み立てる関数。TypeScript と同じ規約である。
 const NEW_GAME_NAME: &str = "__biwa_on_new_game";
 
+/// UI の root `Window` を組み立てる関数 (`fn app()`)。ランタイムが起動時に最初に呼ぶ。
+/// TypeScript と同じ規約である。
+const APP_NAME: &str = "__biwa_app";
+
 #[derive(Debug)]
 pub enum WasmError {
     /// エントリポイントが無い。
@@ -89,8 +93,9 @@ pub fn emit(
     mono: &MonoMir,
     mangler: &Mangler,
     well_known: &biwac_scene::WellKnownSymbols,
+    host_exports: &biwac_host_export::HostExportTable,
 ) -> Result<String, WasmError> {
-    Emitter::new(mono, mangler, well_known).run()
+    Emitter::new(mono, mangler, well_known, host_exports).run()
 }
 
 struct Emitter<'a> {
@@ -98,6 +103,8 @@ struct Emitter<'a> {
     mangler: &'a Mangler<'a>,
     /// ランタイムが名前で呼ぶシンボル。export を出すのに使う。
     well_known: &'a biwac_scene::WellKnownSymbols,
+    /// `[[host_export="..."]]` が付いた関数。export を出すのに使う。
+    host_exports: &'a biwac_host_export::HostExportTable,
     /// 実体 → wasm の関数名。
     fn_names: HashMap<InstanceKey, String>,
     /// 具体型 → wasm の型名 (struct と enum の親型)。
@@ -120,6 +127,7 @@ impl<'a> Emitter<'a> {
         mono: &'a MonoMir,
         mangler: &'a Mangler<'a>,
         well_known: &'a biwac_scene::WellKnownSymbols,
+        host_exports: &'a biwac_host_export::HostExportTable,
     ) -> Self {
         // 名前は実体の索引を添えて一意にする。
         // 同じシンボルでもジェネリック引数が違えば別の関数になるためである。
@@ -172,6 +180,7 @@ impl<'a> Emitter<'a> {
             mono,
             mangler,
             well_known,
+            host_exports,
             fn_names,
             ty_names,
             variant_ty_names,
@@ -282,11 +291,31 @@ impl<'a> Emitter<'a> {
         let entry_name = &self.fn_names[&self.mono.instances[entry].key];
         let _ = writeln!(out, "  (export \"{ENTRYPOINT_NAME}\" (func ${entry_name}))");
 
-        if let Some(def_id) = self.well_known.get(biwac_scene::WellKnownSymbol::OnNewGame)
-            && let Some(inst) = self.mono.instances.iter().find(|i| i.key.def_id == def_id)
-        {
-            let name = &self.fn_names[&inst.key];
-            let _ = writeln!(out, "  (export \"{NEW_GAME_NAME}\" (func ${name}))");
+        for (symbol, export_name) in [
+            (biwac_scene::WellKnownSymbol::OnNewGame, NEW_GAME_NAME),
+            (biwac_scene::WellKnownSymbol::App, APP_NAME),
+        ] {
+            if let Some(def_id) = self.well_known.get(symbol)
+                && let Some(inst) = self.mono.instances.iter().find(|i| i.key.def_id == def_id)
+            {
+                let name = &self.fn_names[&inst.key];
+                let _ = writeln!(out, "  (export \"{export_name}\" (func ${name}))");
+            }
+        }
+
+        // `[[host_export="..."]]` が付いた関数。
+        //
+        // 対象は `monomorphize_program` が roots に加えているので、
+        // 到達性による除去は受けていないはずである。
+        // それでも見つからない場合は静かに無視せず、要因を追えるよう名前を残す。
+        for (def_id, name) in self.host_exports.iter() {
+            let Some(inst) = self.mono.instances.iter().find(|i| i.key.def_id == def_id) else {
+                return Err(WasmError::MissingInstance {
+                    name: name.to_string(),
+                });
+            };
+            let fn_name = &self.fn_names[&inst.key];
+            let _ = writeln!(out, "  (export \"{name}\" (func ${fn_name}))");
         }
 
         out.push_str(")\n");

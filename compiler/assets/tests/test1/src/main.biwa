@@ -7,6 +7,8 @@ import collections::Vec;
 // trait 越しの関連関数・メソッドは、その trait を import していないと引けない。
 import greeter::Describe;
 import std::game::Game;
+import std::game::window::GameWindow;
+import std::game::window::Window;
 import std::game::config::Config;
 // 装飾 API。埋め込み式で使うので、使う側が import する。
 import std::game::content::red;
@@ -42,6 +44,17 @@ fn float_demo() -> Float {
 
 fn add(x: Int, y: Int) -> Int {
     return x + y;
+}
+
+// `[[host_export="..."]]` の検証用。
+//
+// scene main からもどこからも呼ばれていない。
+// これは意図的である: 到達性による除去 (単相化の roots) が
+// scene だけでなく host_export された関数も根として扱うことを、
+// この関数が実際に生成物へ現れることで確かめる。
+[[host_export="host_export_demo"]]
+fn host_export_demo() -> Int {
+  add(10, 20)
 }
 
 fn foo() {
@@ -188,8 +201,14 @@ type MyGame = Game[MyGameCharacters, MyGameState];
 // ランタイムがゲーム開始時にこれを呼び、返ってきた値を `scene main` に渡す。
 // `Game` は開発者が決める値 (characters / states / config) を含むので、
 // ランタイムには組み立てられない。
-fn on_new_game() -> MyGame {
-  Game::new("test1", MyGameCharacters {}, MyGameState {}, Config::default())
+// `window` (出力先の束) はランタイムが組み立てて渡すので、そのまま `Game::new` に渡す。
+// UI の root。ランタイムが起動時に最初に呼び、返った `Window` を表示する。
+fn app() -> Window {
+  Window::new()
+}
+
+fn on_new_game(window: GameWindow) -> MyGame {
+  Game::new(window, "test1", MyGameCharacters {}, MyGameState {}, Config::default())
 }
 
 // 埋め込み式で出す値。
@@ -229,6 +248,7 @@ scene main(g: MyGame) -> MyGame {{
   #let _lv = trait_demo()
   #let _ratio = float_demo()
   #let _bound = bound_demo()
+  #let _alias_impl = alias_impl_demo()
 
   #endscene g
 }}
@@ -360,3 +380,44 @@ fn bound_demo() -> Int {
 
   a + b + c + d
 }
+
+// 型エイリアス越しの impl と、ジェネリック引数が決まらない構造体リテラル。
+//
+// - `IntHolder` / `BoolHolder` はどちらも `Holder` だがジェネリック引数が違うので、
+//   それぞれに同名のメソッド `describe` を生やせる (重複判定はエイリアスを展開して行う)。
+// - `Holder::new()` の構造体リテラルは `A` / `B` がメンバの値 (`None`) から決まらない。
+//   ジェネリック引数は型変数のまま残り、戻り値の型 (使われ方) から決まる。
+struct Holder[A, B] {
+  first: std::option::Option[A],
+  last: std::option::Option[B],
+}
+
+type IntHolder = Holder[Int, Int];
+type BoolHolder = Holder[Bool, Bool];
+
+impl[A, B] Holder[A, B] {
+  fn new() -> Self {
+    Self { first = std::option::Option::None, last = std::option::Option::None }
+  }
+}
+
+impl IntHolder {
+  fn describe(self) -> Int { 1 }
+}
+
+impl BoolHolder {
+  fn describe(self) -> Int { 2 }
+}
+
+fn int_holder() -> IntHolder {
+  Holder::new()
+}
+
+fn bool_holder() -> BoolHolder {
+  Holder::new()
+}
+
+fn alias_impl_demo() -> Int {
+  int_holder().describe() + bool_holder().describe()
+}
+

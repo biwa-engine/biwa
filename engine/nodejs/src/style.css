@@ -1,0 +1,16 @@
+/*
+ * ページ全体のスタイル。
+ *
+ * Biwa Language (`fn app() -> Window`) が制御する UI の範囲を画面全体にするため、
+ * ブラウザ既定の余白 (body の margin など) を消して host (`#app`) が画面いっぱいに広がれるようにする。
+ * host 自身の大きさは `Renderer.init` が決める (既定は 100vw x 100vh)。
+ */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+}

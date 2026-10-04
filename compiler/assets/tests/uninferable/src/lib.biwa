@@ -1,0 +1,23 @@
+// 型がどこからも決まらない式を含むライブラリ。
+//
+// ペイロードを持たないバリアント (`Tagged::Empty`) は型引数 `T` がどこからも決まらない。
+// かつてはこれが型推論を素通りして MIR の書き出しでコンパイラが panic していた。
+// 型推論のエラー (`TypeNotInferable`) として報告されなければならない。
+
+enum Tagged[T] {
+  Empty,
+  Full(T),
+}
+
+impl[T] Tagged[T] {
+  fn kind(self) -> Int {
+    match self {
+      Tagged::Empty => 0,
+      Tagged::Full(_) => 1,
+    }
+  }
+}
+
+fn empty_kind() -> Int {
+  Tagged::Empty.kind()
+}

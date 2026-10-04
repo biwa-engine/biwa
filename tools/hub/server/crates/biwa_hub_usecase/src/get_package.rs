@@ -1,7 +1,9 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use biwa_hub_domain::{PackageId, PackageName, PackageRepository, PackageVersion, VersionRepository};
+use biwa_hub_domain::{
+    PackageId, PackageName, PackageRepository, PackageVersion, VersionRepository,
+};
 
 use crate::error::UseCaseError;
 use crate::view::PackageOverview;
@@ -23,8 +25,7 @@ impl GetPackageUseCase {
     }
 
     pub async fn by_name(&self, name: &str) -> Result<PackageOverview, UseCaseError> {
-        let name =
-            PackageName::from_str(name).map_err(|e| UseCaseError::Invalid(e.to_string()))?;
+        let name = PackageName::from_str(name).map_err(|e| UseCaseError::Invalid(e.to_string()))?;
         let package = self
             .package_repository
             .find_by_name(&name)

@@ -34,8 +34,7 @@ async fn main() -> Result<()> {
 
     let package_repository: Arc<dyn PackageRepository> =
         Arc::new(PgPackageRepository::new(pool.clone()));
-    let version_repository: Arc<dyn VersionRepository> =
-        Arc::new(PgVersionRepository::new(pool));
+    let version_repository: Arc<dyn VersionRepository> = Arc::new(PgVersionRepository::new(pool));
 
     let state = AppState::new(package_repository, version_repository);
     let router = biwa_hub_presentation::router(state);

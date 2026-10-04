@@ -21,11 +21,19 @@ import {
   startTransitions,
 } from "../../api/object";
 import {
+  createUiElement,
+  pushUiChild,
+  setUiProperty,
+  setUiPropertyString,
+} from "../../api/ui";
+import {
   completeCall,
   createChannelBuffer,
   failCall,
   type WorkerMessage,
 } from "./bridge";
+import type { ScenePageEntry } from "../../ui/UIObjects";
+import type { SceneMessage, StartMessage } from "./worker";
 
 /**
  * syscall の実装。
@@ -47,6 +55,7 @@ type SyscallHandler = (...args: never[]) => unknown;
 function createHandlers(): Record<string, SyscallHandler> {
   return {
     sys_content_push_text: (
+      uiId: number,
       text: string,
       speed: number,
       sizeUnit: number,
@@ -57,16 +66,28 @@ function createHandlers(): Record<string, SyscallHandler> {
       b: number,
       a: number,
     ) =>
-      pushContentText(text, speed, sizeUnit, sizeValue, weight, r, g, b, a),
+      pushContentText(
+        uiId,
+        text,
+        speed,
+        sizeUnit,
+        sizeValue,
+        weight,
+        r,
+        g,
+        b,
+        a,
+      ),
 
-    sys_content_flush: () => flushContent(),
+    sys_content_flush: (uiId: number) => flushContent(uiId),
 
-    sys_content_clear: () => clearContent(),
+    sys_content_clear: (uiId: number) => clearContent(uiId),
 
     sys_wait: () => waitForClick(),
 
     sys_create_object: (
       id: number,
+      canvasId: number,
       path: string,
       layer: number,
       x: number,
@@ -75,7 +96,7 @@ function createHandlers(): Record<string, SyscallHandler> {
       h: number,
       alpha: number,
       theta: number,
-    ) => createObject(id, path, layer, x, y, w, h, alpha, theta),
+    ) => createObject(id, canvasId, path, layer, x, y, w, h, alpha, theta),
 
     sys_delete_object: (id: number, after: number) => deleteObject(id, after),
 
@@ -83,25 +104,58 @@ function createHandlers(): Record<string, SyscallHandler> {
       id: number,
       param: number,
       kind: number,
-      value: number,
+      valI: number,
+      valF: number,
       after: number,
       duration: number,
-    ) => addTransition(id, param, kind, value, after, duration),
+    ) => addTransition(id, param, kind, valI, valF, after, duration),
 
     sys_start_transitions: (sync: number) => startTransitions(sync),
 
     sys_await_transitions: () => awaitTransitions(),
 
     sys_sleep: (ms: number) => sleep(ms),
+
+    sys_ui_create: (id: number, kind: number) => createUiElement(id, kind),
+
+    sys_ui_set_property: (
+      id: number,
+      kind: number,
+      valU1: number,
+      valU2: number,
+      valU3: number,
+      valU4: number,
+      valI1: number,
+      valI2: number,
+      valF: number,
+    ) =>
+      setUiProperty(id, kind, valU1, valU2, valU3, valU4, valI1, valI2, valF),
+
+    sys_ui_set_property_with_string: (
+      id: number,
+      kind: number,
+      valU: number,
+      valI: number,
+      valF: number,
+      valS: string,
+    ) => setUiPropertyString(id, kind, valU, valI, valF, valS),
+
+    sys_ui_push_child: (parent: number, child: number) =>
+      pushUiChild(parent, child),
   };
 }
 
 /**
  * wasm の生成物を Worker で走らせ、終わるまで待つ。
  *
+ * Worker はまず `app()` の Window を表示し、`scenePage` が解決したら
+ * (= `scene_page_id` の Page に遷移したら) その出力先で scene を始める。
  * 返る Promise はゲームが最後まで進んだときに解決する。
  */
-export function runWasm(url: string): Promise<void> {
+export function runWasm(
+  url: string,
+  scenePage: Promise<ScenePageEntry>,
+): Promise<void> {
   if (
     typeof SharedArrayBuffer === "undefined" ||
     !globalThis.crossOriginIsolated
@@ -160,7 +214,14 @@ export function runWasm(url: string): Promise<void> {
       );
     });
 
-    worker.postMessage({ kind: "start", url, buffer });
+    const start: StartMessage = { kind: "start", url, buffer };
+    worker.postMessage(start);
+
+    // scene を映す Page に遷移したら、その出力先で scene を始めさせる。
+    void scenePage.then(({ canvasId, messageAreaId }) => {
+      const scene: SceneMessage = { kind: "scene", canvasId, messageAreaId };
+      worker.postMessage(scene);
+    });
   });
 }
 

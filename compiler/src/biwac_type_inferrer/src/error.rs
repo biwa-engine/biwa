@@ -58,6 +58,13 @@ pub enum TyError {
         ty: Box<Ty>,
     },
     InsufficientContext,
+    /// 関数の推論を終えても型が決まらなかった式。
+    ///
+    /// 例えばペイロードを持たないバリアント (`Transition::None`) は、
+    /// 型引数がどこからも決まらないことがある。
+    TypeNotInferable {
+        ty: Box<Ty>,
+    },
     ReturnTypeRequired {
         rty: Box<Ty>, // 関数が要求する戻り値
     },
@@ -408,6 +415,23 @@ impl BiwacError for TyErrorReport {
                     .print();
             }
 
+            TyError::TypeNotInferable { ty } => {
+                let rendered = names.render(&ty.kind);
+
+                ctx.diagnostic(format!(
+                    "The type of this expression cannot be determined: `{rendered}`."
+                ))
+                .label(
+                    at(&ty.span),
+                    "its type parameters are not determined by anything",
+                )
+                .note(
+                    "a generic value whose type parameters do not appear in its contents \
+                     (e.g. a variant without payload) needs them determined by how it is used",
+                )
+                .print();
+            }
+
             TyError::ReturnTypeRequired { rty } => {
                 let ty = names.render(&rty.kind);
 
@@ -587,6 +611,8 @@ pub(crate) fn error_tys(error: &TyError) -> Vec<&Ty> {
         | TyError::InvalidAssignOperation { .. }
         | TyError::InsufficientContext
         | TyError::MissingLangItem { .. } => Vec::new(),
+
+        TyError::TypeNotInferable { ty } => vec![ty.as_ref()],
     }
 }
 

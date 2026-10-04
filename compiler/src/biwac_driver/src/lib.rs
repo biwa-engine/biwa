@@ -507,6 +507,7 @@ fn load_dep_metadata(dep_root: &Path, target: Target, dep_name: &str) -> Result<
 fn persist_dep_metadata(
     hir: &biwac_hir::Hir,
     lang_items: &biwac_lang_item::LangItemTable,
+    host_exports: &biwac_host_export::HostExportTable,
     srcs: &biwac_base::SourceHolder,
     interner: &biwac_base::IdentInterner,
     dep_hashes: &[(PackageId, PackageHashes)],
@@ -517,7 +518,8 @@ fn persist_dep_metadata(
     // `.biwameta` が記録するのはインタフェースの伝播に使う SVH だけである。
     let dep_svhs: Vec<(PackageId, Hash64)> =
         dep_hashes.iter().map(|(id, h)| (*id, h.svh)).collect();
-    let (dep_meta, symbol_index) = DepMetadata::new(hir, srcs, interner, lang_items, &dep_svhs);
+    let (dep_meta, symbol_index) =
+        DepMetadata::new(hir, srcs, interner, lang_items, host_exports, &dep_svhs);
     let svh = dep_meta.svh;
     let meta_bytes = dep_meta.encode_file();
     let meta_path = metadata_path(build_dir_path, target, metadata.metadata.name.value());
@@ -578,16 +580,19 @@ fn load_analyze_and_codegen_single_package(
     let pkg_kind = pkg.pkg_kind;
     let root_mod_id = pkg.root_module.mod_id;
 
-    let biwac_name_resolver::ResolveOutput { hir, lang_items } =
-        biwac_name_resolver::NameResolver::new(
-            metadata,
-            external_packages,
-            package_name_interned,
-            &mut pkg,
-        )
-        .unwrap()
-        .try_resolve(interner)
-        .map_err(|errs| print_errors(&errs, interner, &srcs, metadata))?;
+    let biwac_name_resolver::ResolveOutput {
+        hir,
+        lang_items,
+        host_exports,
+    } = biwac_name_resolver::NameResolver::new(
+        metadata,
+        external_packages,
+        package_name_interned,
+        &mut pkg,
+    )
+    .unwrap()
+    .try_resolve(interner)
+    .map_err(|errs| print_errors(&errs, interner, &srcs, metadata))?;
 
     // Scene contract check: scene のシグネチャと、
     // playable package のエントリポイント (scene main) の存在を検証する。
@@ -596,10 +601,12 @@ fn load_analyze_and_codegen_single_package(
         .map_err(|errs| print_errors(&errs, interner, &srcs, metadata))?;
 
     // Persist self package's symbol metadata to disk for dependents.
-    // lang item テーブルも書き出すので、依存側はこれを読んで復元する。
+    // lang item テーブルと host export のフラグも書き出すので、
+    // 依存側はこれを読んで復元する。
     let (svh, symbol_index) = persist_dep_metadata(
         &hir,
         &lang_items,
+        &host_exports,
         &srcs,
         interner,
         dep_hashes,
@@ -644,6 +651,7 @@ fn load_analyze_and_codegen_single_package(
                 &ext_pkgs_for_ty,
                 &dep_mirs,
                 &well_known_scenes,
+                &host_exports,
                 interner,
             )?;
             println!(
@@ -687,6 +695,7 @@ fn load_analyze_and_codegen_single_package(
                 &srcs,
                 &ext_pkgs_for_ty,
                 &well_known_scenes,
+                &host_exports,
             );
 
             write_bin(
@@ -707,6 +716,7 @@ fn load_analyze_and_codegen_single_package(
                     &ext_pkgs_for_ty,
                     &dep_mirs,
                     &well_known_scenes,
+                    &host_exports,
                     interner,
                 )?;
 
@@ -715,11 +725,16 @@ fn load_analyze_and_codegen_single_package(
                 let mangler =
                     biwac_generator::mangle::Mangler::new(&hir, interner, &srcs, &ext_pkgs_for_ty);
 
-                let wat = biwac_generator::arch::wasm::emit(&mono, &mangler, &well_known_scenes)
-                    .map_err(|e| {
-                        eprintln!("Error: wasm code generation failed: {e}");
-                        biwac_base::print_error_finish_message(1);
-                    })?;
+                let wat = biwac_generator::arch::wasm::emit(
+                    &mono,
+                    &mangler,
+                    &well_known_scenes,
+                    &host_exports,
+                )
+                .map_err(|e| {
+                    eprintln!("Error: wasm code generation failed: {e}");
+                    biwac_base::print_error_finish_message(1);
+                })?;
 
                 // .wat は成果物として残す。デバッグではこちらを読む。
                 let wat_path = target_dir(&build_dir_path, options.target)
@@ -833,13 +848,19 @@ fn monomorphize_program(
     ext_pkgs: &[(PackageId, Arc<DepMetadata>)],
     dep_mirs: &[(PackageId, biwac_mir::Mir)],
     well_known_scenes: &biwac_scene::WellKnownSymbols,
+    host_exports: &biwac_host_export::HostExportTable,
     interner: &mut IdentInterner,
 ) -> Result<biwac_mir::MonoMir, ()> {
-    // 根はランタイムが名前で呼ぶ scene だけである。
+    // 根はランタイムが名前で呼ぶ scene と、host export された関数である。
     // そこから辿れない関数は成果物に入らない (到達性による除去がここで効く)。
+    // host export された関数はどこからも呼ばれていなくても
+    // ホストから直接呼ばれうるので、除去されては困る。
+    // 依存パッケージ (std 等) が host export した関数もここに含まれる
+    // (名前解決が `.biwameta` から取り込んでいる)。
     let roots: Vec<biwac_span::ValDefId> = biwac_scene::WellKnownSymbol::ALL
         .iter()
         .filter_map(|s| well_known_scenes.get(*s))
+        .chain(host_exports.iter().map(|(def_id, _)| def_id))
         .collect();
 
     let deps: Vec<(PackageId, &DepMetadata, &biwac_mir::Mir)> = dep_mirs
@@ -1177,6 +1198,9 @@ mod tests {
         let deps: &[&str] = match pkg {
             "test1" => &["std", "color", "greeter"],
             "greeter" => &["std", "color"],
+            "old_on_new_game" => &["std"],
+            "missing_app" => &["std"],
+            "uninferable" => &["std"],
             _ => &[],
         };
         if deps.is_empty() {
@@ -1567,6 +1591,29 @@ mod tests {
         assert!(wat.contains("(export \"__biwa_entrypoint\""), "{wat}");
         // 初期 `Game` を組み立てる入口も export される。
         assert!(wat.contains("(export \"__biwa_on_new_game\""), "{wat}");
+        // `[[host_export="..."]]` が付いた関数も export される。
+        // scene main から辿れないので、これが出ているのは
+        // 単相化の roots に host export が正しく加わっている証拠でもある。
+        assert!(wat.contains("(export \"host_export_demo\""), "{wat}");
+        // UI の root を組み立てる `fn app()`。ランタイムが起動時に最初に呼ぶ。
+        assert!(wat.contains("(export \"__biwa_app\""), "{wat}");
+        // それを表示する std の入口 (依存の host export)。
+        assert!(wat.contains("(export \"__biwa_std_window_show\""), "{wat}");
+        // std の `GameWindow` を組み立てる入口。ランタイムはこれで作った値を
+        // `on_new_game(window)` に渡す。std (依存) の host export なので、
+        // test1 の生成物から出ていることがパッケージ越しの export の実用上の確認になる。
+        assert!(
+            wat.contains("(export \"__biwa_std_game_window_new\""),
+            "{wat}"
+        );
+        // 依存パッケージ (greeter) で `[[host_export="..."]]` が付いた関数も、
+        // それを使う側である test1 の生成物から export される。
+        // test1 はこれを呼んでいないので、依存由来の host export も
+        // roots に入っていることの確認にもなる。
+        assert!(
+            wat.contains("(export \"greeter_host_export_demo\""),
+            "{wat}"
+        );
 
         // .wasm は検証を通ったものである
         // (通っていなければ compile がエラーになっている)。
@@ -1633,6 +1680,102 @@ mod tests {
             TyKind::Defined(dt) => dt.genargs.iter().all(is_concrete),
             TyKind::Fn(f) => f.args.iter().all(is_concrete) && is_concrete(&f.rty),
         }
+    }
+
+    /// `[[host_export="..."]]` が `.biwameta` に載り、依存側から読み戻せること。
+    ///
+    /// ヘッダのフラグが立っている関数だけが、export 名付きで返る。
+    #[test]
+    fn host_export_is_recorded_in_metadata() {
+        build_once("test1");
+
+        let data = std::fs::read(build_dir("greeter").join("greeter.biwameta")).unwrap();
+        let meta = biwac_dependency_metadata::DepMetadata::decode_file(&data).unwrap();
+
+        let greeter = package_id_of("greeter");
+        let exports = meta
+            .host_exports(greeter)
+            .expect("host exports should be readable");
+        let names: Vec<&str> = exports.iter().map(|(_, name)| *name).collect();
+        assert_eq!(names, ["greeter_host_export_demo"]);
+
+        // 返る DefId は依存側から見た greeter のものである。
+        let (def_id, _) = exports[0];
+        assert_eq!(def_id.pkg(), greeter);
+
+        // 読み戻したボディ (export 名を含む) から計算し直した SVH が、
+        // 書いたときの SVH と一致する。
+        assert_eq!(meta.compute_svh(), meta.svh);
+    }
+
+    /// 旧い契約 `fn on_new_game() -> Game[..]` の playable package が拒否されること。
+    ///
+    /// ランタイムは `on_new_game` に `GameWindow` を渡すので、
+    /// 引数を取らない `on_new_game` のままではビルドを通してはならない。
+    /// フィクスチャの本体は型としては正しく、失敗の理由はシグニチャ検査だけである。
+    #[test]
+    fn rejects_on_new_game_without_game_window() {
+        ensure_fixture_deps("old_on_new_game");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/old_on_new_game").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "`fn on_new_game()` without a `GameWindow` must be rejected"
+        );
+    }
+
+    /// `fn app() -> Window` を持たない playable package が拒否されること。
+    ///
+    /// ランタイムは起動時にまず `app()` を呼ぶ。フィクスチャの他の部分は正しく、
+    /// 失敗の理由は `app` の欠落だけである。
+    #[test]
+    fn rejects_playable_without_app() {
+        ensure_fixture_deps("missing_app");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/missing_app").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "a playable package without `fn app() -> Window` must be rejected"
+        );
+    }
+
+    /// 型がどこからも決まらない式は、コンパイラの panic ではなく型エラーになること。
+    ///
+    /// ペイロードを持たないジェネリックなバリアントは型引数が決まらないことがある。
+    /// かつては型変数のまま MIR の書き出しまで流れて panic していた。
+    #[test]
+    fn uninferable_type_is_an_error_not_a_panic() {
+        ensure_fixture_deps("uninferable");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/uninferable").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "an expression whose type cannot be inferred must be rejected"
+        );
     }
 
     /// `.biwamir` と `.biwameta` の対応が崩れていたら読み込みで止まること。

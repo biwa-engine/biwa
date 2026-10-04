@@ -76,3 +76,20 @@ impl Greeting: Describe {
     return Greeting::new(greet("code"));
   }
 }
+
+// パッケージをまたぐ `[[host_export="..."]]` の検証用。
+//
+// greeter 自身は playable ではないので成果物を持たない。
+// これを使う側 (test1) のビルドで、`.biwameta` のフラグを通じて
+// test1 の生成物から export されることを確かめる。
+// test1 はどこからもこれを呼ばないので、export に現れることが
+// 依存由来の host export も単相化の roots に入っている証拠になる。
+// 呼び先の `host_export_helper` も到達性で消されてはならない。
+[[host_export="greeter_host_export_demo"]]
+fn greeter_host_export_demo() -> Int {
+  host_export_helper(40)
+}
+
+fn host_export_helper(x: Int) -> Int {
+  x + 2
+}

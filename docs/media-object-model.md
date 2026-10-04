@@ -25,18 +25,21 @@ canvas 上のオブジェクト (画像・将来は動画や GIF) を、
 fn create_object(
   path: String,
   layer: u32,                          // canvas レイヤーの index
-  x: i32, y: i32,                      // 画像の中心の座標 (canvas 中央が原点, y は上が正)
-  w: i32, h: i32,                      // 負なら「指定しない」
+  x: f32, y: f32,                      // 画像の中心の座標 (出力先の Canvas Element の中央が原点, y は上が正)
+                                       // canvas の範囲が -50.0..50.0 になる単位 (下記「座標の単位」)
+  w: f32, h: f32,                      // 100.0 が canvas の幅 / 高さ。負なら「指定しない」
   alpha: i32,                          // 0-255
-  theta: i32,                          // 度。回転の中心は画像の中心
+  theta: f32,                          // 度。回転の中心は画像の中心
 ) -> u32;
 
 fn delete_object(id: u32, after: u32);
 
 // --- 遷移 -------------------------------------------------------------
 // add_ は「次の start_ で発火する集合」に積むだけで、何も起こさない。
+// 値は val_i (i32) と val_f (f32) の 2 枠で渡し、使わない方は 0 で埋める
+// (`sys_ui_set_property` と同じ運用)。alpha は val_i、x / y / w / h / theta は val_f を使う。
 fn add_transition(
-  id: u32, param: u32, kind: u32, value: i32, after: u32, duration: u32,
+  id: u32, param: u32, kind: u32, val_i: i32, val_f: f32, after: u32, duration: u32,
 );
 
 // 積まれていたものを発火する。オブジェクトを跨いで一斉に始まる。
@@ -50,6 +53,17 @@ fn sleep(ms: u32);
 ```
 
 引数は最大 8 個に収まり、パラメータ数にもオブジェクト数にも上限が無い。
+
+### 座標の単位
+
+x / y / w / h は出力先の Canvas を基準にした単位で、syscall には f32 で渡す。
+
+- x / y は **canvas の範囲が -50.0 から 50.0** になる (x は canvas の幅、y は canvas の高さの 1/100 が 1)。
+- w / h は 100.0 が canvas の幅 / 高さ。負なら「指定しない」で、片方だけ負なら
+  画像の縦横比を保つように (一度 px に直して比を取る)、両方負なら画像の元の大きさ (px) で
+  エンジンが決める。決めるのは最初に描画先の大きさが分かったときの 1 回で、以降は canvas の単位の値になる。
+- エンジンは射影のときに描画先の今の大きさで px に直すので、canvas の大きさが変われば中身も追従する。
+- std では `std::game::canvas` の `Cx` / `Cy` / `Cw` / `Ch` で扱う。
 
 ## 実装の順序
 
@@ -131,8 +145,8 @@ TypeScript ターゲットでは中断しない syscall はただの関数呼び
 背景・立ち絵・前景といった意味づけは std の仕事で、
 プリミティブには**レイヤーの index だけ**を渡す。
 
-`LayerManager` は index を受けて canvas レイヤーを必要に応じて作る
-(`LayerManager.canvas(index)`)。**レイヤーは安いので、たくさん使ってよい。**
+出力先の Canvas Element ごとの描画先が index を受けて canvas レイヤーを必要に応じて作る
+(`CanvasSurface.layer(index)`、`engine/canvas/CanvasSurfaces.ts`)。**レイヤーは安いので、たくさん使ってよい。**
 そのため同一レイヤー内の z 順は「作られた順」で足り、
 `set_z` のようなものは要らない。細かく前後を制御したければレイヤーを分ける。
 
@@ -444,7 +458,7 @@ API 上の区分ではないが、読んで分かるようにしておく。
 | 4     | `alpha` | 4           | `ease_in_out` |             |            |
 | 5     | `theta` | 5           | `ease_out_in` |             |            |
 
-`value` の単位はパラメータの単位そのもの (px / 0–255 / 度)。
+`value` の単位はパラメータの単位そのもの (canvas の単位 / 0–255 / 度)。
 周期系では振幅、`duration` は周期を表す。
 
 `EaseIn` は「ゆっくり始まり速く終わる」、`EaseOut` はその逆とした。
@@ -462,7 +476,7 @@ CSS をはじめ既存のツールがすべてこの意味で使っているの�
 | param / kind の番号、曲線と波形     | `engine/src/engine/api/transition.ts`        |
 | オブジェクトと遷移の本体            | `engine/src/engine/canvas/CanvasObjects.ts`  |
 | syscall の入口 (両ターゲット共通)   | `engine/src/engine/api/object.ts`            |
-| canvas レイヤー (index で作られる)  | `engine/src/engine/LayerManager.ts`          |
+| canvas レイヤー (index で作られる)  | `engine/src/engine/canvas/CanvasSurfaces.ts` |
 | wasm の区分と `alloc`               | `engine/src/engine/vm/wasm/contract.ts`      |
 | cast のまとめ流し                   | `engine/src/engine/vm/wasm/bridge.ts`        |
 | wasm 側の対応表                     | `engine/src/engine/vm/wasm/host.ts`          |

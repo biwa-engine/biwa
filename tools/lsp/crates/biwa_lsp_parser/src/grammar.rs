@@ -1463,9 +1463,7 @@ Hello! $blue(bold("a"))!
 
     #[test]
     fn parse_scene_if_stmt_with_nested_command() {
-        no_errors(
-            "scene s(g: G) -> G {{\n#if x > 2 {\n#let y = 1\ntext $y()\n}\n}}\n",
-        );
+        no_errors("scene s(g: G) -> G {{\n#if x > 2 {\n#let y = 1\ntext $y()\n}\n}}\n");
     }
 
     #[test]

@@ -3,6 +3,7 @@
 /// 物理レイアウト:
 ///   [MAGIC: 4B][version: u32 LE]
 ///   [sym_hdr_count: u32][DiskSymbolHeader; sym_hdr_count]
+///     └─ 各ヘッダ: [kind: u32][vis: u32][offset: u32][flags: u32]
 ///   [root_sym_idx: u32]
 ///   [sym_body_total_bytes: u32][body_data: sym_body_total_bytes B]
 ///     └─ 各エントリ: [body_size: u32][body: body_size B]
@@ -17,7 +18,7 @@ use super::codec::{DiskDecode, DiskEncode, DiskVec, impl_u32_newtype_codec};
 use crate::error::DepMetadataError;
 
 pub const BIWAC_DEPENDENCY_METADATA_MAGIC: &[u8; 4] = b"bwmt";
-pub const BIWAC_DEPENDENCY_METADATA_FORMAT_VERSION: u32 = 8;
+pub const BIWAC_DEPENDENCY_METADATA_FORMAT_VERSION: u32 = 11;
 
 // --- インデックス / オフセット型 ---
 
@@ -114,19 +115,30 @@ impl TryFrom<u32> for DiskVisibility {
     }
 }
 
-// --- DiskSymbolHeader (固定長 12B) ---
+// --- DiskSymbolHeader (固定長 16B) ---
 //
 // sym_hdr_table の各エントリ。固定長なので O(1) ランダムアクセス可能。
+
+/// `[[host_export="..."]]` が付いた関数であることを示す [`DiskSymbolHeader::flags`] のビット。
+///
+/// 依存側はボディをデコードせずにヘッダの走査だけで host export を拾える。
+/// export 名そのものは [`DiskFnData::host_export`] にある。
+pub const SYMBOL_FLAG_HOST_EXPORT: u32 = 1 << 0;
 
 #[derive(Debug, Clone, Copy)]
 pub struct DiskSymbolHeader {
     pub kind: u32,              // DiskSymbolKind として解釈
     pub vis: u32,               // DiskVisibility として解釈
     pub offset: DiskBodyOffset, // sym_body_data 内の body_size プレフィックスへのオフセット
+    pub flags: u32,             // SYMBOL_FLAG_* のビット集合
 }
 
 impl DiskSymbolHeader {
-    pub const BYTE_SIZE: usize = 12;
+    pub const BYTE_SIZE: usize = 16;
+
+    pub fn is_host_export(&self) -> bool {
+        self.flags & SYMBOL_FLAG_HOST_EXPORT != 0
+    }
 
     pub fn kind(&self) -> Result<DiskSymbolKind, DepMetadataError> {
         DiskSymbolKind::try_from(self.kind)
@@ -150,6 +162,7 @@ impl DiskDecode for DiskSymbolHeader {
                 kind: u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
                 vis: u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
                 offset: DiskBodyOffset(u32::from_le_bytes(bytes[8..12].try_into().unwrap())),
+                flags: u32::from_le_bytes(bytes[12..16].try_into().unwrap()),
             },
             Self::BYTE_SIZE,
         ))
@@ -161,6 +174,7 @@ impl DiskEncode for DiskSymbolHeader {
         self.kind.encode(buf);
         self.vis.encode(buf);
         self.offset.encode(buf);
+        self.flags.encode(buf);
     }
 }
 
@@ -498,6 +512,11 @@ pub struct DiskFnData {
     /// 名前解決の可視性 (import 規則) と、
     /// マングル名に trait 成分を挟むかどうかを決めるのに使う。
     pub trait_of: DiskVec<DiskTy>,
+    /// `[[host_export="..."]]` の export 名。付いていなければ空。
+    ///
+    /// `trait_of` と同じく、0 個か 1 個で `Option` を表す。
+    /// 付いているかどうかはヘッダの [`SYMBOL_FLAG_HOST_EXPORT`] にも立つ。
+    pub host_export: DiskVec<DiskStringOffset>,
 }
 
 impl DiskDecode for DiskFnData {
@@ -523,6 +542,8 @@ impl DiskDecode for DiskFnData {
         pos += n;
         let (trait_of, n) = DiskVec::<DiskTy>::decode(&bytes[pos..])?;
         pos += n;
+        let (host_export, n) = DiskVec::<DiskStringOffset>::decode(&bytes[pos..])?;
+        pos += n;
         Ok((
             Self {
                 name,
@@ -535,6 +556,7 @@ impl DiskDecode for DiskFnData {
                 impl_self_ty,
                 has_self,
                 trait_of,
+                host_export,
             },
             pos,
         ))
@@ -553,6 +575,7 @@ impl DiskEncode for DiskFnData {
         self.impl_self_ty.encode(buf);
         self.has_self.encode(buf);
         self.trait_of.encode(buf);
+        self.host_export.encode(buf);
     }
 }
 

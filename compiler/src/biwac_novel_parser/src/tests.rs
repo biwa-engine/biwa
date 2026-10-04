@@ -199,3 +199,47 @@ fn an_unknown_escape_is_rejected() {
         Err(NovelParseError::UnknownEscape { found: 'u', .. })
     ));
 }
+
+// ---- 浮動小数リテラル ----
+
+/// 埋め込み式の関数呼び出しの引数を、リテラルの種類と値の文字列にして取り出す。
+fn embedded_args(src: &str) -> Vec<String> {
+    use biwac_ast::{Exprs, Literal, Primary};
+
+    for stmt in parse(src).expect("should parse") {
+        let NovelStmt::ContentPush(biwac_ast::NovelContent::Expr { expr, .. }) = stmt else {
+            continue;
+        };
+        let Exprs::Primary(Primary::FnCall(call)) = expr else {
+            continue;
+        };
+        return call
+            .args
+            .iter()
+            .map(|a| match a {
+                Exprs::Primary(Primary::Literal(Literal::Float(f))) => format!("float({})", f.val),
+                Exprs::Primary(Primary::Literal(Literal::Integer(i))) => format!("int({})", i.val),
+                _ => "other".to_string(),
+            })
+            .collect();
+    }
+    panic!("no call in an embedded expression: {src:?}");
+}
+
+#[test]
+fn float_literals_in_code() {
+    // scene の中のコード (`$` や `#`) でも `cx(10.0)` のように浮動小数が書ける。
+    assert_eq!(
+        embedded_args("$f(10.5, 3, 0.25)\n"),
+        ["float(10.5)", "int(3)", "float(0.25)"]
+    );
+    // `#` 行でも読める。
+    assert!(parse("#let x = f(54.6875)\nok\n").is_ok());
+}
+
+#[test]
+fn a_dot_not_followed_by_a_digit_is_not_part_of_a_number() {
+    // `1.` の後が数字でなければ浮動小数ではない (メソッド呼び出しなどの区切りのまま)。
+    assert_eq!(embedded_args("$f(1)\n"), ["int(1)"]);
+    assert!(parse("$f(1).g()\n").is_ok());
+}

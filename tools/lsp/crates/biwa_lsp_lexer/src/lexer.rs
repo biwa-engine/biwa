@@ -598,9 +598,8 @@ fn lex_novel_segment(src: &str, offset: usize, out: &mut Vec<Token>) {
         // `{` (ordinary code token として lex_code_segment 側で `LBrace` になる)
         // に対応するブロック終端で、`}}` (scene 全体の終端) とは別物。
         // 同じ `RBrace` トークンにしておくと、対応する `LBrace` と種類が揃う。
-        let is_single_brace_close = !is_end_brace
-            && content_start < line_end
-            && bytes[content_start] == b'}';
+        let is_single_brace_close =
+            !is_end_brace && content_start < line_end && bytes[content_start] == b'}';
 
         if is_end_brace {
             push_indent(out);
@@ -986,7 +985,10 @@ mod tests {
     fn lex_endscene_keyword() {
         let ks = kinds("scene s(g: G) -> G {{\n#endscene g\n}}\n");
         assert!(ks.contains(&SyntaxKind::KwEndScene));
-        assert!(ks.contains(&SyntaxKind::Ident), "`g` should still lex as Ident");
+        assert!(
+            ks.contains(&SyntaxKind::Ident),
+            "`g` should still lex as Ident"
+        );
     }
 
     #[test]
@@ -998,7 +1000,10 @@ mod tests {
         let kinds: Vec<SyntaxKind> = toks.iter().map(|t| t.kind).collect();
         assert!(kinds.contains(&SyntaxKind::LBrace));
         let rbrace_count = kinds.iter().filter(|k| **k == SyntaxKind::RBrace).count();
-        assert_eq!(rbrace_count, 1, "expected exactly one single-brace close, got {toks:?}");
+        assert_eq!(
+            rbrace_count, 1,
+            "expected exactly one single-brace close, got {toks:?}"
+        );
         let double_rbrace_count = kinds
             .iter()
             .filter(|k| **k == SyntaxKind::DoubleRBrace)
@@ -1018,7 +1023,11 @@ mod tests {
             .iter()
             .filter(|t| t.kind == SyntaxKind::StringLiteral)
             .collect();
-        assert_eq!(strings.len(), 1, "expected exactly one string token, got {toks:?}");
+        assert_eq!(
+            strings.len(),
+            1,
+            "expected exactly one string token, got {toks:?}"
+        );
         assert_eq!(strings[0].text(src), r#""a\"b""#);
         assert!(!toks.iter().any(|t| t.kind == SyntaxKind::Error));
         assert_lossless(src);
@@ -1038,7 +1047,11 @@ mod tests {
             .iter()
             .filter(|t| t.kind == SyntaxKind::StringLiteral)
             .collect();
-        assert_eq!(strings.len(), 1, "expected exactly one string token, got {toks:?}");
+        assert_eq!(
+            strings.len(),
+            1,
+            "expected exactly one string token, got {toks:?}"
+        );
         assert_eq!(strings[0].text(src), "\"\\\"foo\\\"\"");
         assert_lossless(src);
     }

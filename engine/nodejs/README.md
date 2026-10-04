@@ -11,12 +11,19 @@ Biwa エンジンの基盤エンジン実装 (Node.js 版)。
 ## ゲームコードとの境界
 
 コンパイラは Biwa のコードを **wasm または TypeScript** に変換する。
-ゲーム本体はエントリポイント `__biwa_entrypoint` (= `scene main`) として現れ、
-`biwa dev` が生成するスタブ `src/game/entry.ts` を経由して呼ばれる。
+ゲーム側の入口は `biwa dev` が生成するスタブ `src/game/entry.ts` を経由して呼ばれる。
+起動の流れはどちらのターゲットでも同じである:
+
+1. `__biwa_app` (= `fn app() -> Window`) を呼び、返った Window を std の
+   `__biwa_std_window_show` で表示する。**エンジンは UI を何も置かない**
+2. Window の `scene_page_id` の Page に遷移するのを待つ (`UIObjects.onScenePageEntered`)
+3. その Page の `canvas` / `message_area` の ui_id で `__biwa_std_game_window_new` を呼び、
+   `__biwa_on_new_game(window)` → `__biwa_entrypoint` (= `scene main`) を始める
+   (2 回目以降の遷移は未定義。いまは最初の 1 回だけ)
 
 ```
 src/main.ts
-  ├─ kind: "wasm"        → runWasm(url)                     ← Worker で wasm を走らせる
+  ├─ kind: "wasm"        → runWasm(url, scenePage)          ← Worker で wasm を走らせる
   └─ kind: "typescript"  → kernel.run(entrypoint(game))     ← scene main (generator)
 ```
 
@@ -209,11 +216,13 @@ src/
     api/transition.ts   # param / kind の番号と曲線・波形 (std との合意点)
     canvas/
       CanvasObjects.ts  # canvas オブジェクトと遷移の本体。Ticker で回る
-    Renderer.ts         # PixiJS Application のラッパー
+    ui/
+      UIObjects.ts      # UI Element のツリーと DOM。MessageArea が TextBox を持つ
+    Renderer.ts         # host の大きさとエンジンの時計 (唯一の Ticker)
+    canvas/CanvasSurfaces.ts  # Canvas Element ごとの描画先 (Element の中の `<canvas>`)
     LayerManager.ts     # canvas / DOM レイヤーの生成・参照管理
   components/
-    ComponentRegistry.ts
-    TextBox.ts          # メッセージウィンドウ。断片の列と文字送り。Ticker で回る
+    TextBox.ts          # メッセージウィンドウ。断片の列と文字送り。MessageArea ごとに 1 つ
   game/
     entry.ts            # `biwa dev` が生成して上書きする (リポジトリのものはプレースホルダ)
 ```
@@ -224,6 +233,9 @@ scene の生テキストと `$` の埋め込み式は、std の `Content` を経
 `sys_content_push_text` としてエンジンに届く。
 設計と決めごとは [`docs/content-api.md`](../../docs/content-api.md) にある。
 
+- 出力先は UI Element `MessageArea` で、Content API の syscall は第一引数の
+  ui_id でそれを指定する。MessageArea が 1 つずつ `TextBox` を持つ
+  (`engine/ui/UIObjects.ts`)。枠の位置・大きさ・背景・余白は MessageArea の property が決める
 - 届く値は**すべて解決済みの絶対値**である。速度・大きさ・色の設定は
   `Game` が持ち、std が潰してから渡す。**エンジンは設定を知らない**
 - `push` は積むだけで何も起きない。`flush` で初めて文字送りが始まる
@@ -234,8 +246,9 @@ scene の生テキストと `$` の埋め込み式は、std の `Content` を経
 - クリックは**進行中のものをまず畳む**。文字送りの途中なら残りを全部出し、
   sync 印の演出が走っていれば終端へ飛ばす。両方を 1 回のクリックで畳むので、
   テキストが進むのは次のクリックである
-- 文字送りは `main.ts` の唯一の Ticker コールバックから駆動する。
-  倍率は `CanvasObjects.timeScale` を借りている
+- 文字送りは `main.ts` の唯一の Ticker コールバックから、すべての MessageArea を
+  まとめて駆動する (`UIObjects.update`)。倍率は `CanvasObjects.timeScale` を借りている。
+  クリックでの送りの完了もすべての MessageArea に効く
 - 装飾 (`$blue(bold("琵琶"))`) は std に閉じている。
   エンジンに届くのは解決済みの色・大きさ・太さ・速度だけで、
   **装飾 API が増えてもエンジンは変わらない**。
@@ -246,7 +259,9 @@ scene の生テキストと `$` の埋め込み式は、std の `Content` を経
 画像などを canvas に置き、パラメータの遷移でアニメーションさせる。
 規約と設計の理由は [`docs/media-object-model.md`](../../docs/media-object-model.md) にある。
 
-- 座標は **canvas の中央が原点**で、x は右が正、**y は上が正**。
+- 出力先は UI Element `Canvas` で、`sys_create_object` の第一引数の ui_id で指定する。
+  描画範囲はその Element の矩形で、はみ出しは切り取る (`engine/canvas/CanvasSurfaces.ts`)
+- 座標は **出力先の Canvas の中央が原点**で、x は右が正、**y は上が正**。
   位置も回転も画像の中心を基準にする (PixiJS とは向きも単位も違うので、
   biwa 側の値を正として毎フレーム射影している)
 - 遷移は `add_transition` で積み、`start_transitions` で発火する。
@@ -281,17 +296,13 @@ Ticker に登録するコールバックは `main.ts` の 1 つだけである�
 
 ## レイヤーシステム
 
-canvas レイヤーと DOM レイヤーを積み重ねる。
-
-- **canvas レイヤー**: PixiJS の Container。**整数の index** で識別し、
-  `create_object` に渡された index のものが必要に応じて作られる。
-  背景・立ち絵・前景といった意味づけは std の仕事なのでここには無い。
-  レイヤーは安いので、前後を細かく分けたければ index を分ければよい
-- **DOM レイヤー**: テキスト・UI 描画 (HTMLElement, `pointer-events: none`)。名前で識別する
-
-canvas は 1 枚の `<canvas>` の中に積まれ、その `<canvas>` は
-すべての DOM レイヤーより下にある。
-つまり canvas レイヤーの index が DOM レイヤーを追い越すことはない。
+- **DOM レイヤー**: UI 描画 (HTMLElement, `pointer-events: none`)。名前で識別する。
+  UI Element はすべてここに入り、Element どうしの前後は `Layers` の push 順で決まる
+- **canvas レイヤー**: UI Element `Canvas` ごとの描画先 (`canvas/CanvasSurfaces.ts`) の中の
+  PixiJS の Container。**整数の index** で識別し、`create_object` に渡された index の
+  ものが必要に応じて作られる。背景・立ち絵・前景といった意味づけは std の仕事なので
+  ここには無い。レイヤーは安いので、前後を細かく分けたければ index を分ければよい。
+  描画先の `<canvas>` は Canvas Element の中にあるので、他の Element との前後は DOM の重なりに従う
 
 DOM レイヤーと UI コンポーネントの定義は将来 XML で行う。
 

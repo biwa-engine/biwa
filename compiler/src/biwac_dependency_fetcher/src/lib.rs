@@ -9,8 +9,8 @@ mod git;
 use std::path::Path;
 use std::str::FromStr;
 
-use biwac_base::PackageVersion;
 use biwa_hub_client::HubClient;
+use biwac_base::PackageVersion;
 
 pub use error::FetchError;
 
@@ -44,7 +44,11 @@ impl Fetcher {
 
         let picked = versions
             .into_iter()
-            .filter_map(|v| PackageVersion::from_str(&v.version).ok().map(|ver| (ver, v)))
+            .filter_map(|v| {
+                PackageVersion::from_str(&v.version)
+                    .ok()
+                    .map(|ver| (ver, v))
+            })
             .filter(|(ver, _)| ver.in_range(min, max))
             .max_by_key(|(ver, _)| *ver)
             .map(|(_, v)| v)

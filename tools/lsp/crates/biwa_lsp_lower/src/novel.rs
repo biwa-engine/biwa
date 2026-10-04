@@ -22,7 +22,9 @@
 //!   別々の `NovelStmt::ContentPush` になる (name resolution には影響しない)。
 
 use biwa_lsp_lexer::SyntaxKind;
-use biwac_ast::{NovelBlockStmt, NovelContent, NovelEndSceneStmt, NovelFlush, NovelIfStmt, NovelStmt};
+use biwac_ast::{
+    NovelBlockStmt, NovelContent, NovelEndSceneStmt, NovelFlush, NovelIfStmt, NovelStmt,
+};
 use biwac_base::{IdentInterner, ModId};
 
 use crate::cursor::{Children, SyntaxNode, node_span, token_span};

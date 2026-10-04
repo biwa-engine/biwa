@@ -1,75 +1,94 @@
-import { ComponentRegistry } from "./components/ComponentRegistry";
-import { TextBox } from "./components/TextBox";
 import { setEngineContext } from "./engine/api/context";
 import { CanvasObjects } from "./engine/canvas/CanvasObjects";
+import { CanvasSurfaces } from "./engine/canvas/CanvasSurfaces";
 import type { BiwaBackend } from "./engine/game";
 import { Renderer } from "./engine/Renderer";
+import { type ScenePageEntry, UIObjects } from "./engine/ui/UIObjects";
 import { Kernel } from "./engine/vm/kernel";
 import { createSyscallTable } from "./engine/vm/handlers";
 import { runWasm } from "./engine/vm/wasm/host";
 import backend from "./game/entry";
+import "./style.css";
 
-const WIDTH = 1280;
-const HEIGHT = 720;
-
-const MESSAGE_BOX_ID = "main-message-window";
-const MESSAGE_LAYER_ID = "message";
+// UI (Window/Page/Link/Canvas/MessageArea/...) を載せる層。
+// canvas の描画先も Message Window も、それぞれ UI Element の中身としてここに入る。
+// クリック判定を奪うのは Link だけなので、下の演出やテキストを覆っても
+// リンクの無い場所ではクリックがそのまま `host` まで抜ける。
+const UI_LAYER_ID = "ui";
 
 const host = document.querySelector<HTMLDivElement>("#app")!;
 host.style.cursor = "pointer";
 
 const renderer = new Renderer(host);
-await renderer.init(WIDTH, HEIGHT);
+// 画面全体を host にする。UI の範囲はすべて Biwa Language 側が決める。
+renderer.init();
 
-// canvas レイヤーは `create_object` の layer index から必要に応じて作られる。
+// canvas に描くものの層は、出力先の `Canvas` Element ごとの描画先が
+// `create_object` の layer index から必要に応じて作る。
 // ここで定義するのは DOM レイヤーだけでよい。
-renderer.layers.defineDom(MESSAGE_LAYER_ID, 20);
+renderer.layers.defineDom(UI_LAYER_ID, 25);
 
-const components = new ComponentRegistry();
-const messageBox = new TextBox(0, 460, WIDTH, 260);
-components.register(
-  MESSAGE_BOX_ID,
-  messageBox,
-  renderer.layers.dom(MESSAGE_LAYER_ID),
-);
-
-const objects = new CanvasObjects(renderer.layers, WIDTH, HEIGHT);
+const ui = new UIObjects(renderer.layers.dom(UI_LAYER_ID));
+const surfaces = new CanvasSurfaces(ui);
+const objects = new CanvasObjects(surfaces);
 // エンジンが Ticker に登録するコールバックはこれ 1 つだけである。
 // オブジェクトごとに生やさないのは、リークを避けるためでもあるし、
 // ポーズ・オート・スキップを 1 箇所の時間操作で効かせるためでもある。
-renderer.app.ticker.add((ticker) => {
+renderer.ticker.add((ticker) => {
   objects.update(ticker.deltaMS);
-  // 文字送りも同じ時計で進める。倍率を `objects` から借りるのは、
+  // 文字送りも同じ時計で進める (すべての MessageArea)。倍率を `objects` から借りるのは、
   // ポーズ・オート・スキップが 1 箇所の時間操作で効くようにするためである。
-  messageBox.update(ticker.deltaMS * objects.timeScale);
+  ui.update(ticker.deltaMS * objects.timeScale);
+  // 射影し終えたものを、Canvas Element ごとの描画先に描く。
+  surfaces.render();
 });
 
 // 以降、syscall の実装はこのコンテキストを通してエンジンを触る。
 setEngineContext({
   renderer,
-  components,
   objects,
+  ui,
   host,
-  messageBoxId: MESSAGE_BOX_ID,
 });
 
 document.title = `${backend.packageName} — Biwa`;
 
-await runGame(backend);
+// scene を映す Page (Window の `scene_page_id`) への最初の遷移。
+// その Page の `canvas` / `message_area` が scene の出力先になる。
+//
+// 2 回目以降の遷移で何をするかは未定義である (セーブ・ロードが整っていないため)。
+// いまは最初の 1 回で scene を始め、以降は何もしない (Promise は一度しか解決しない)。
+const scenePage = new Promise<ScenePageEntry>((resolve) => {
+  ui.onScenePageEntered(resolve);
+});
+
+// エンジンは UI を何も置かない。`app()` の Window が表示されて初めて画面に何かが出る。
+await runGame(backend, scenePage);
 
 /**
  * ゲームを走らせる。
  *
+ * 流れはどちらのターゲットでも同じである:
+ * `app()` の Window を表示 → `scene_page_id` の Page へ遷移するのを待つ →
+ * その出力先で `GameWindow` を作り `on_new_game(window)` → `scene main`。
+ *
  * どちらのターゲットでも、エンジンから見えるのは syscall の流れだけである。
  * 違うのは「どこで動いていて、どうやって中断するか」でしかない。
  */
-async function runGame(backend: BiwaBackend): Promise<void> {
+async function runGame(
+  backend: BiwaBackend,
+  scenePage: Promise<ScenePageEntry>,
+): Promise<void> {
   switch (backend.kind) {
     case "typescript": {
+      backend.windowShow(backend.app());
+      const { canvasId, messageAreaId } = await scenePage;
+
       // scene は generator なので、呼んだだけでは何も起きない。
       // kernel が next() で駆動し、yield された syscall を処理して結果を書き戻す。
       const kernel = new Kernel(createSyscallTable());
-      await kernel.run(backend.entrypoint(backend.onNewGame()));
+      const window = backend.gameWindowNew(canvasId, messageAreaId);
+      await kernel.run(backend.entrypoint(backend.onNewGame(window)));
       return;
     }
     case "wasm": {
@@ -77,7 +96,7 @@ async function runGame(backend: BiwaBackend): Promise<void> {
       // buildId を付けるのは、再ビルドで同じ URL のまま中身が変わるためである。
       const url = new URL(backend.url, location.href);
       url.searchParams.set("v", backend.buildId);
-      await runWasm(url.href);
+      await runWasm(url.href, scenePage);
       return;
     }
   }

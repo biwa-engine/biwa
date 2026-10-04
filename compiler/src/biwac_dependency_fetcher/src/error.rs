@@ -10,7 +10,10 @@ pub enum FetchError {
     },
     Io(std::io::Error),
     /// `git` コマンドが非 0 で終了した。
-    GitFailed { step: &'static str, status: String },
+    GitFailed {
+        step: &'static str,
+        status: String,
+    },
 }
 
 impl Display for FetchError {

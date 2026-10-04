@@ -1,0 +1,7 @@
+[package]
+name = "biwac_host_export"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+biwac_span = { path = "../biwac_span"}

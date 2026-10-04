@@ -18,7 +18,10 @@ use biwac_dependency_metadata::ExternalPackage;
 use biwac_hir::Hir;
 use biwac_package_loader::Pkg;
 
-use crate::resolving::{lang_item_collector::collect_lang_items, resolve_in_self_package};
+use crate::resolving::{
+    host_export_collector::collect_host_exports, lang_item_collector::collect_lang_items,
+    resolve_in_self_package,
+};
 
 // このcrate biwac_name_resolver は、
 // package内のあらゆる名前の解決をすることを目指す。
@@ -65,6 +68,7 @@ impl<T> ResolveErrorHandler for Result<T, ResolveError> {
 pub struct ResolveOutput {
     pub hir: Hir,
     pub lang_items: biwac_lang_item::LangItemTable,
+    pub host_exports: biwac_host_export::HostExportTable,
 }
 
 pub struct NameResolver<'p> {
@@ -126,6 +130,13 @@ impl<'p> NameResolver<'p> {
         // 逆に名前解決が lang item を必要とすることもない。
         let lang_items = collect_lang_items(&self.pkg, &external_packages, self.no_std, interner)?;
 
+        // host export の回収。
+        //
+        // lang item と同じく def collection の直後に行い、依存パッケージの分も
+        // `.biwameta` から取り込む。
+        // 名前解決にもその逆にも関与しない、独立したパスである。
+        let host_exports = collect_host_exports(&self.pkg, &external_packages, interner)?;
+
         // TODO: cache on disk
         // def_collector
         // name_tree
@@ -152,6 +163,10 @@ impl<'p> NameResolver<'p> {
             &lang_items,
         )?;
 
-        Ok(ResolveOutput { hir, lang_items })
+        Ok(ResolveOutput {
+            hir,
+            lang_items,
+            host_exports,
+        })
     }
 }

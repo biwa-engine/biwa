@@ -901,12 +901,25 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                     .cloned()
                     .collect::<HashSet<InternedIdent>>();
 
+                // ジェネリック引数ごとに新しい型変数を割り当て、メンバの定義の型を
+                // それで具体化してから単一化する。
+                // メンバの値から決まらないジェネリック引数 (`Vec::new()` や `None` しか
+                // 入っていないもの) も型変数のまま残り、後で使われ方 (戻り値の型など) から決まる。
+                // 定義の型に `Gen` を残したまま単一化すると、値の側の型変数に
+                // `Gen` を含む型が束縛されてしまい、割り当てが記録されない。
+                let assigns: HashMap<GenDefId, TyKind> = struct_
+                    .genargs
+                    .iter()
+                    .map(|gid| (*gid, self.fresh()))
+                    .collect();
+
                 let mut dtctx = DefinedTyCtx::default();
                 for (id, (ident, expr)) in &members {
                     if let Some(definition_ty) = struct_.members.get(id).cloned() {
                         let user_ty = self.infer_expr(expr)?;
                         self.defined_ty_unify(
-                            Ty::new(definition_ty.kind, ident.span.clone()),
+                            Ty::new(definition_ty.kind, ident.span.clone())
+                                .embody_by_gen_ty_id(&assigns),
                             user_ty,
                             &mut dtctx,
                         )?;
@@ -920,14 +933,16 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                     }
                 }
 
-                // 定義型のジェネリック引数宣言に登場するジェネリック型が
-                // そのメンバなどに必ず使用されることが保証されているなら、
-                // dtctx.gen_assigns にはこの時点で必ず GenDefId -> Ty の割り当てがある
-                // その割り当てを収集して返す
+                // 各ジェネリック引数に割り当てた型変数の、ここまでで分かった型。
                 let genargs = struct_
                     .genargs
                     .iter()
-                    .map(|gid| dtctx.gen_assigns.get(gid).unwrap().clone())
+                    .map(|gid| {
+                        Ty::new(
+                            self.apply(assigns[gid].clone()),
+                            struct_literal.span.clone(),
+                        )
+                    })
                     .collect();
 
                 if member_ids.is_empty() {
@@ -1564,7 +1579,11 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
             }
             Primary::Block(block) => self.infer_block_expr(block),
             Primary::MethodCall(m) => {
+                // ここまでの推論で分かった型を適用してから引く。
+                // impl はジェネリック引数ごとに分かれうる (特殊化) ので、
+                // 受け手の型のジェネリック引数が型変数のままだと引き分けられない。
                 let left = self.infer_expr(&m.left)?;
+                let left = self.apply_ty(left);
 
                 // 左辺値の型のメソッド実装からメソッド名をキーにメソッドを取得
                 let target = self.tctx.get_method_target(
@@ -2106,16 +2125,30 @@ impl<'a> TyCtx<'a> {
         fctx.solve_obligations()?;
 
         // 記録した型に残っている型変数を、最後にまとめて解く。
-        let expr_tys = fctx
+        let expr_tys: HashMap<_, Ty> = fctx
             .exprs
             .iter()
             .map(|(id, ty)| (*id, fctx.resolve_ty(ty)))
             .collect();
-        let var_tys = fctx
+        let var_tys: HashMap<VarId, Ty> = fctx
             .vars
             .iter()
             .map(|(id, ty)| (*id, fctx.resolve_ty(ty)))
             .collect();
+
+        // それでも型変数が残っているものは、型がどこからも決まらなかった。
+        // 後段 (MIR) には具体的な型が要るので、ここで位置を付けて報告する。
+        // 報告する 1 つはソース上で最も前にあるものにする (決定的にするため)。
+        if let Some(ty) = expr_tys
+            .values()
+            .chain(var_tys.values())
+            .filter(|ty| contains_infer(&ty.kind))
+            .min_by_key(|ty| (ty.span.begin(), ty.span.end()))
+        {
+            return Err(TyError::TypeNotInferable {
+                ty: Box::new(ty.clone()),
+            });
+        }
         let call_genargs = fctx
             .call_genargs
             .iter()
@@ -2292,5 +2325,17 @@ fn collect_loc_gens(ty: &Ty, out: &mut HashSet<LocalGenDefId>) {
             collect_loc_gens(&fty.rty, out);
         }
         _ => {}
+    }
+}
+
+/// 型変数 (`Infer`) を含むか。
+fn contains_infer(kind: &TyKind) -> bool {
+    match kind {
+        TyKind::Infer(_) => true,
+        TyKind::Defined(dt) => dt.genargs.iter().any(|g| contains_infer(&g.kind)),
+        TyKind::Fn(f) => {
+            f.args.iter().any(|a| contains_infer(&a.kind)) || contains_infer(&f.rty.kind)
+        }
+        _ => false,
     }
 }

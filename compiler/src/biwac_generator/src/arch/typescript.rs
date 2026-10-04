@@ -27,6 +27,10 @@ const ENTRYPOINT_NAME: &str = "__biwa_entrypoint";
 // エントリポイントに渡す (`docs/content-api.md` を参照)。
 const NEW_GAME_NAME: &str = "__biwa_on_new_game";
 
+// UI の root `Window` を組み立てる関数 (`fn app()`)。ランタイムが起動時に最初に呼び、
+// std の host export `__biwa_std_window_show` で表示する。
+const APP_NAME: &str = "__biwa_app";
+
 pub fn generate(
     hir: &Hir,
     interner: &IdentInterner,
@@ -36,6 +40,7 @@ pub fn generate(
         std::sync::Arc<biwac_dependency_metadata::DepMetadata>,
     )],
     well_known: &biwac_scene::WellKnownSymbols,
+    host_exports: &biwac_host_export::HostExportTable,
 ) -> String {
     let allocator = oxc_allocator::Allocator::default();
     let ctx = AstBuildCtx::new(hir, interner, srcs, ext_pkgs, &allocator);
@@ -247,14 +252,40 @@ pub fn generate(
     for (symbol, export_name) in [
         (biwac_scene::WellKnownSymbol::Main, ENTRYPOINT_NAME),
         (biwac_scene::WellKnownSymbol::OnNewGame, NEW_GAME_NAME),
+        (biwac_scene::WellKnownSymbol::App, APP_NAME),
     ] {
         if let Some(def_id) = well_known.get(symbol) {
             body.push(export_alias(
                 &ctx.get_value_mangled(&def_id),
                 export_name,
+                None,
                 &allocator,
             ));
         }
+    }
+
+    // `[[host_export="..."]]` が付いた関数も同じ形で別名 export する。
+    //
+    // TypeScript バックエンドは単相化も到達性による除去も行わない
+    // (トップレベルの定義をすべて `export` している) ので、
+    // wasm 側のように roots へ加える必要は無い。
+    //
+    // 依存パッケージが host export した関数は、このモジュールのスコープに
+    // import されているとは限らない (import するのは実際に参照した値だけ)。
+    // そのため定義元のモジュールから直接再 export する
+    // (`export { <mangled> as <name> } from "./<pkg>.ts"`)。
+    for (def_id, export_name) in host_exports.iter() {
+        let source = if def_id.pkg().is_self() {
+            None
+        } else {
+            Some(format!("./{}.ts", ctx.get_package_name_of_value(&def_id)))
+        };
+        body.push(export_alias(
+            &ctx.get_value_mangled(&def_id),
+            export_name,
+            source.as_deref(),
+            &allocator,
+        ));
     }
 
     let oxc_ast = oxc_ast::ast::Program {
@@ -347,9 +378,13 @@ fn generator_ty<'a>(
 }
 
 /// `export { <local> as <exported> };` を作る。
+///
+/// `source` を与えると、そのモジュールからの再 export
+/// (`export { local as exported } from "source"`) になる。
 fn export_alias<'a>(
     local: &str,
     exported: &'a str,
+    source: Option<&str>,
     allocator: &'a oxc_allocator::Allocator,
 ) -> oxc_ast::ast::Statement<'a> {
     let local_name = oxc_span::Ident::new_const(allocator.alloc_str(local));
@@ -378,7 +413,12 @@ fn export_alias<'a>(
                 }],
                 allocator,
             ),
-            source: None,
+            source: source.map(|source| oxc_ast::ast::StringLiteral {
+                span: span(),
+                value: oxc_ast::ast::Atom::from_in(source, allocator),
+                raw: None,
+                lone_surrogates: false,
+            }),
             export_kind: oxc_ast::ast::ImportOrExportKind::Value,
             with_clause: None,
         },
@@ -429,5 +469,49 @@ impl Mangled for ValDefId {
 impl Mangled for TyDefId {
     fn mangled(&self, ctx: &AstBuildCtx) -> String {
         ctx.get_type_mangled(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn render(stmt: oxc_ast::ast::Statement<'_>, allocator: &oxc_allocator::Allocator) -> String {
+        let program = oxc_ast::ast::Program {
+            span: span(),
+            source_type: oxc_ast::ast::SourceType::ts(),
+            body: oxc_allocator::Vec::from_iter_in([stmt], allocator),
+            directives: oxc_allocator::Vec::new_in(allocator),
+            hashbang: None,
+            source_text: "",
+            comments: oxc_allocator::Vec::new_in(allocator),
+            scope_id: Cell::new(None),
+        };
+        oxc_codegen::Codegen::new().build(&program).code
+    }
+
+    /// 自パッケージの関数は、スコープにある名前をそのまま別名 export する。
+    #[test]
+    fn export_alias_of_own_symbol() {
+        let allocator = oxc_allocator::Allocator::default();
+        let code = render(
+            export_alias("_ZN4main3fooE", "foo", None, &allocator),
+            &allocator,
+        );
+        assert_eq!(code.trim(), "export { _ZN4main3fooE as foo };");
+    }
+
+    /// 依存パッケージの関数 (host export) は、定義元のモジュールから再 export する。
+    #[test]
+    fn export_alias_of_dependency_symbol_reexports_from_its_module() {
+        let allocator = oxc_allocator::Allocator::default();
+        let code = render(
+            export_alias("_ZN3std3barE", "bar", Some("./std.ts"), &allocator),
+            &allocator,
+        );
+        assert_eq!(
+            code.trim(),
+            r#"export { _ZN3std3barE as bar } from "./std.ts";"#
+        );
     }
 }

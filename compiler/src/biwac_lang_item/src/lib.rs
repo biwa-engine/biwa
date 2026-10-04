@@ -313,6 +313,18 @@ lang_item_table!(
     Game,      "game",      LangItemKind::Ty, LangItemGenericRequirement::Exact(2);
     Character, "character", LangItemKind::Ty, LangItemGenericRequirement::Exact(1);
 
+    // ゲームの出力先 (canvas と message area) の束。
+    // ランタイムはこれを組み立てて `fn on_new_game(window: GameWindow)` に渡すので、
+    // コンパイラは `on_new_game` のシグネチャ検査でこの型を知っている必要がある
+    // (biwac_scene)。
+    GameWindow, "game_window", LangItemKind::Ty, LangItemGenericRequirement::Exact(0);
+
+    // UI の root Element `Window` (`docs/ui-api.md`)。
+    // ランタイムは起動時に `fn app() -> Window` を呼んで表示するので、
+    // コンパイラは `app` のシグネチャ検査でこの型を知っている必要がある (biwac_scene)。
+    // std の `GameWindow` (出力先の束) とは別物である。
+    UiWindow, "ui_window", LangItemKind::Ty, LangItemGenericRequirement::Exact(0);
+
     // 文字列リテラルの型。
     // コンパイラは "..." を書かれた位置でこの型を割り当てる。
     String,    "string",    LangItemKind::Ty, LangItemGenericRequirement::Exact(0);

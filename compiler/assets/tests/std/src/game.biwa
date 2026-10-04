@@ -2,7 +2,7 @@ import package::string::String;
 import package::option::Option;
 import image::Image;
 import image::CanvasObject;
-import window::Window;
+import window::GameWindow;
 import window::Position;
 import config::Config;
 
@@ -19,7 +19,7 @@ struct Game[C, S] {
   name: String, // ゲームの名前
   characters: C,
   states: S,
-  window: Window,
+  window: GameWindow,
 
   // 文字速度・サイズ・色などの設定。
   //
@@ -29,12 +29,13 @@ struct Game[C, S] {
 }
 
 impl[C, S] Game[C, S] {
-  fn new(name: String, characters: C, states: S, config: Config) -> Self {
+  // `window` はランタイムが組み立てて `on_new_game(window)` に渡したもの。
+  fn new(window: GameWindow, name: String, characters: C, states: S, config: Config) -> Self {
     Self {
       name = name,
       characters = characters,
       states = states,
-      window = Window::new(),
+      window = window,
       config = config,
     }
   }

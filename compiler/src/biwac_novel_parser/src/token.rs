@@ -18,6 +18,7 @@ pub struct NCodeToken {
 pub enum NCodeTkKind {
     Ident(String),         // <identifier>
     LiteralInteger(u64),   // integer literal
+    LiteralFloat(f64),     // float literal
     LiteralString(String), // string literal
     KwTrue,                // bool literal `TRUE`
     KwFalse,               // bool literal `FALSE`
@@ -63,6 +64,7 @@ pub enum NCodeTkKind {
 pub enum NCodeTkKindName {
     Ident,           // <identifier>
     LiteralInteger,  // integer literal
+    LiteralFloat,    // float literal
     LiteralString,   // string literal
     KwTrue,          // bool literal `TRUE`
     KwFalse,         // bool literal `FALSE`
@@ -502,14 +504,59 @@ impl<'src> NovelSourceStream<'src> {
                         }
                     }
 
-                    (
-                        NCodeTkKind::LiteralInteger(
-                            remain_str[..token_len]
-                                .parse()
-                                .expect("must be parsed as usize"),
-                        ),
-                        token_len,
-                    )
+                    // `1.5` のように `.` の直後に数字が続けば浮動小数リテラル
+                    // (通常のコードの字句解析 (biwac_lexer) と同じ規則)。
+                    // `.` の後が数字でなければ、`.` はメソッド呼び出しなどの区切りとして残す。
+                    let after_int = &remain_str[token_len..];
+                    let is_float = after_int.starts_with('.')
+                        && after_int[1..]
+                            .chars()
+                            .next()
+                            .is_some_and(|c| c.is_ascii_digit());
+                    if is_float {
+                        // `.` と、続く数字を読む。
+                        remain_chars.next();
+                        token_len += 1;
+                        while let Some(c) = remain_chars.peek() {
+                            match char_kind(*c) {
+                                CharKind::Numeric => {
+                                    token_len += 1;
+                                    remain_chars.next();
+                                }
+                                CharKind::Mark | CharKind::WhiteSpace => {
+                                    break;
+                                }
+                                x => {
+                                    return Err(NovelParseError::InvalidChar {
+                                        expecteds: vec![
+                                            CharKind::Numeric,
+                                            CharKind::Mark,
+                                            CharKind::WhiteSpace,
+                                        ],
+                                        found: x,
+                                        span: self.span_from(peeking_begin_idx + token_len, 1),
+                                    });
+                                }
+                            }
+                        }
+                        (
+                            NCodeTkKind::LiteralFloat(
+                                remain_str[..token_len]
+                                    .parse()
+                                    .expect("must be parsed as f64"),
+                            ),
+                            token_len,
+                        )
+                    } else {
+                        (
+                            NCodeTkKind::LiteralInteger(
+                                remain_str[..token_len]
+                                    .parse()
+                                    .expect("must be parsed as usize"),
+                            ),
+                            token_len,
+                        )
+                    }
                 }
 
                 // アルファベット等始まりは、識別子または予約語である
@@ -629,6 +676,7 @@ impl NCodeTkKind {
         match self {
             Self::Ident(_) => NCodeTkKindName::Ident, // <identifier>
             Self::LiteralInteger(_) => NCodeTkKindName::LiteralInteger, // integer literal
+            Self::LiteralFloat(_) => NCodeTkKindName::LiteralFloat, // float literal
             Self::LiteralString(_) => NCodeTkKindName::LiteralString, // string literal
             Self::KwTrue => NCodeTkKindName::KwTrue,  // bool literal `TRUE`
             Self::KwFalse => NCodeTkKindName::KwFalse, // bool literal `FALSE`
@@ -759,6 +807,7 @@ impl NCodeTkKind {
                 format!("<identifier> `{ident}`")
             }
             Self::LiteralInteger(i) => format!("<integer-literal> `{i}`"),
+            Self::LiteralFloat(f) => format!("<float-literal> `{f}`"),
             Self::LiteralString(s) => format!("<string-literal> `\"{s}\"`"),
             _ => format!("`{}`", self.as_kind_name().pattern()),
         }
@@ -796,6 +845,7 @@ impl NCodeTkKindName {
         match self {
             Self::Ident => "<identifier>",
             Self::LiteralInteger => "<integer-literal>",
+            Self::LiteralFloat => "<float-literal>",
             Self::LiteralString => "<string-literal>",
             Self::KwTrue => "TRUE",
             Self::KwFalse => "FALSE",

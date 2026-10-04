@@ -68,6 +68,7 @@ export type SyscallKind =
  * その名前を挙げて失敗する (不透明な LinkError にはしない)。
  */
 export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
+  // Content API の 3 つは第一引数が出力先の MessageArea の ui_id。
   /** Message Window に content を積む。描画は始まらない。 */
   sys_content_push_text: "cast",
   /** 積まれた content を出し始める。 */
@@ -109,6 +110,17 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   sys_map_insert: "local",
   /** Map からの取得。 */
   sys_map_get: "local",
+
+  // UI Element (`docs/ui-api.md`)。kind の番号は `api/ui.ts` が正で、
+  // wasm 側の std はそれを `.wat` に直書きしている。
+  /** UI Element を作る。id を返すが、止まらない。 */
+  sys_ui_create: "alloc",
+  /** 数値の property を設定する。 */
+  sys_ui_set_property: "cast",
+  /** 文字列を伴う property を設定する。 */
+  sys_ui_set_property_with_string: "cast",
+  /** 子 Element を親に積む。 */
+  sys_ui_push_child: "cast",
 };
 
 /**

@@ -127,7 +127,9 @@ pub fn resolve_document(doc_path: &Path, doc_src: &str) -> Result<DocumentResolu
     // `biwac_hir::MethodCall::target` からしか分からないので、
     // 型推論に成功したときだけ別枠で集めて `classifications` に混ぜる。
     let (diagnostics, method_classifications) = match resolver.try_resolve(&mut interner) {
-        Ok(biwac_name_resolver::ResolveOutput { hir, lang_items }) => {
+        Ok(biwac_name_resolver::ResolveOutput {
+            hir, lang_items, ..
+        }) => {
             // 名前解決が成功したら、その Hir をそのまま型推論に渡す。
             // 依存パッケージはすでに名前解決のために読み込み済みなので、
             // ここは実質つなぐだけでよい (`biwac_driver` と同じ結線)。

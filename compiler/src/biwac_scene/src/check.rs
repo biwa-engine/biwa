@@ -1,11 +1,11 @@
 use biwac_base::{IdentInterner, ModId, PackageKind};
 use biwac_hir::{FnSignature, Hir, Ty, TyKind, ValDefKind};
-use biwac_lang_item::{LangItem, LangItemTable};
+use biwac_lang_item::LangItemTable;
 use biwac_span::TyDefId;
 
 use crate::{
-    SceneError, SceneRequirement, SignatureProblem, WellKnownKind, WellKnownSymbol,
-    WellKnownSymbols,
+    ContractTy, SCENE_ARGS, SCENE_RET, SceneError, SceneRequirement, SignatureProblem,
+    WellKnownKind, WellKnownSymbol, WellKnownSymbols,
 };
 
 /// scene の規約を検査し、既知 scene の解決結果を返す。
@@ -25,10 +25,10 @@ pub fn check(
     let mut errors = Vec::new();
     let mut found = WellKnownSymbols::new();
 
-    // lang item `game` が無いパッケージ (std をビルドする前など) では
-    // シグネチャを照合しようがないので検査を諦める。
+    // 規約に現れる型の lang item が無いパッケージ (std をビルドする前など) では
+    // シグネチャを照合しようがないので検査を諦める (`check_signature` 参照)。
     // lang item の欠落自体は名前解決のパスが報告している。
-    let game_ty = lang_items.get(&LangItem::Game).map(TyDefId::new);
+    let contract_ty = |ty: ContractTy| lang_items.get(&ty.lang_item()).map(TyDefId::new);
 
     for (def_id, val) in &hir.vals {
         if !def_id.pkg().is_self() {
@@ -36,12 +36,13 @@ pub fn check(
         }
 
         // scene はすべて `(Game[..]) -> Game[..]` でなければならない。
-        if let (ValDefKind::NovelScene(scene), Some(game_ty)) = (val, game_ty) {
+        if let ValDefKind::NovelScene(scene) = val {
             check_signature(
                 &scene.signature,
                 &scene.name,
-                WellKnownKind::Scene,
-                game_ty,
+                SCENE_ARGS,
+                SCENE_RET,
+                &contract_ty,
                 interner,
                 &mut errors,
             );
@@ -69,10 +70,19 @@ pub fn check(
         }
 
         // scene 以外の既知シンボルはここでシグニチャを見る。
+        // 期待する型はシンボルごとに表が持っている。
         if kind == WellKnownKind::Fn
-            && let (ValDefKind::Fn(f), Some(game_ty)) = (val, game_ty)
+            && let ValDefKind::Fn(f) = val
         {
-            check_signature(&f.signature, &f.name, kind, game_ty, interner, &mut errors);
+            check_signature(
+                &f.signature,
+                &f.name,
+                well_known.args(),
+                well_known.ret(),
+                &contract_ty,
+                interner,
+                &mut errors,
+            );
         }
 
         found.set(well_known, *def_id);
@@ -120,14 +130,19 @@ fn finish(
 /// ランタイムが呼ぶシンボルのシグニチャを検査する。
 ///
 /// - scene は `(Game[..]) -> Game[..]`
-/// - `on_new_game` のような関数は `() -> Game[..]`
+/// - 既知の関数は表 (`WellKnownSymbol::args` / `ret`) のとおり
+///   (`on_new_game` は `(GameWindow) -> Game[..]`)
 ///
 /// ジェネリック引数に何が入るかは問わない。
+///
+/// 期待する型の lang item が引けないもの (std をビルドする前など) は照合を飛ばす。
+/// 引数の個数とレシーバの有無は lang item に依らないので常に見る。
 fn check_signature(
     sig: &FnSignature,
     name_ident: &biwac_hir::Ident,
-    kind: WellKnownKind,
-    game_ty: TyDefId,
+    expected_args: &'static [ContractTy],
+    expected_ret: ContractTy,
+    contract_ty: &impl Fn(ContractTy) -> Option<TyDefId>,
     interner: &IdentInterner,
     errors: &mut Vec<SceneError>,
 ) {
@@ -136,7 +151,8 @@ fn check_signature(
     let mut push = |reason| {
         errors.push(SceneError::InvalidSceneSignature {
             scene: name.clone(),
-            kind,
+            expected_args,
+            expected_ret,
             reason,
             span: name_ident.span.clone(),
         })
@@ -146,31 +162,37 @@ fn check_signature(
         push(SignatureProblem::HasReceiver);
     }
 
-    let expected = match kind {
-        WellKnownKind::Scene => 1,
-        WellKnownKind::Fn => 0,
-    };
-
-    match (kind, sig.args.as_slice()) {
-        (WellKnownKind::Scene, [arg]) => {
-            if !is_game(&arg.ty, game_ty) {
-                push(SignatureProblem::ArgNotGame);
+    if sig.args.len() == expected_args.len() {
+        for (index, (arg, expected)) in sig.args.iter().zip(expected_args).enumerate() {
+            if is_contract_ty(&arg.ty, *expected, contract_ty) == Some(false) {
+                push(SignatureProblem::ArgType {
+                    index,
+                    expected: *expected,
+                });
             }
         }
-        (WellKnownKind::Fn, []) => {}
-        (_, args) => push(SignatureProblem::ArgCount {
-            found: args.len(),
-            expected,
-        }),
+    } else {
+        push(SignatureProblem::ArgCount {
+            found: sig.args.len(),
+            expected: expected_args.len(),
+        });
     }
 
-    if !is_game(&sig.rty, game_ty) {
-        push(SignatureProblem::ReturnNotGame);
+    if is_contract_ty(&sig.rty, expected_ret, contract_ty) == Some(false) {
+        push(SignatureProblem::ReturnType {
+            expected: expected_ret,
+        });
     }
 }
 
-fn is_game(ty: &Ty, game_ty: TyDefId) -> bool {
-    matches!(&ty.kind, TyKind::Defined(dt) if dt.def_id == game_ty)
+/// `ty` が規約の型 `expected` か。lang item が引けず判定できなければ `None`。
+fn is_contract_ty(
+    ty: &Ty,
+    expected: ContractTy,
+    contract_ty: &impl Fn(ContractTy) -> Option<TyDefId>,
+) -> Option<bool> {
+    let def_id = contract_ty(expected)?;
+    Some(matches!(&ty.kind, TyKind::Defined(dt) if dt.def_id == def_id))
 }
 
 /// ルートモジュールに同じ名前の値があるが、期待した種別でない場合にその span を返す。
