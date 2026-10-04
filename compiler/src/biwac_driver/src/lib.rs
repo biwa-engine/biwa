@@ -1200,6 +1200,7 @@ mod tests {
             "greeter" => &["std", "color"],
             "old_on_new_game" => &["std"],
             "missing_app" => &["std"],
+            "uninferable" => &["std"],
             _ => &[],
         };
         if deps.is_empty() {
@@ -1751,6 +1752,29 @@ mod tests {
         assert!(
             result.is_err(),
             "a playable package without `fn app() -> Window` must be rejected"
+        );
+    }
+
+    /// 型がどこからも決まらない式は、コンパイラの panic ではなく型エラーになること。
+    ///
+    /// ペイロードを持たないジェネリックなバリアントは型引数が決まらないことがある。
+    /// かつては型変数のまま MIR の書き出しまで流れて panic していた。
+    #[test]
+    fn uninferable_type_is_an_error_not_a_panic() {
+        ensure_fixture_deps("uninferable");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/uninferable").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "an expression whose type cannot be inferred must be rejected"
         );
     }
 

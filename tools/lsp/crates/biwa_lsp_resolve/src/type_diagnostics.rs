@@ -174,6 +174,14 @@ fn to_diagnostic(report: &TyErrorReport, interner: &IdentInterner) -> Option<(Sp
         // span を持たない (呼び出し位置に紐づかない/文脈依存の) エラー。
         TyError::InsufficientContext => None,
 
+        TyError::TypeNotInferable { ty } => {
+            let rendered = names.render(&ty.kind);
+            Some((
+                ty.span.clone(),
+                format!("The type of this expression cannot be determined: `{rendered}`."),
+            ))
+        }
+
         TyError::ReturnTypeRequired { rty } => {
             let ty = names.render(&rty.kind);
             Some((rty.span.clone(), format!("This function must return `{ty}`.")))

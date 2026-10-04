@@ -2125,16 +2125,30 @@ impl<'a> TyCtx<'a> {
         fctx.solve_obligations()?;
 
         // 記録した型に残っている型変数を、最後にまとめて解く。
-        let expr_tys = fctx
+        let expr_tys: HashMap<_, Ty> = fctx
             .exprs
             .iter()
             .map(|(id, ty)| (*id, fctx.resolve_ty(ty)))
             .collect();
-        let var_tys = fctx
+        let var_tys: HashMap<VarId, Ty> = fctx
             .vars
             .iter()
             .map(|(id, ty)| (*id, fctx.resolve_ty(ty)))
             .collect();
+
+        // それでも型変数が残っているものは、型がどこからも決まらなかった。
+        // 後段 (MIR) には具体的な型が要るので、ここで位置を付けて報告する。
+        // 報告する 1 つはソース上で最も前にあるものにする (決定的にするため)。
+        if let Some(ty) = expr_tys
+            .values()
+            .chain(var_tys.values())
+            .filter(|ty| contains_infer(&ty.kind))
+            .min_by_key(|ty| (ty.span.begin(), ty.span.end()))
+        {
+            return Err(TyError::TypeNotInferable {
+                ty: Box::new(ty.clone()),
+            });
+        }
         let call_genargs = fctx
             .call_genargs
             .iter()
@@ -2311,5 +2325,17 @@ fn collect_loc_gens(ty: &Ty, out: &mut HashSet<LocalGenDefId>) {
             collect_loc_gens(&fty.rty, out);
         }
         _ => {}
+    }
+}
+
+/// 型変数 (`Infer`) を含むか。
+fn contains_infer(kind: &TyKind) -> bool {
+    match kind {
+        TyKind::Infer(_) => true,
+        TyKind::Defined(dt) => dt.genargs.iter().any(|g| contains_infer(&g.kind)),
+        TyKind::Fn(f) => {
+            f.args.iter().any(|a| contains_infer(&a.kind)) || contains_infer(&f.rty.kind)
+        }
+        _ => false,
     }
 }

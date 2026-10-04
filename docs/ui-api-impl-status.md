@@ -1263,3 +1263,22 @@ docs・syscall・std・engine のすべてで px だった (調査結果はユ�
   `animate` で背景が動かないことを確認した (確認後に削除)。
 - `cargo test` (compiler / tools/lsp) green、`tsc --noEmit` 無エラー。
 
+### §18 の後の修正: 型が決まらない式でコンパイラが panic していた
+
+std の `stop_loop_if_needed` の `CanvasObjectTransition::None.as_raw_kind()` で、`biwa dev` が
+`compiler bug: an inference type reached MIR encoding` で止まっていた。
+ペイロードを持たないバリアントは型引数 (V, D) がどこからも決まらず、型変数のまま MIR の書き出しまで
+流れていた。§18 の確認では `~/test1` の std がキャッシュ (`Fresh`) から再利用されていて、
+新しいコンパイラで std の MIR を書き出す経路を通していなかった (確認の手順の不備)。
+
+- コンパイラ: 関数の推論を終えても式・変数の型に型変数が残っていたら、位置付きの型エラー
+  `TypeNotInferable` (「The type of this expression cannot be determined」) にした。
+  LSP の診断にも対応を追加。回帰テスト `uninferable_type_is_an_error_not_a_panic`
+  (フィクスチャ `uninferable`)。
+- std: `impl[V, D] CanvasObjectTransition[V, D]` に同じ型の `None` を返す `fn stop(self) -> Self` を置き、
+  `self.stop().as_raw_kind()` にした (戻り値の `Self` で型引数が `self` から決まる。番号の直書きはしない)。
+- 確認の手順: compiler / cli を `cargo build` し直し、`~/test1/.biwa_build` の成果物と配置済みの std を
+  消してから `biwa dev -r` で std / greeter / test1 をすべて建て直し (`Compiling ... (forced by --rebuild)`)、
+  Playwright で登場・歩行 (`and()`)・フェード (`alpha_then()`)・Layers・Link・最後まで進めることを確認。
+  `cargo test` (compiler / tools/lsp) green。
+
