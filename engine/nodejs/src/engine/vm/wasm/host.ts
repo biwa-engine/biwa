@@ -104,10 +104,11 @@ function createHandlers(): Record<string, SyscallHandler> {
       id: number,
       param: number,
       kind: number,
-      value: number,
+      valI: number,
+      valF: number,
       after: number,
       duration: number,
-    ) => addTransition(id, param, kind, value, after, duration),
+    ) => addTransition(id, param, kind, valI, valF, after, duration),
 
     sys_start_transitions: (sync: number) => startTransitions(sync),
 

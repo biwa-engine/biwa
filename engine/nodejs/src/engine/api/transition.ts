@@ -36,6 +36,17 @@ export const Param = {
 export const PARAM_COUNT = 6;
 
 /**
+ * 遷移の値を `val_i` (整数) で受け取るパラメータか。
+ *
+ * `sys_add_transition` は値を `val_i` (i32) と `val_f` (f32) の 2 枠で受け取り、
+ * どちらを使うかはパラメータで決まる (`sys_ui_set_property` と同じ運用)。
+ * alpha (0-255) だけが整数で、x / y / w / h / theta は浮動小数である。
+ */
+export function isIntegerParam(param: number): boolean {
+  return param === Param.Alpha;
+}
+
+/**
  * 遷移のかかり方。
  *
  * 0〜15 が一度限りのもの、16 以降が周期的なものである。

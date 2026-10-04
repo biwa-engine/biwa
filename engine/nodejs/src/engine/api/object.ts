@@ -1,4 +1,5 @@
 import { engine } from "./context";
+import { isIntegerParam } from "./transition";
 
 /**
  * canvas オブジェクトの syscall の実装。
@@ -58,10 +59,13 @@ export function addTransition(
   id: number,
   param: number,
   kind: number,
-  value: number,
+  valI: number,
+  valF: number,
   after: number,
   duration: number,
 ): void {
+  // 値は 2 枠のうちパラメータで決まる方を使う (使わない方は 0 で埋めてある)。
+  const value = isIntegerParam(param) ? valI : valF;
   engine().objects.addTransition(id, param, kind, value, after, duration);
 }
 

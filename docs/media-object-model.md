@@ -28,7 +28,7 @@ fn create_object(
   x: f32, y: f32,                      // 画像の中心の座標 (出力先の Canvas Element の中央が原点, y は上が正)
                                        // canvas の範囲が -50.0..50.0 になる単位 (下記「座標の単位」)
   w: f32, h: f32,                      // 100.0 が canvas の幅 / 高さ。負なら「指定しない」
-  alpha: f32,                          // 0-255
+  alpha: i32,                          // 0-255
   theta: f32,                          // 度。回転の中心は画像の中心
 ) -> u32;
 
@@ -36,8 +36,10 @@ fn delete_object(id: u32, after: u32);
 
 // --- 遷移 -------------------------------------------------------------
 // add_ は「次の start_ で発火する集合」に積むだけで、何も起こさない。
+// 値は val_i (i32) と val_f (f32) の 2 枠で渡し、使わない方は 0 で埋める
+// (`sys_ui_set_property` と同じ運用)。alpha は val_i、x / y / w / h / theta は val_f を使う。
 fn add_transition(
-  id: u32, param: u32, kind: u32, value: f32, after: u32, duration: u32,
+  id: u32, param: u32, kind: u32, val_i: i32, val_f: f32, after: u32, duration: u32,
 );
 
 // 積まれていたものを発火する。オブジェクトを跨いで一斉に始まる。

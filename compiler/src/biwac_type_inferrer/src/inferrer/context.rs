@@ -484,7 +484,13 @@ impl<'a> TyCtx<'a> {
         match matched.as_slice() {
             [id] => Ok(biwac_hir::MethodTarget::Direct(*id)),
             [] => self.solve_method_by_trait(ty, method, module, bounds),
-            _ => panic!("compiler bug: duplicated associated implementation registered"),
+            // 受け手の型のジェネリック引数がまだ決まっておらず、特殊化された複数の impl の
+            // どれにも当てはまりうる。impl どうしの重複は名前解決が弾いているので、
+            // ここに来るのは型が決まっていない場合である。
+            _ => Err(TyError::AmbiguousMethod {
+                ty: Box::new(ty.clone()),
+                method: Box::new(method.clone()),
+            }),
         }
     }
 

@@ -25,10 +25,14 @@ impl<'ctx, C: ResolveCtx> ResolveCtx for TyDefResolveCtx<'ctx, C> {
             && let Some(def_id) = self.genargs.get(&path.segments[0].ident.id)
         {
             let def_id_kind = DefIdKind::Gen(*def_id);
-            path.segments[0]
-                .resolved_id
-                .set(biwac_ast::PathSegmentResolution::Ok(def_id_kind))
-                .unwrap();
+            // エイリアスの右辺は def collection と本解決で 2 度解決される
+            // (`DefCollector::alias_defs`)。2 度目は同じ結果なので書き直さない。
+            if path.segments[0].resolved_id.get().is_none() {
+                path.segments[0]
+                    .resolved_id
+                    .set(biwac_ast::PathSegmentResolution::Ok(def_id_kind))
+                    .unwrap();
+            }
             Ok(())
         } else if let Some(AbsolutePathHeader::SelfTyp(self_typ)) = &path.abs_header {
             if self_typ.resolved_id.get().is_none() {
@@ -54,6 +58,11 @@ impl<'ctx, C: ResolveCtx> ResolveCtx for TyDefResolveCtx<'ctx, C> {
 }
 
 impl<'ctx, C: ResolveCtx> TyDefResolveCtx<'ctx, C> {
+    /// 宣言順のジェネリック引数。
+    pub(crate) fn genarg_ids(&self) -> Vec<GenDefId> {
+        self.genarg_list.iter().map(|(id, _)| *id).collect()
+    }
+
     pub(crate) fn new(
         ctx: &'ctx C,
         genargs_decl: &Option<GenArgsDecl<GenDefId>>,

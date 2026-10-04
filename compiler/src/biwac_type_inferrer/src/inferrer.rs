@@ -901,12 +901,25 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                     .cloned()
                     .collect::<HashSet<InternedIdent>>();
 
+                // ジェネリック引数ごとに新しい型変数を割り当て、メンバの定義の型を
+                // それで具体化してから単一化する。
+                // メンバの値から決まらないジェネリック引数 (`Vec::new()` や `None` しか
+                // 入っていないもの) も型変数のまま残り、後で使われ方 (戻り値の型など) から決まる。
+                // 定義の型に `Gen` を残したまま単一化すると、値の側の型変数に
+                // `Gen` を含む型が束縛されてしまい、割り当てが記録されない。
+                let assigns: HashMap<GenDefId, TyKind> = struct_
+                    .genargs
+                    .iter()
+                    .map(|gid| (*gid, self.fresh()))
+                    .collect();
+
                 let mut dtctx = DefinedTyCtx::default();
                 for (id, (ident, expr)) in &members {
                     if let Some(definition_ty) = struct_.members.get(id).cloned() {
                         let user_ty = self.infer_expr(expr)?;
                         self.defined_ty_unify(
-                            Ty::new(definition_ty.kind, ident.span.clone()),
+                            Ty::new(definition_ty.kind, ident.span.clone())
+                                .embody_by_gen_ty_id(&assigns),
                             user_ty,
                             &mut dtctx,
                         )?;
@@ -920,14 +933,16 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                     }
                 }
 
-                // 定義型のジェネリック引数宣言に登場するジェネリック型が
-                // そのメンバなどに必ず使用されることが保証されているなら、
-                // dtctx.gen_assigns にはこの時点で必ず GenDefId -> Ty の割り当てがある
-                // その割り当てを収集して返す
+                // 各ジェネリック引数に割り当てた型変数の、ここまでで分かった型。
                 let genargs = struct_
                     .genargs
                     .iter()
-                    .map(|gid| dtctx.gen_assigns.get(gid).unwrap().clone())
+                    .map(|gid| {
+                        Ty::new(
+                            self.apply(assigns[gid].clone()),
+                            struct_literal.span.clone(),
+                        )
+                    })
                     .collect();
 
                 if member_ids.is_empty() {
@@ -1564,7 +1579,11 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
             }
             Primary::Block(block) => self.infer_block_expr(block),
             Primary::MethodCall(m) => {
+                // ここまでの推論で分かった型を適用してから引く。
+                // impl はジェネリック引数ごとに分かれうる (特殊化) ので、
+                // 受け手の型のジェネリック引数が型変数のままだと引き分けられない。
                 let left = self.infer_expr(&m.left)?;
+                let left = self.apply_ty(left);
 
                 // 左辺値の型のメソッド実装からメソッド名をキーにメソッドを取得
                 let target = self.tctx.get_method_target(

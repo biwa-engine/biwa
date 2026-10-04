@@ -248,6 +248,7 @@ scene main(g: MyGame) -> MyGame {{
   #let _lv = trait_demo()
   #let _ratio = float_demo()
   #let _bound = bound_demo()
+  #let _alias_impl = alias_impl_demo()
 
   #endscene g
 }}
@@ -379,3 +380,44 @@ fn bound_demo() -> Int {
 
   a + b + c + d
 }
+
+// 型エイリアス越しの impl と、ジェネリック引数が決まらない構造体リテラル。
+//
+// - `IntHolder` / `BoolHolder` はどちらも `Holder` だがジェネリック引数が違うので、
+//   それぞれに同名のメソッド `describe` を生やせる (重複判定はエイリアスを展開して行う)。
+// - `Holder::new()` の構造体リテラルは `A` / `B` がメンバの値 (`None`) から決まらない。
+//   ジェネリック引数は型変数のまま残り、戻り値の型 (使われ方) から決まる。
+struct Holder[A, B] {
+  first: std::option::Option[A],
+  last: std::option::Option[B],
+}
+
+type IntHolder = Holder[Int, Int];
+type BoolHolder = Holder[Bool, Bool];
+
+impl[A, B] Holder[A, B] {
+  fn new() -> Self {
+    Self { first = std::option::Option::None, last = std::option::Option::None }
+  }
+}
+
+impl IntHolder {
+  fn describe(self) -> Int { 1 }
+}
+
+impl BoolHolder {
+  fn describe(self) -> Int { 2 }
+}
+
+fn int_holder() -> IntHolder {
+  Holder::new()
+}
+
+fn bool_holder() -> BoolHolder {
+  Holder::new()
+}
+
+fn alias_impl_demo() -> Int {
+  int_holder().describe() + bool_holder().describe()
+}
+

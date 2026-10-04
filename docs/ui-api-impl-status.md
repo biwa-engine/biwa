@@ -1199,3 +1199,67 @@ docs・syscall・std・engine のすべてで px だった (調査結果はユ�
 - 未対応: コンパイラのフィクスチャの std (`compiler/assets/tests/std`) の canvas API は px / Int のまま
   (エンジンでは走らせないので影響は無い)。
 
+## 18. canvas API: パラメータごとに型の決まったチェーン / 発火時にまとめて syscall (完了)
+
+ユーザーが std に入れた途中の変更 (`std::game::canvas` に Cx/Cy/Cw/Ch/Theta・遷移の enum・
+パラメータごとのチェーンの型エイリアス、Alpha、`absent()` の撤廃方針) の続きを実装した。
+
+### コンパイラ
+
+- **具体化の違う型への同名の impl が重複扱いされていた**: impl の対象が型エイリアス
+  (`impl ObjectParamXChain`、`type ObjectParamXChain = ObjectParamChain[Cx, Cw]`) のとき、
+  重複判定に使うジェネリック引数がエイリアス自身の引数 (空) のままだった。
+  def collection でエイリアスの右辺をジェネリック引数まで解決しておき (`DefCollector::alias_defs`)、
+  impl の対象を置換しながら展開した型のジェネリック引数で判定するようにした
+  (`expand_alias_ty`)。エイリアスの右辺は本解決でもう一度解決されるので、
+  型定義コンテキストのジェネリック引数の解決は 2 度目に書き直さないようにした。
+- **ジェネリックな構造体のリテラルでジェネリック引数が決まらないと panic**:
+  `Self { transitions = Vec::new(), target = None, .. }` のように、メンバの値から決まらない
+  ジェネリック引数があると `unwrap` で落ちていた。ジェネリック引数ごとに新しい型変数を割り当て、
+  メンバの定義の型をそれで具体化してから単一化するようにした (決まらないものは型変数のまま残り、
+  使われ方から決まる)。
+- **メソッド解決で受け手の型に置換を適用していなかった**: impl がジェネリック引数ごとに分かれる
+  (特殊化) と引き分けられず panic していた。置換を適用してから引き、それでも複数に当てはまる
+  (型が決まっていない) 場合は panic ではなく `AmbiguousMethod` エラーにした。
+- フィクスチャ test1 に回帰テスト (`Holder[Int, Int]` / `Holder[Bool, Bool]` のエイリアスへの同名
+  `describe`、メンバから決まらないジェネリック引数の構造体リテラル) を追加。
+  (`let x: T = ..` の型注釈は型推論に使われていない (既存の制限) ので、戻り値の型で決めている)
+
+### std
+
+- `ObjectParamChain[V, D]` (V: 値、D: 揺れ幅) は遷移と開始時刻 (`CanvasObjectScheduledTransition`) を
+  貯めるだけで syscall を発行しない。`animate()` / `animate_free()` でまとめて
+  `add_*_transition` → `start_transitions`。`animate()` しないで捨てたチェーンは発火しない。
+  `stop_then` / `sleep_then` はジェネリックに実装 (パラメータに依らない: stop は `none` を積み、
+  sleep は開始時刻を進めるだけ)。発火はパラメータごとの impl
+  (`impl ObjectParamXChain { fn animate .. }` など。上記のコンパイラ修正で書けるようになった)。
+- 目標値 (`x`..`theta`) は `CanvasObject` が持ち、発火したときにチェーンが最後の一度限りの遷移の値を
+  書き込む。`CanvasObject` は常に実在 (`absent()` 撤廃)。
+- `ObjectBatchChain` (`and()`) の TODO だった y / w / h / alpha / theta の発火を埋めた
+  (`as_transition_loop` の `value` → `diff` の取り違え、`y_move_and` の戻り値抜けも修正)。
+  揺れ幅の型はチェーンと同じく D (`x_sin_and(Cw, ..)`、`y_sin_and(Ch, ..)`)。
+- Character: 画面に出ていないときは中身のチェーンが `None` で、何もしない
+  (`CharacterBatchChain.inner: Option[ObjectBatchChain]`、`CharacterParamChain.inner: Option[..]`)。
+  alpha / theta / 揺れ幅も型付き (`Alpha` / `Theta` / `Cw` / `Ch`)。
+- コメントアウトされていた古いコードは削除した。
+- `base_engine`: エンジンとの取り決め (param / kind の番号、値の詰め方) はここだけに置く。
+  `add_w/h/alpha/theta_transition` を埋めた。`sys_add_transition` の値を `val_i: i32` / `val_f: f32`
+  の 2 枠にし (alpha は `val_i`、他は `val_f`、使わない方は 0)、`sys_create_object` の alpha を i32 にした
+  (wasm の import 宣言が f32 のままで関数側と食い違っていた)。`delete_object` の `id > 0` の判定は
+  `absent()` 撤廃で不要になったので外した。
+
+### エンジン
+
+- `addTransition(id, param, kind, valI, valF, after, duration)`。どちらを使うかは
+  `transition.ts` の `isIntegerParam` (alpha だけが整数)。
+
+### `~/test1` での確認 (`biwa dev` wasm + Playwright)
+
+- `Cx::cx` などの import、`Cw::Auto` / `Ch::Auto`、`Alpha::opaque()` / `Alpha::transparent()`、
+  y の揺れ幅を `ch()` に書き換え。
+- 立ち絵の登場 (`and()` の easeout + fade)、揺れながら歩く (`move_x_and` + `sin_y_and`)、
+  最後のフェード (`alpha_then()`: 値が `val_i` で渡る経路) がいずれも動き、コンソールエラー無し。
+- 一時的に `#bg.x_then().linear_then(cx(30.0), ms(500))` を `animate()` せずに置き、直後の立ち絵の
+  `animate` で背景が動かないことを確認した (確認後に削除)。
+- `cargo test` (compiler / tools/lsp) green、`tsc --noEmit` 無エラー。
+
