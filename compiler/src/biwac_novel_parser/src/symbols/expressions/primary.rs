@@ -33,10 +33,12 @@ impl<'src> NovelSourceStream<'src> {
             }
             NCodeTkKind::LiteralFloat(val) => {
                 self.next_token()?;
-                Ok(Exprs::Primary(Primary::Literal(Literal::Float(FloatLiteral {
-                    val: *val,
-                    span: t.span,
-                }))))
+                Ok(Exprs::Primary(Primary::Literal(Literal::Float(
+                    FloatLiteral {
+                        val: *val,
+                        span: t.span,
+                    },
+                ))))
             }
             NCodeTkKind::LiteralString(str) => {
                 self.next_token()?;

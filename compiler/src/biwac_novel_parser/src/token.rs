@@ -509,7 +509,10 @@ impl<'src> NovelSourceStream<'src> {
                     // `.` の後が数字でなければ、`.` はメソッド呼び出しなどの区切りとして残す。
                     let after_int = &remain_str[token_len..];
                     let is_float = after_int.starts_with('.')
-                        && after_int[1..].chars().next().is_some_and(|c| c.is_ascii_digit());
+                        && after_int[1..]
+                            .chars()
+                            .next()
+                            .is_some_and(|c| c.is_ascii_digit());
                     if is_float {
                         // `.` と、続く数字を読む。
                         remain_chars.next();
