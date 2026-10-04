@@ -751,6 +751,72 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
         }
     }
 
+    /// 関数名を値として使う (`let f = add_one;`、`apply(add_one, 3)`)。
+    ///
+    /// ジェネリックな関数なら、**使う場所で型引数を決める** (rank 1)。
+    /// 宣言されたジェネリック引数ごとに型変数を割り当てた関数型を返し、
+    /// 割り当ては呼び出しと同じく `call_genargs` に記録する。
+    /// 型変数は周りの文脈 (渡した先の引数の型など) で解かれ、
+    /// MIR の構築はそれを関数への参照 (`Const::FnDef`) の型引数として使う。
+    ///
+    /// 返す関数型の `genargs` は空である。値になった関数は量化子を持たない。
+    fn infer_fn_value(
+        &mut self,
+        expr_id: Option<ExprId>,
+        def_id: biwac_span::ValDefId,
+        span: Span,
+    ) -> TyResult<Ty> {
+        // scene は TypeScript では generator function で、普通の関数と呼び方が違う。
+        // 関数型として扱うのは別のステップ (impl-status §4 の 9)。
+        if let Some(ValDefKind::NovelScene(_)) = self.tctx.hir.vals.get(&def_id) {
+            return Err(TyError::SceneAsValue { span });
+        }
+
+        let callee_sign = self.tctx.get_value_signature(&def_id).unwrap();
+
+        // 受け手 (`self`) を取るメソッドは、まだ「第一引数が self の関連関数」に
+        // 統一していないので値にできない (impl-status §4 の 4)。
+        if callee_sign.self_ty.is_some() {
+            return Err(TyError::MethodAsValue { span });
+        }
+
+        // codegen が関数への参照を出力するので、外部パッケージなら import が要る
+        self.tctx
+            .hir
+            .deps_recorder
+            .borrow_mut()
+            .depends_on_val(&def_id);
+
+        let fty = Ty::new(
+            TyKind::Fn(FnTy {
+                args: callee_sign.args.iter().map(|a| a.ty.clone()).collect(),
+                rty: Box::new(callee_sign.rty.clone()),
+                genargs: vec![],
+            }),
+            span.clone(),
+        );
+
+        let declared: HashSet<LocalGenDefId> =
+            callee_sign.all_genargs().map(|g| g.def_id).collect();
+        let mut subst = HashMap::new();
+        let fty = self.fresh_loc_gen_ty(fty, &declared, &mut subst);
+
+        // 引数にも戻り値にも現れないジェネリック引数にも型変数を割り当てておく。
+        // 割り当てが無いと単相化で実体を作れない。決まらなければ
+        // 推論の最後に `TypeNotInferable` になる。
+        for g in &declared {
+            if !subst.contains_key(g) {
+                let assigned = Ty::new(self.fresh(), span.clone());
+                subst.insert(*g, assigned);
+            }
+        }
+
+        self.record_obligations(&callee_sign, &subst, span.clone());
+        self.record_call_genargs(expr_id, subst);
+
+        Ok(fty)
+    }
+
     // fn instantiate(&mut self, s: &Scheme) -> Ty {
     //     let mut m = HashMap::new();
     //
@@ -1351,7 +1417,9 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
             },
             Primary::Variable(v) => {
                 match v.id {
-                    VarIdKind::Global(_) => todo!(),
+                    VarIdKind::Global(def_id) => {
+                        self.infer_fn_value(expr_id, def_id, primary.span())
+                    }
                     VarIdKind::Local(var_id) => {
                         // 名前解決済みなので存在は保証されている
                         let ty = self.vars.get(&var_id).unwrap().clone();
@@ -1515,10 +1583,16 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                         .collect::<Result<_, _>>()?;
                     let rty = Ty::new(self.fresh(), primary.span());
 
-                    // NOTE: caller は genargs は 空 vec![] でよい
-                    // unify で計算する
-                    let mut cctx = CallCtx::default();
-                    self.call_unify(
+                    // 関数型の値は量化子を持たない (rank 1、
+                    // `docs/function-as-the-first-class-type.md`)。
+                    // 型の中の `LocGen` は**呼び出し元自身の**ジェネリック引数なので、
+                    // 呼び先のものとして具体化する `call_unify` ではなく、
+                    // 型が等しいことだけを求める `unify` で照合する。
+                    //
+                    //   fn use_twice[T](f: fn(T) -> T, x: T) -> T { f(f(x)) }
+                    //
+                    // の `f(1)` は `T` と `Int` の食い違いとして弾かれなければならない。
+                    self.unify(
                         callee_fty,
                         Ty::new(
                             TyKind::Fn(FnTy {
@@ -1528,10 +1602,11 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                             }),
                             primary.span(),
                         ),
-                        &mut cctx,
                     )?;
 
-                    Ok(rty)
+                    // 戻り値の型は単一化で決まっている。続くメンバアクセスなど
+                    // (`make(4).value`) が型を見られるように、型変数を外して返す。
+                    Ok(self.apply_ty(rty))
                 }
             },
             Primary::MemberAccess(m) => {
@@ -1874,6 +1949,12 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
             }
             Stmt::Assign(ass) => {
                 match &ass.dst {
+                    // 関数名は値だが、代入先にはならない。
+                    Primary::Variable(v) if matches!(v.id, VarIdKind::Global(_)) => {
+                        return Err(TyError::InvalidAssignOperation {
+                            ass: Box::new(ass.clone()),
+                        });
+                    }
                     Primary::Variable(_) | Primary::MemberAccess(_) => {
                         let dst = self.infer_primary_expr(None, &ass.dst)?;
                         let src = self.infer_expr(&ass.src)?;

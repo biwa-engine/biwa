@@ -141,6 +141,14 @@ fn classify_typ_repr(t: &TypRepr, out: &mut Vec<Classification>) {
                 }
             }
         }
+        TypReprVal::Fn(fn_typ) => {
+            for a in &fn_typ.args {
+                classify_typ_repr(a, out);
+            }
+            if let Some(rty) = &fn_typ.rty {
+                classify_typ_repr(rty, out);
+            }
+        }
     }
 }
 

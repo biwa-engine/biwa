@@ -52,6 +52,17 @@ pub(crate) trait ResolveCtx {
                     Err(errors)
                 }
             }
+            TypReprVal::Fn(fn_typ) => {
+                let mut errors = Vec::new();
+                for typ in fn_typ.args.iter().chain(fn_typ.rty.as_deref()) {
+                    self.resolve_typ(typ).handle(&mut errors);
+                }
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errors)
+                }
+            }
             TypReprVal::SelfTyp => match self.opt_self_ty() {
                 Some(_) => Ok(()),
                 None => Err(vec![ResolveError::UnexpectedSelfType {

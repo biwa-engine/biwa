@@ -17,16 +17,24 @@
 //! | `Void` | 値なし |
 //! | struct | `(ref null $S)` — WasmGC の struct |
 //! | native 型 (`String` / `Option` など) | その native 本体に書かれた wasm 型 |
+//! | 関数型 `fn(A) -> B` | `(ref null $F)` — 型付き関数参照。`$F` は `(func (param A) (result B))` |
+//!
+//! 関数型の値は `ref.func` で作り、`call_ref` で呼ぶ。
+//! 関数型の定義は struct と同じ再帰グループに置く (互いに参照しうるため)。
+//! 再帰グループの中の型は、グループの外で同じ形に書いた型とは別物になる
+//! (iso-recursive な同一性)。そこで値として参照される関数は、
+//! シグニチャを `(type $F)` で明示してその型を名乗らせる。
 //!
 //! 線形メモリは文字列リテラルの定数プールとしてだけ使う。
 //! ヒープは WasmGC が持ち、シャドースタックは要らない
 //! (biwa に `&` が無く、local のアドレスを取る手段が無いため)。
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
 use biwac_base::InternedIdent;
-use biwac_hir::{Ty, TyKind};
+use biwac_hir::{FnTy, Ty, TyKind};
 use biwac_mir::{
     AggregateKind, BasicBlock, BinOp, Body, Callee, Const, InstanceKey, Local, MirItem, MonoMir,
     MonoTyDefKind, NativeItem, Operand, Place, PlaceElem, Rvalue, StatementKind, TerminatorKind,
@@ -115,6 +123,13 @@ struct Emitter<'a> {
     native_tys: HashMap<TyInstanceKey, String>,
     /// 文字列リテラルの (線形メモリ上の先頭, バイト長)。
     strings: Vec<(u32, u32)>,
+    /// 関数型 → wasm の関数型の名前。並びは出現順 (出力を決定的にするため)。
+    fn_tys: Vec<(FnTy, String)>,
+    /// `ref.func` で参照した関数。`(elem declare func ..)` に並べる。
+    ///
+    /// wasm は、本体の外 (要素セグメントなど) で宣言された関数にしか
+    /// `ref.func` を許さない。
+    referenced_fns: RefCell<BTreeSet<String>>,
 }
 
 /// enum のタグを入れるフィールドの名前。
@@ -176,6 +191,52 @@ impl<'a> Emitter<'a> {
             offset += len;
         }
 
+        // 関数型を集める。値の型として現れうる場所 (型の定義のフィールド、
+        // 関数の引数・local・戻り値) と、値として参照される関数のシグニチャである。
+        let mut fn_tys: Vec<FnTy> = Vec::new();
+        for def in &mono.types {
+            match &def.kind {
+                MonoTyDefKind::Struct { members } => {
+                    for (_, ty) in members {
+                        collect_fn_tys(ty, &mut fn_tys);
+                    }
+                }
+                MonoTyDefKind::Enum { variants } => {
+                    for v in variants {
+                        for (_, ty) in &v.fields {
+                            collect_fn_tys(ty, &mut fn_tys);
+                        }
+                    }
+                }
+                MonoTyDefKind::Native { .. } => {}
+            }
+        }
+        for inst in &mono.instances {
+            match &inst.item {
+                MirItem::Body(b) => {
+                    for local in &b.locals {
+                        collect_fn_tys(&local.ty, &mut fn_tys);
+                    }
+                    for_each_fn_def(b, |def_id, genargs| {
+                        let key = InstanceKey::new(def_id, genargs.clone());
+                        if let Some(inst) = mono.instances.iter().find(|i| i.key == key) {
+                            push_fn_ty(instance_fn_ty(&inst.item), &mut fn_tys);
+                        }
+                    });
+                }
+                MirItem::Native(n) => {
+                    for ty in n.self_ty.iter().chain(n.args.iter()).chain([&n.rty]) {
+                        collect_fn_tys(ty, &mut fn_tys);
+                    }
+                }
+            }
+        }
+        let fn_tys = fn_tys
+            .into_iter()
+            .enumerate()
+            .map(|(i, f)| (f, format!("__fn.f{i}")))
+            .collect();
+
         Self {
             mono,
             mangler,
@@ -186,6 +247,8 @@ impl<'a> Emitter<'a> {
             variant_ty_names,
             native_tys,
             strings,
+            fn_tys,
+            referenced_fns: RefCell::new(BTreeSet::new()),
         }
     }
 
@@ -237,8 +300,11 @@ impl<'a> Emitter<'a> {
                 )
             })
             .collect();
-        if !defs.is_empty() {
+        if !defs.is_empty() || !self.fn_tys.is_empty() {
             out.push_str("  (rec\n");
+            for (fty, name) in &self.fn_tys {
+                let _ = writeln!(out, "    (type ${name} (func{}))", self.fn_sig(fty)?);
+            }
             for def in &defs {
                 let name = &self.ty_names[&def.key];
                 match &def.kind {
@@ -284,6 +350,14 @@ impl<'a> Emitter<'a> {
         for inst in &self.mono.instances {
             let body = self.emit_instance(inst)?;
             out.push_str(&body);
+            out.push('\n');
+        }
+
+        // `ref.func` で参照する関数の宣言。
+        let referenced = self.referenced_fns.borrow();
+        if !referenced.is_empty() {
+            let names: Vec<String> = referenced.iter().map(|n| format!("${n}")).collect();
+            let _ = writeln!(out, "  (elem declare func {})", names.join(" "));
             out.push('\n');
         }
 
@@ -350,12 +424,47 @@ impl<'a> Emitter<'a> {
                     ty: "Void".to_string(),
                 });
             }
+            // null 許容にする。struct のフィールドや local の初期値に要るため
+            // (非 null の参照型は既定値を持たない)。
+            TyKind::Fn(f) => format!("(ref null ${})", self.fn_ty_name(f)?),
             other => {
                 return Err(WasmError::UnsupportedType {
                     ty: format!("{other:?}"),
                 });
             }
         })
+    }
+
+    /// 関数型の wasm での名前。
+    fn fn_ty_name(&self, f: &FnTy) -> Result<&str, WasmError> {
+        let key = normalize_fn_ty(f);
+        self.fn_tys
+            .iter()
+            .find(|(fty, _)| *fty == key)
+            .map(|(_, name)| name.as_str())
+            .ok_or_else(|| WasmError::UnsupportedType {
+                ty: format!("an uncollected function type {f:?} (this is a compiler bug)"),
+            })
+    }
+
+    /// 関数型の `(param ..) (result ..)` の部分。
+    fn fn_sig(&self, f: &FnTy) -> Result<String, WasmError> {
+        let mut sig = String::new();
+        for ty in &f.args {
+            let _ = write!(sig, " (param {})", self.wasm_ty(ty)?);
+        }
+        if !Self::is_void(&f.rty) {
+            let _ = write!(sig, " (result {})", self.wasm_ty(&f.rty)?);
+        }
+        Ok(sig)
+    }
+
+    /// 値として参照されうる関数なら、その関数型を名乗る `(type $F)`。
+    fn sig_type_use(&self, key: FnTy) -> String {
+        match self.fn_tys.iter().find(|(fty, _)| *fty == key) {
+            Some((_, name)) => format!(" (type ${name})"),
+            None => String::new(),
+        }
     }
 
     /// 値を持たない型か。`Void` の local と戻り値は wasm に現れない。
@@ -388,7 +497,8 @@ impl<'a> Emitter<'a> {
 
         let body = self.expand_native_placeholders(n)?;
 
-        let mut out = format!("  (func ${name}{sig}\n");
+        let type_use = self.sig_type_use(native_fn_ty(n));
+        let mut out = format!("  (func ${name}{type_use}{sig}\n");
         // 本体は std が書いた WAT をそのまま置く。
         for line in body.lines() {
             let line = line.trim_end();
@@ -450,7 +560,8 @@ impl<'a> Emitter<'a> {
             let _ = write!(sig, " (result {})", self.wasm_ty(body.return_ty())?);
         }
 
-        let mut out = format!("  (func ${name}{sig}\n");
+        let type_use = self.sig_type_use(body_fn_ty(body));
+        let mut out = format!("  (func ${name}{type_use}{sig}\n");
 
         // 宣言する local は「引数でないもの」である。
         // 順序は wasm の索引に合わせる (`_0` が引数の直後)。
@@ -615,11 +726,7 @@ impl<'a> Emitter<'a> {
                     ty: "an unresolved trait call (this is a compiler bug)".to_string(),
                 });
             }
-            Callee::Indirect(_) => {
-                return Err(WasmError::UnsupportedType {
-                    ty: "an indirect call".to_string(),
-                });
-            }
+            Callee::Indirect(f) => return self.emit_indirect_call(out, f, args, dest, body, depth),
         };
         let key = InstanceKey::new(def_id, genargs);
         let name = self
@@ -647,6 +754,61 @@ impl<'a> Emitter<'a> {
             }
         }
         Ok(())
+    }
+
+    /// 関数型の値を通した呼び出し。引数を積み、最後に関数参照を積んで `call_ref` する。
+    fn emit_indirect_call(
+        &self,
+        out: &mut String,
+        f: &Operand,
+        args: &[Operand],
+        dest: &Place,
+        body: &Body,
+        depth: usize,
+    ) -> Result<(), WasmError> {
+        let pad = "  ".repeat(depth);
+
+        let fty = match self.fn_value_ty(f, body) {
+            Some(fty) => fty,
+            None => {
+                return Err(WasmError::UnsupportedType {
+                    ty: "an indirect call through a non-function value (this is a compiler bug)"
+                        .to_string(),
+                });
+            }
+        };
+        let ft_name = self.fn_ty_name(&fty)?.to_string();
+
+        self.emit_place_base(out, dest, body, depth)?;
+        for a in args {
+            self.emit_operand(out, a, body, depth)?;
+        }
+        self.emit_operand(out, f, body, depth)?;
+        let _ = writeln!(out, "{pad}call_ref ${ft_name}");
+
+        if !Self::is_void(&fty.rty) {
+            if Self::is_void(&body.local_decl(dest.local).ty) && dest.projection.is_empty() {
+                let _ = writeln!(out, "{pad}drop");
+            } else {
+                self.emit_store(out, dest, body, depth)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// 呼び先になる値の関数型。
+    fn fn_value_ty(&self, f: &Operand, body: &Body) -> Option<FnTy> {
+        match f {
+            Operand::Const(Const::FnDef(def_id, genargs)) => {
+                let key = InstanceKey::new(*def_id, genargs.clone());
+                let inst = self.mono.instances.iter().find(|i| i.key == key)?;
+                Some(instance_fn_ty(&inst.item))
+            }
+            _ => match self.operand_ty(f, body)?.kind {
+                TyKind::Fn(fty) => Some(normalize_fn_ty(&fty)),
+                _ => None,
+            },
+        }
     }
 
     fn instance_returns_value(&self, key: &InstanceKey) -> bool {
@@ -1065,10 +1227,16 @@ impl<'a> Emitter<'a> {
                     let _ = writeln!(out, "{pad}i32.const {len}");
                     let _ = writeln!(out, "{pad}call $__biwa_string_const");
                 }
-                Const::FnDef(..) => {
-                    return Err(WasmError::UnsupportedType {
-                        ty: "a function value".to_string(),
-                    });
+                Const::FnDef(def_id, genargs) => {
+                    let key = InstanceKey::new(*def_id, genargs.clone());
+                    let name =
+                        self.fn_names
+                            .get(&key)
+                            .ok_or_else(|| WasmError::MissingInstance {
+                                name: self.mangler.get_value_mangled(def_id),
+                            })?;
+                    self.referenced_fns.borrow_mut().insert(name.clone());
+                    let _ = writeln!(out, "{pad}ref.func ${name}");
                 }
             },
         }
@@ -1105,6 +1273,104 @@ fn bin_op(op: BinOp, is_float: bool) -> &'static str {
             BinOp::Le => "i32.le_s",
             BinOp::Gt => "i32.gt_s",
             BinOp::Ge => "i32.ge_s",
+        }
+    }
+}
+
+/// 関数型を wasm の関数型の鍵にする。
+///
+/// 値になった関数型は量化子を持たないので `genargs` は空のはずだが、
+/// 関数のシグニチャから作ったものと揃えるために必ず空にする。
+fn normalize_fn_ty(f: &FnTy) -> FnTy {
+    FnTy {
+        args: f.args.clone(),
+        rty: f.rty.clone(),
+        genargs: Vec::new(),
+    }
+}
+
+/// 実体のシグニチャを関数型にする (self があれば第 1 引数)。
+fn instance_fn_ty(item: &MirItem) -> FnTy {
+    match item {
+        MirItem::Body(b) => body_fn_ty(b),
+        MirItem::Native(n) => native_fn_ty(n),
+    }
+}
+
+fn body_fn_ty(b: &Body) -> FnTy {
+    FnTy {
+        args: b.arg_locals().map(|l| b.local_decl(l).ty.clone()).collect(),
+        rty: Box::new(b.return_ty().clone()),
+        genargs: Vec::new(),
+    }
+}
+
+fn native_fn_ty(n: &NativeItem) -> FnTy {
+    FnTy {
+        args: n.self_ty.iter().chain(n.args.iter()).cloned().collect(),
+        rty: Box::new(n.rty.clone()),
+        genargs: Vec::new(),
+    }
+}
+
+/// 型の中に現れる関数型を、内側のものから順に集める。
+///
+/// 内側を先にするのは読みやすさのためで、再帰グループの中なので順序に意味は無い。
+fn collect_fn_tys(ty: &Ty, out: &mut Vec<FnTy>) {
+    if let TyKind::Fn(f) = &ty.kind {
+        for a in &f.args {
+            collect_fn_tys(a, out);
+        }
+        collect_fn_tys(&f.rty, out);
+        push_fn_ty(normalize_fn_ty(f), out);
+    }
+}
+
+fn push_fn_ty(f: FnTy, out: &mut Vec<FnTy>) {
+    for a in &f.args {
+        collect_fn_tys(a, out);
+    }
+    collect_fn_tys(&f.rty, out);
+    if !out.contains(&f) {
+        out.push(f);
+    }
+}
+
+/// 本体の中で値として参照している関数 (`Const::FnDef`) すべてに `f` を適用する。
+fn for_each_fn_def(body: &Body, mut f: impl FnMut(biwac_span::ValDefId, &biwac_mir::GenArgs)) {
+    let mut visit = |op: &Operand| {
+        if let Operand::Const(Const::FnDef(def_id, genargs)) = op {
+            f(*def_id, genargs);
+        }
+    };
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StatementKind::Assign(_, rvalue) = &stmt.kind;
+            match rvalue {
+                Rvalue::Use(op) | Rvalue::UnaryOp(_, op) => visit(op),
+                Rvalue::BinaryOp(_, l, r) => {
+                    visit(l);
+                    visit(r);
+                }
+                Rvalue::Aggregate(_, members) => {
+                    for (_, op) in members {
+                        visit(op);
+                    }
+                }
+                Rvalue::Discriminant(_) => {}
+            }
+        }
+        match &block.term.kind {
+            TerminatorKind::SwitchInt { discr, .. } => visit(discr),
+            TerminatorKind::Call { callee, args, .. } => {
+                if let Callee::Indirect(op) = callee {
+                    visit(op);
+                }
+                for a in args {
+                    visit(a);
+                }
+            }
+            TerminatorKind::Goto { .. } | TerminatorKind::Return | TerminatorKind::Unreachable => {}
         }
     }
 }

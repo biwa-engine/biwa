@@ -203,6 +203,26 @@ fn lowers_type_alias_with_generics_and_genarg_type() {
 }
 
 #[test]
+fn lowers_fn_type() {
+    let (ast, errors) = lower("struct S { f: fn(Int, Bool) -> Int, g: fn(Int), }");
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::TypeDef(TypeDef::Struct(s)) = &ast.globals[0] else {
+        panic!("expected struct def, got {:?}", ast.globals[0]);
+    };
+    let fn_typ = |i: usize| match &s.members[i].1.val {
+        biwac_ast::TypReprVal::Fn(f) => f.clone(),
+        other => panic!("expected a fn type, got {other:?}"),
+    };
+    let f = fn_typ(0);
+    assert_eq!(f.args.len(), 2);
+    assert!(f.rty.is_some());
+    // 戻り値を省略した関数型は Void を返す。
+    let g = fn_typ(1);
+    assert_eq!(g.args.len(), 1);
+    assert!(g.rty.is_none());
+}
+
+#[test]
 fn omitted_arrow_lowers_to_void_return_type() {
     let (ast, errors) = lower("fn nothing() {}");
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");

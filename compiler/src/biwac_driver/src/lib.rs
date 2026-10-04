@@ -1201,6 +1201,7 @@ mod tests {
             "old_on_new_game" => &["std"],
             "missing_app" => &["std"],
             "uninferable" => &["std"],
+            "fn_value" | "fn_value_rank1" | "fn_value_method" => &["std"],
             _ => &[],
         };
         if deps.is_empty() {
@@ -1776,6 +1777,77 @@ mod tests {
             result.is_err(),
             "an expression whose type cannot be inferred must be rejected"
         );
+    }
+
+    /// 名前付きの関数を値として渡し、関数型の値を呼べること
+    /// (`docs/function-as-the-first-class-type-impl-status.md` のステップ 1)。
+    ///
+    /// wasm では関数型を型付き関数参照にし、`ref.func` で作って `call_ref` で呼ぶ。
+    /// 検証を通らない wasm は compile がエラーにする。
+    #[test]
+    fn fn_value_wasm_output() {
+        ensure_fixture_deps("fn_value");
+        let root = Path::new("../../assets/tests/fn_value");
+        with_build_lock(|_| {
+            compile(
+                root.to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: false,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+            .expect("wasm build of fn_value failed");
+        });
+
+        let dir = root
+            .join(biwac_base::BIWA_BUILD_DIRECTORY_NAME)
+            .join(biwac_base::Target::Wasm.build_subdir());
+        let wat = std::fs::read_to_string(dir.join("fn_value.wat")).expect(".wat was not written");
+        assert!(wat.contains("ref.func"), "{wat}");
+        assert!(wat.contains("call_ref"), "{wat}");
+        // `ref.func` で参照する関数は宣言されていなければならない。
+        assert!(wat.contains("(elem declare func"), "{wat}");
+        // 関数型のメンバは型付き関数参照のフィールドになる。
+        assert!(wat.contains("(field $run (mut (ref null $__fn."), "{wat}");
+    }
+
+    /// 関数型の値は量化子を持たない (rank 1)。
+    /// ジェネリック引数の関数型 `fn(T) -> T` の値を具体の型で呼ぶのは型エラーであること。
+    #[test]
+    fn fn_value_is_rank1() {
+        ensure_fixture_deps("fn_value_rank1");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_rank1").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "calling `f: fn(T) -> T` with `Int` must be rejected"
+        );
+    }
+
+    /// 受け手を取るメソッドはまだ値にできないこと。
+    #[test]
+    fn method_as_value_is_an_error() {
+        ensure_fixture_deps("fn_value_method");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_method").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(result.is_err(), "a method used as a value must be rejected");
     }
 
     /// `.biwamir` と `.biwameta` の対応が崩れていたら読み込みで止まること。

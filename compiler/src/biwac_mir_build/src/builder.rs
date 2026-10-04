@@ -12,7 +12,7 @@ use biwac_ast::{BinOperator, UnOperator};
 use biwac_hir::{
     BlockExpr, BlockStmt, Callee as HirCallee, DecledVar, Expr, ExprId, ExprVal, FnBody, FnDef,
     FnSignature, Literal, NativeFnDef, NovelSceneDef, Pattern, PatternFields, Primary, Stmt, Ty,
-    TyKind, VarIdKind, VariantCtorFields,
+    TyKind, VarIdKind, Variable, VariantCtorFields,
 };
 use biwac_mir::{
     AggregateKind, BasicBlock, BasicBlockData, BinOp, Body, Callee, Const, GenArgs, Local,
@@ -456,7 +456,7 @@ impl<'a> BodyBuilder<'a> {
             Primary::Variable(v) => match v.id {
                 VarIdKind::Local(var_id) => (bb, Place::from_local(self.local_of(var_id))),
                 VarIdKind::Global(_) => {
-                    unreachable!("global variables are not supported yet (see type inferrer)")
+                    unreachable!("compiler bug: a function cannot be assigned (see type inferrer)")
                 }
             },
             Primary::MemberAccess(m) => {
@@ -479,9 +479,8 @@ impl<'a> BodyBuilder<'a> {
                     VarIdKind::Local(var_id) => {
                         return (bb, Place::from_local(self.local_of(var_id)));
                     }
-                    VarIdKind::Global(_) => {
-                        unreachable!("global variables are not supported yet (see type inferrer)")
-                    }
+                    // 関数への参照は値でしかないので、下で一時変数に置く。
+                    VarIdKind::Global(_) => {}
                 },
                 Primary::MemberAccess(m) => {
                     let (bb, base) = self.lower_place(bb, &m.left);
@@ -516,17 +515,27 @@ impl<'a> BodyBuilder<'a> {
                         return (bb, Operand::Const(c));
                     }
                 }
-                Primary::Variable(v) => {
-                    if let VarIdKind::Local(var_id) = v.id {
+                Primary::Variable(v) => match v.id {
+                    VarIdKind::Local(var_id) => {
                         return (bb, Operand::from_local(self.local_of(var_id)));
                     }
-                }
+                    VarIdKind::Global(def_id) => {
+                        return (bb, Operand::Const(self.fn_def_const(def_id, expr.id)));
+                    }
+                },
                 _ => {}
             }
         }
 
         let (bb, place) = self.lower_place(bb, expr);
         (bb, Operand::Place(place))
+    }
+
+    /// 関数名を値として使ったときの、関数への参照。
+    ///
+    /// 型引数は型推論が呼び出しと同じく `call_genargs` に記録している。
+    fn fn_def_const(&self, def_id: ValDefId, expr_id: ExprId) -> Const {
+        Const::FnDef(def_id, self.genargs_of(expr_id))
     }
 
     /// リテラルのうち、そのまま定数になるもの。
@@ -599,6 +608,15 @@ impl<'a> BodyBuilder<'a> {
                 let c = self
                     .lower_const(l)
                     .expect("compiler bug: struct literal is handled above");
+                self.push_assign(bb, dest, Rvalue::Use(Operand::Const(c)), span);
+                bb
+            }
+
+            Primary::Variable(Variable {
+                id: VarIdKind::Global(def_id),
+                ..
+            }) => {
+                let c = self.fn_def_const(*def_id, expr.id);
                 self.push_assign(bb, dest, Rvalue::Use(Operand::Const(c)), span);
                 bb
             }

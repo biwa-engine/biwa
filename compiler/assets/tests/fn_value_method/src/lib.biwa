@@ -1,0 +1,18 @@
+// 受け手 (`self`) を取るメソッドは、まだ値として使えない。
+//
+// 「第一引数が self の関連関数」への統一 (impl-status §4 の 4) までは型エラーにする。
+
+struct Counter {
+  n: Int,
+}
+
+impl Counter {
+  fn get(self) -> Int {
+    self.n
+  }
+}
+
+fn take() -> Int {
+  let f = Counter::get;
+  0
+}

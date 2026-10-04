@@ -76,6 +76,19 @@ pub enum TypReprVal {
 
     // `Self` type in impl-block.
     SelfTyp,
+
+    /// 関数型 `fn(A, B) -> C` / `fn(A)` (戻り値が Void)。
+    ///
+    /// 型の中に量化子は持てない (`fn[T](T) -> T` は書けない)。
+    /// 多相性は rank 1 に限るためである (`docs/function-as-the-first-class-type.md`)。
+    Fn(FnTyp),
+}
+
+/// 関数型 `fn(A, B) -> C`。`rty` が `None` なら戻り値は Void。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FnTyp {
+    pub args: Vec<TypRepr>,
+    pub rty: Option<Box<TypRepr>>,
 }
 
 /// Primitive(built-in) types like `Int`, `Uint`, `Float`, `Bool` ...

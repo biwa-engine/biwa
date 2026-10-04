@@ -101,6 +101,8 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                     val: TypReprVal::SelfTyp,
                     span,
                 })
+            } else if let TkKind::KwFn = t.kind {
+                self.consume_fn_type_representation()
             } else {
                 Err(ParseError::InvalidToken {
                     expecteds: vec![
@@ -110,6 +112,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                         TkKindName::Ident,
                         TkKindName::KwPackage,
                         TkKindName::KwSelfTyp,
+                        TkKindName::KwFn,
                     ],
                     found: t.to_owned().clone(),
                 })
@@ -124,9 +127,48 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                     TkKindName::Ident,
                     TkKindName::KwPackage,
                     TkKindName::KwSelfTyp,
+                    TkKindName::KwFn,
                 ],
             })
         }
+    }
+
+    /// 関数型 `fn(A, B) -> C` / `fn(A)` を読む。`fn` を指しているところから呼ぶ。
+    ///
+    /// 型の中に量化子は持てないので、`fn` の直後に `[` は来られない (`(` を要求する)。
+    fn consume_fn_type_representation(&mut self) -> Result<TypRepr, ParseError<'src>> {
+        let begin = self.must_consume_next(vec![TkKindName::KwFn])?.span.clone();
+        let _ = self.must_consume_next(vec![TkKindName::MarkLPare])?;
+
+        let mut args = Vec::new();
+        let mut end = loop {
+            if let Some(t) = self.peek()
+                && let TkKind::MarkRPare = t.kind
+            {
+                break self.next().unwrap().span.clone();
+            }
+            args.push(self.consume_type_representaion()?);
+            let t = self.must_consume_next(vec![TkKindName::MarkComma, TkKindName::MarkRPare])?;
+            if let TkKind::MarkRPare = t.kind {
+                break t.span.clone();
+            }
+        };
+
+        let rty = if self
+            .consume_next_if_match(vec![TkKindName::MarkArrow])
+            .is_some()
+        {
+            let rty = self.consume_type_representaion()?;
+            end = rty.span.clone();
+            Some(Box::new(rty))
+        } else {
+            None
+        };
+
+        Ok(TypRepr {
+            val: TypReprVal::Fn(biwac_ast::FnTyp { args, rty }),
+            span: Span::merge(&begin, &end),
+        })
     }
 
     /// consume generic argument declaration

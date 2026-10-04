@@ -69,6 +69,16 @@ pub enum TyError {
         rty: Box<Ty>, // 関数が要求する戻り値
     },
 
+    /// 受け手 (`self`) を取るメソッドを値として使った。まだ値にできない。
+    MethodAsValue {
+        span: Span,
+    },
+
+    /// scene を値として使った。まだ値にできない。
+    SceneAsValue {
+        span: Span,
+    },
+
     MethodNotFound {
         ty: Box<Ty>,
         method: Box<Ident>,
@@ -432,6 +442,22 @@ impl BiwacError for TyErrorReport {
                 .print();
             }
 
+            TyError::MethodAsValue { span } => {
+                ctx.diagnostic("A method cannot be used as a value yet.")
+                    .label(at(span), "this function takes `self`")
+                    .note(
+                        "only functions and associated functions without `self` \
+                         can be used as values for now",
+                    )
+                    .print();
+            }
+
+            TyError::SceneAsValue { span } => {
+                ctx.diagnostic("A scene cannot be used as a value yet.")
+                    .label(at(span), "this is a scene")
+                    .print();
+            }
+
             TyError::ReturnTypeRequired { rty } => {
                 let ty = names.render(&rty.kind);
 
@@ -610,6 +636,8 @@ pub(crate) fn error_tys(error: &TyError) -> Vec<&Ty> {
         | TyError::StructNotHasMember { .. }
         | TyError::InvalidAssignOperation { .. }
         | TyError::InsufficientContext
+        | TyError::MethodAsValue { .. }
+        | TyError::SceneAsValue { .. }
         | TyError::MissingLangItem { .. } => Vec::new(),
 
         TyError::TypeNotInferable { ty } => vec![ty.as_ref()],

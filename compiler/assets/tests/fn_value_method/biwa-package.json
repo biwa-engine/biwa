@@ -1,0 +1,14 @@
+{
+  "name": "fn_value_method",
+  "version": "0.1.0",
+  "description": "rejects a method used as a value",
+  "dependencies": [
+    {
+      "name": "std",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

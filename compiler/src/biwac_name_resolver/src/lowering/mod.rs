@@ -218,6 +218,23 @@ pub(crate) fn ty_kind_from_typ_repr(typ: &TypRepr, self_typ: Option<&TyKind>) ->
         TypReprVal::SelfTyp => self_typ
             .unwrap_or_else(|| panic!("compiler bug: SelfTyp outside impl context: {typ:?}"))
             .clone(),
+        TypReprVal::Fn(fn_typ) => TyKind::Fn(biwac_hir::FnTy {
+            args: fn_typ
+                .args
+                .iter()
+                .map(|t| ty_from_typ_repr(t, self_typ))
+                .collect(),
+            rty: Box::new(match &fn_typ.rty {
+                Some(rty) => ty_from_typ_repr(rty, self_typ),
+                // 戻り値の無い関数型。位置は型表現の末尾に置く。
+                None => Ty::new(
+                    TyKind::Void,
+                    biwac_span::Span::new(typ.span.module(), typ.span.end(), typ.span.end()),
+                ),
+            }),
+            // 型の中に量化子は持てないので、関数型の値は常に単相である。
+            genargs: Vec::new(),
+        }),
     }
 }
 

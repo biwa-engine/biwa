@@ -186,6 +186,31 @@ pub(crate) fn lower_type_repr(
             };
             Some(TypRepr::new_def_typ(path, genargs))
         }
+        // 関数型 `fn(A, B) -> C`。戻り値を省略したら Void (`rty: None`)。
+        Some(SyntaxKind::KwFn) => {
+            children.next_elem();
+            children.eat_token(SyntaxKind::LParen);
+            let mut args = Vec::new();
+            while let Some(arg_node) = children.eat_node(SyntaxKind::TypeRepr) {
+                args.push(lower_type_repr(mod_id, interner, &arg_node, errors)?);
+                if children.eat_token(SyntaxKind::Comma).is_none() {
+                    break;
+                }
+            }
+            children.eat_token(SyntaxKind::RParen);
+            let rty = if children.eat_token(SyntaxKind::Arrow).is_some() {
+                let rty_node = children.eat_node(SyntaxKind::TypeRepr)?;
+                Some(Box::new(lower_type_repr(
+                    mod_id, interner, &rty_node, errors,
+                )?))
+            } else {
+                None
+            };
+            Some(TypRepr {
+                val: TypReprVal::Fn(biwac_ast::FnTyp { args, rty }),
+                span,
+            })
+        }
         _ => {
             errors.push(LowerError::new("expected a type", span));
             None

@@ -1,0 +1,127 @@
+// 関数を値として扱う (`docs/function-as-the-first-class-type.md` のステップ 1)。
+//
+// - 関数型 `fn(A) -> B` / `fn(A)` を引数・戻り値・struct のメンバ・変数の型に書ける
+// - 名前付きの関数 (ジェネリックなもの、関連関数を含む) を値として渡せる
+// - 関数型の値を変数・メンバから呼べる
+//
+// scene の中 (novel パーサー) でも関数型を書ける。
+
+import std::game::Game;
+import std::game::config::Config;
+import std::game::window::GameWindow;
+import std::game::window::Window;
+
+struct MyGameState {}
+
+struct MyGameCharacters {}
+
+type MyGame = Game[MyGameCharacters, MyGameState];
+
+fn app() -> Window {
+  Window::new()
+}
+
+fn on_new_game(window: GameWindow) -> MyGame {
+  Game::new(window, "fn_value", MyGameCharacters {}, MyGameState {}, Config::default())
+}
+
+fn add_one(x: Int) -> Int {
+  x + 1
+}
+
+fn double(x: Int) -> Int {
+  x * 2
+}
+
+fn id[T](x: T) -> T {
+  x
+}
+
+fn apply_twice(f: fn(Int) -> Int, x: Int) -> Int {
+  f(f(x))
+}
+
+// rank 1: 型引数は呼ぶ側が決める。
+fn use_twice[T](f: fn(T) -> T, x: T) -> T {
+  f(f(x))
+}
+
+// 関数を返す。
+fn pick(first: Bool) -> fn(Int) -> Int {
+  if first {
+    add_one
+  } else {
+    double
+  }
+}
+
+fn ignore(x: Int) {}
+
+// 戻り値の無い関数型。
+fn call_void(f: fn(Int), x: Int) {
+  f(x)
+}
+
+// 関数型のメンバ。
+struct Op {
+  name: Int,
+  run: fn(Int) -> Int,
+}
+
+impl Op {
+  fn new(run: fn(Int) -> Int) -> Self {
+    Op { name = 0, run = run }
+  }
+
+  fn exec(self, x: Int) -> Int {
+    let run = self.run;
+    run(x)
+  }
+}
+
+// ジェネリックな struct の関数型のメンバ。
+struct Mapper[T] {
+  f: fn(T) -> T,
+}
+
+struct Holder {
+  value: Int,
+}
+
+impl Holder {
+  fn make(x: Int) -> Holder {
+    Holder { value = x }
+  }
+}
+
+fn compute() -> Int {
+  let f: fn(Int) -> Int = add_one;
+  let a = f(1);                          // 2
+  let b = apply_twice(add_one, 3);       // 5
+  let c = apply_twice(id, 7);            // 7
+  let d = use_twice(double, 3);          // 12
+  let e = use_twice(id, TRUE);
+  let p = pick(FALSE);
+  let g = p(4);                          // 8
+  let op = Op::new(double);
+  let h = op.exec(5);                    // 10
+  let m = Mapper { f = add_one };
+  let mf = m.f;
+  let i = mf(9);                         // 10
+  let make = Holder::make;
+  let j = make(4).value;                 // 4
+  call_void(ignore, 1);
+  if e {
+    a + b + c + d + g + h + i + j
+  } else {
+    0
+  }
+}
+
+scene main(g: MyGame) -> MyGame {{
+  #let f: fn(Int) -> Int = add_one
+  #let n = f(compute())
+  Hello.
+
+  #endscene g
+}}

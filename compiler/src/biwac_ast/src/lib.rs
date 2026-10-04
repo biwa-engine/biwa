@@ -23,4 +23,4 @@ pub use symbols::{
         VarDecl, WhileStmt,
     },
 };
-pub use types::{DefTyp, GenArg, PrimTyp, RetTypRepr, TypDecl, TypRepr, TypReprVal};
+pub use types::{DefTyp, FnTyp, GenArg, PrimTyp, RetTypRepr, TypDecl, TypRepr, TypReprVal};

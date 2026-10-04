@@ -72,8 +72,6 @@ pub enum MonoError {
         callee: ValDefId,
         param: LocalGenDefId,
     },
-    /// 間接呼び出しはまだ実体化できない。
-    IndirectCall { caller: ValDefId },
     /// trait 越しの呼び出しの実装が見つからない。
     ///
     /// 制限の検査は型推論が通しているので、ここに来るのは
@@ -109,11 +107,6 @@ impl std::fmt::Display for MonoError {
                 caller.value(),
                 param.value(),
                 callee.value()
-            ),
-            Self::IndirectCall { caller } => write!(
-                f,
-                "val#{}: indirect calls cannot be monomorphized yet",
-                caller.value()
             ),
             Self::UnresolvedTraitCall { caller } => write!(
                 f,
@@ -449,10 +442,9 @@ impl<'a> Collector<'a> {
                             }
                         }
                     }
-                    Callee::Indirect(op) => {
-                        self.errors.push(MonoError::IndirectCall { caller });
-                        Callee::Indirect(self.subst_operand(op, subst, owner))
-                    }
+                    // 呼び先の実体は、関数への参照 (`Const::FnDef`) を作った所で
+                    // 作られている (`subst_operand`)。
+                    Callee::Indirect(op) => Callee::Indirect(self.subst_operand(op, subst, owner)),
                 };
                 TerminatorKind::Call {
                     callee,

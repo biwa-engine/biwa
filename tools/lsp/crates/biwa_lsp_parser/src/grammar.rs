@@ -663,6 +663,28 @@ fn parse_type_repr(p: &mut Parser) {
             p.skip_trivia();
             p.bump();
         }
+        // 関数型 `fn(A, B) -> C` / `fn(A)`。量化子 (`fn[T](..)`) は書けない。
+        // 子は TypeRepr ノードと区切りのトークンのまま並べる (lowering が `fn` で見分ける)。
+        SyntaxKind::KwFn => {
+            p.skip_trivia();
+            p.bump(); // fn
+            p.expect(SyntaxKind::LParen);
+            while !p.at(SyntaxKind::RParen) && p.current_non_trivia() != SyntaxKind::Eof {
+                parse_type_repr(p);
+                if p.at(SyntaxKind::Comma) {
+                    p.skip_trivia();
+                    p.bump();
+                } else {
+                    break;
+                }
+            }
+            p.expect(SyntaxKind::RParen);
+            if p.at(SyntaxKind::Arrow) {
+                p.skip_trivia();
+                p.bump(); // ->
+                parse_type_repr(p);
+            }
+        }
         _ => {
             // identifier path
             parse_identifier_path(p);
@@ -1354,6 +1376,14 @@ impl[T] Foo[T] {
         no_errors("type MyInt = Int;");
         no_errors("type MyGame = Game[MyGameCharacters, MyGameState];");
         no_errors("type Boxed[T] = Box[T];");
+    }
+
+    #[test]
+    fn parse_fn_type() {
+        no_errors("fn apply(f: fn(Int, Bool) -> Int, x: Int) -> Int { x }");
+        no_errors("struct Button { on_click: fn(Event), }");
+        no_errors("fn pick() -> fn(Int) -> fn() { f }");
+        no_errors("type Mapper[T, U] = fn(T) -> U;");
     }
 
     #[test]
