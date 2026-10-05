@@ -273,6 +273,27 @@ fn f() -> Int {
 }
 
 #[test]
+fn lowers_call_on_any_expression() {
+    // 呼び先がパスでない呼び出し (`make()(1)`) は `Primary::Call` になる。
+    let (ast, errors) = lower(
+        r#"
+fn f() -> Int {
+  make()(1)
+}
+"#,
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::FnDef(f) = &ast.globals[0] else {
+        panic!("expected fn def");
+    };
+    let Some(Exprs::Primary(Primary::Call(call))) = &f.expr else {
+        panic!("expected a call tail, got {:?}", f.expr);
+    };
+    assert_eq!(call.args.len(), 1);
+    assert!(matches!(*call.callee, Exprs::Primary(Primary::FnCall(_))));
+}
+
+#[test]
 fn lowers_enum_def() {
     let (ast, errors) = lower(
         r#"

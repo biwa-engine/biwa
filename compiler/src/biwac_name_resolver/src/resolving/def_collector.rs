@@ -1124,7 +1124,7 @@ pub(super) fn collect_mod_trees<'a>(
 ///
 /// `alias_defs` に無い型 (エイリアスでない型・外部パッケージのエイリアス) はそのまま残す。
 /// エイリアスの循環は `detect_alias_cycles` が先に弾いている。
-fn expand_alias_ty(
+pub(crate) fn expand_alias_ty(
     kind: &TyKind,
     alias_defs: &HashMap<TyDefId, (Vec<GenDefId>, TyKind)>,
 ) -> TyKind {

@@ -21,6 +21,25 @@ impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::Primary {
             biwac_ast::Primary::IfExpr(if_expr) => if_expr.resolve(ctx),
             biwac_ast::Primary::Match(m) => m.resolve(ctx),
             biwac_ast::Primary::Block(block) => block.resolve(ctx),
+            biwac_ast::Primary::Call(call) => call.resolve(ctx),
+        }
+    }
+}
+
+impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::CallExpr {
+    fn resolve(&self, ctx: &mut C) -> Result<(), Vec<crate::ResolveError>> {
+        let mut errors = Vec::new();
+
+        self.callee.resolve(ctx).handle(&mut errors);
+
+        for arg in &self.args {
+            arg.resolve(ctx).handle(&mut errors);
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
         }
     }
 }

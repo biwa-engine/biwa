@@ -297,6 +297,11 @@ pub enum Callee {
         assoc: TraitAssocDefId,
         self_ty: Ty,
     },
+    /// 任意の式を呼び先にした呼び出し (`make()(x)`、`(f)(x)`)。
+    ///
+    /// 式の型は関数型でなければならない (型推論が検査する)。
+    /// MIR では関数型の値を通した呼び出し (`Callee::Indirect`) になる。
+    Expr(Box<Expr>),
 }
 
 /// メソッド呼び出しの解決先。
@@ -306,6 +311,12 @@ pub enum MethodTarget {
     Direct(ValDefId),
     /// レシーバがジェネリック引数なので、実装は単相化で決まる。
     Trait(TraitAssocDefId),
+    /// メソッドではなく、レシーバの struct のメンバ (関数型) の値の呼び出し
+    /// (`self.on_click(e)`)。レシーバは引数に含めない。
+    ///
+    /// メンバ名と関連アイテムは 1 つの名前空間で一意なので、
+    /// レシーバの型が分かれば `x.bar(..)` がどちらかは一意に決まる。
+    Member,
 }
 
 #[derive(Debug, Clone)]

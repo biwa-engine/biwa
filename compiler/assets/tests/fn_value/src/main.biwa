@@ -4,6 +4,10 @@
 // - 名前付きの関数 (ジェネリックなもの、関連関数を含む) を値として渡せる
 // - 関数型の値を変数・メンバから呼べる
 //
+// ステップ 2:
+// - 任意の式を呼び先にできる (`pick(FALSE)(4)`、`(f)(x)`)
+// - `x.bar(..)` は、`bar` が関数型のメンバならその値の呼び出し、そうでなければメソッド
+//
 // scene の中 (novel パーサー) でも関数型を書ける。
 
 import std::game::Game;
@@ -73,9 +77,9 @@ impl Op {
     Op { name = 0, run = run }
   }
 
+  // メンバ `run` (関数型) の値を呼ぶ。メソッドではない。
   fn exec(self, x: Int) -> Int {
-    let run = self.run;
-    run(x)
+    self.run(x)
   }
 }
 
@@ -101,18 +105,17 @@ fn compute() -> Int {
   let c = apply_twice(id, 7);            // 7
   let d = use_twice(double, 3);          // 12
   let e = use_twice(id, TRUE);
-  let p = pick(FALSE);
-  let g = p(4);                          // 8
+  let g = pick(FALSE)(4);                // 8
   let op = Op::new(double);
   let h = op.exec(5);                    // 10
   let m = Mapper { f = add_one };
-  let mf = m.f;
-  let i = mf(9);                         // 10
+  let i = m.f(9);                        // 10
   let make = Holder::make;
-  let j = make(4).value;                 // 4
+  let j = (make)(4).value;               // 4
+  let k = Op::new(add_one).run(1);       // 2 (一時的な値のメンバを呼ぶ)
   call_void(ignore, 1);
   if e {
-    a + b + c + d + g + h + i + j
+    a + b + c + d + g + h + i + j + k
   } else {
     0
   }
@@ -121,6 +124,7 @@ fn compute() -> Int {
 scene main(g: MyGame) -> MyGame {{
   #let f: fn(Int) -> Int = add_one
   #let n = f(compute())
+  #let p = pick(TRUE)(n)
   Hello.
 
   #endscene g

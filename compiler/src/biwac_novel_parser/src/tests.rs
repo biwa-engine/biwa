@@ -243,3 +243,35 @@ fn a_dot_not_followed_by_a_digit_is_not_part_of_a_number() {
     assert_eq!(embedded_args("$f(1)\n"), ["int(1)"]);
     assert!(parse("$f(1).g()\n").is_ok());
 }
+
+// ---- 関数型と、任意の式の呼び出し ----
+
+#[test]
+fn a_call_on_a_call_in_code_line() {
+    use biwac_ast::{Exprs, Primary};
+
+    let stmts = parse("#let n = pick(TRUE)(1)\n").expect("should parse");
+    let found = stmts.iter().any(|s| {
+        matches!(
+            s,
+            NovelStmt::VarDecl(v)
+                if matches!(&v.init, Exprs::Primary(Primary::Call(_)))
+        )
+    });
+    assert!(found, "expected a call on a call: {stmts:#?}");
+}
+
+#[test]
+fn a_fn_type_in_code_line() {
+    assert!(parse("#let f: fn(Int) -> Int = add_one\n").is_ok());
+}
+
+#[test]
+fn text_after_an_embedded_call_is_not_an_argument_list() {
+    // 埋め込み式は最初の呼び出しの `)` で終わる。
+    // 直後の `(..)` は地の文であって、呼び出しの引数ではない。
+    assert_eq!(
+        vec!["expr", "text((ことのは びわ)\n)"],
+        shape("$name()(ことのは びわ)\n")
+    );
+}

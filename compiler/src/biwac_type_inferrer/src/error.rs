@@ -69,6 +69,11 @@ pub enum TyError {
         rty: Box<Ty>, // 関数が要求する戻り値
     },
 
+    /// 関数型でない値を呼ぼうとした。`ty` の span は呼び先の位置。
+    NotCallable {
+        ty: Box<Ty>,
+    },
+
     /// 受け手 (`self`) を取るメソッドを値として使った。まだ値にできない。
     MethodAsValue {
         span: Span,
@@ -442,6 +447,16 @@ impl BiwacError for TyErrorReport {
                 .print();
             }
 
+            TyError::NotCallable { ty } => {
+                let rendered = names.render(&ty.kind);
+
+                ctx.diagnostic(format!(
+                    "`{rendered}` is not a function and cannot be called."
+                ))
+                .label(at(&ty.span), format!("this is `{rendered}`"))
+                .print();
+            }
+
             TyError::MethodAsValue { span } => {
                 ctx.diagnostic("A method cannot be used as a value yet.")
                     .label(at(span), "this function takes `self`")
@@ -640,7 +655,7 @@ pub(crate) fn error_tys(error: &TyError) -> Vec<&Ty> {
         | TyError::SceneAsValue { .. }
         | TyError::MissingLangItem { .. } => Vec::new(),
 
-        TyError::TypeNotInferable { ty } => vec![ty.as_ref()],
+        TyError::TypeNotInferable { ty } | TyError::NotCallable { ty } => vec![ty.as_ref()],
     }
 }
 

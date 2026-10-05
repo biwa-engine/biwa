@@ -1201,7 +1201,11 @@ mod tests {
             "old_on_new_game" => &["std"],
             "missing_app" => &["std"],
             "uninferable" => &["std"],
-            "fn_value" | "fn_value_rank1" | "fn_value_method" => &["std"],
+            "fn_value"
+            | "fn_value_rank1"
+            | "fn_value_method"
+            | "fn_value_member_conflict"
+            | "fn_value_not_callable" => &["std"],
             _ => &[],
         };
         if deps.is_empty() {
@@ -1848,6 +1852,46 @@ mod tests {
             )
         });
         assert!(result.is_err(), "a method used as a value must be rejected");
+    }
+
+    /// struct のメンバ名と関連アイテムの衝突が名前解決のエラーになること。
+    ///
+    /// 1 つの名前空間で一意にしておかないと、`x.bar(..)` がメンバ (関数型) の値の
+    /// 呼び出しかメソッドかが決まらない。
+    #[test]
+    fn struct_member_named_like_assoc_item_is_an_error() {
+        ensure_fixture_deps("fn_value_member_conflict");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_member_conflict").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "a struct member named like a method must be rejected"
+        );
+    }
+
+    /// 関数型でないメンバを `x.n(..)` で呼ぶのは型エラーであること。
+    #[test]
+    fn calling_a_non_function_is_an_error() {
+        ensure_fixture_deps("fn_value_not_callable");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_not_callable").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(result.is_err(), "calling an `Int` member must be rejected");
     }
 
     /// `.biwamir` と `.biwameta` の対応が崩れていたら読み込みで止まること。

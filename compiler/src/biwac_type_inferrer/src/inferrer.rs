@@ -1572,41 +1572,14 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                 }
                 Callee::Var(v) => {
                     // 変数は名前解決済みであるため、先に型推論されているはず
-                    // TODO: callee を式に対応させる
-                    let callee_fty = self.vars.get(v).unwrap().clone();
-                    // let f = self.infer_expr(&expr)?;
-
-                    let args = c
-                        .args
-                        .iter()
-                        .map(|a| self.infer_expr(a))
-                        .collect::<Result<_, _>>()?;
-                    let rty = Ty::new(self.fresh(), primary.span());
-
-                    // 関数型の値は量化子を持たない (rank 1、
-                    // `docs/function-as-the-first-class-type.md`)。
-                    // 型の中の `LocGen` は**呼び出し元自身の**ジェネリック引数なので、
-                    // 呼び先のものとして具体化する `call_unify` ではなく、
-                    // 型が等しいことだけを求める `unify` で照合する。
-                    //
-                    //   fn use_twice[T](f: fn(T) -> T, x: T) -> T { f(f(x)) }
-                    //
-                    // の `f(1)` は `T` と `Int` の食い違いとして弾かれなければならない。
-                    self.unify(
-                        callee_fty,
-                        Ty::new(
-                            TyKind::Fn(FnTy {
-                                args,
-                                rty: Box::new(rty.clone()),
-                                genargs: vec![],
-                            }),
-                            primary.span(),
-                        ),
-                    )?;
-
-                    // 戻り値の型は単一化で決まっている。続くメンバアクセスなど
-                    // (`make(4).value`) が型を見られるように、型変数を外して返す。
-                    Ok(self.apply_ty(rty))
+                    let callee_ty = self.vars.get(v).unwrap().clone();
+                    let callee_ty = Ty::new(callee_ty.kind, primary.span());
+                    self.infer_value_call(callee_ty, &c.args, primary.span())
+                }
+                // `make()(x)`、`(f)(x)`。呼び先の式を先に評価する。
+                Callee::Expr(callee) => {
+                    let callee_ty = self.infer_expr(callee)?;
+                    self.infer_value_call(callee_ty, &c.args, primary.span())
                 }
             },
             Primary::MemberAccess(m) => {
@@ -1660,13 +1633,36 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                 let left = self.infer_expr(&m.left)?;
                 let left = self.apply_ty(left);
 
+                // レシーバの struct に同じ名前のメンバがあり、それが関数型なら
+                // メソッドではなくメンバの値の呼び出しである。
+                // メンバ名と関連アイテムは 1 つの名前空間で一意 (名前解決が検査する) なので、
+                // 自パッケージの型でメンバと関連アイテムが両方見つかることは無い。
+                let member_ty = self.struct_member_ty(&left, m.method.id);
+                if let Some(member_ty) = &member_ty {
+                    let member_ty = self.apply_ty(member_ty.clone());
+                    if let TyKind::Fn(_) = member_ty.kind {
+                        m.target.set(MethodTarget::Member).unwrap();
+                        let callee_ty = Ty::new(member_ty.kind, m.method.span.clone());
+                        return self.infer_value_call(callee_ty, &m.args, primary.span());
+                    }
+                }
+
                 // 左辺値の型のメソッド実装からメソッド名をキーにメソッドを取得
-                let target = self.tctx.get_method_target(
+                let target = match self.tctx.get_method_target(
                     &left,
                     &m.method,
                     self.module,
                     &self.genarg_bounds,
-                )?;
+                ) {
+                    Ok(target) => target,
+                    // 関数型でないメンバを呼ぼうとした。
+                    Err(TyError::MethodNotFound { .. }) if let Some(member_ty) = member_ty => {
+                        return Err(TyError::NotCallable {
+                            ty: Box::new(Ty::new(member_ty.kind, m.method.span.clone())),
+                        });
+                    }
+                    Err(e) => return Err(e),
+                };
                 m.target.set(target).unwrap();
 
                 // 実装は単相化まで決まらないので、
@@ -1823,6 +1819,70 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                 assigned
             }
         }
+    }
+
+    /// 関数型の値の呼び出しを型付けする (`f(x)`、`make()(x)`、`self.on_click(e)`)。
+    ///
+    /// `callee_ty` は呼び先の値の型で、span は呼び先の位置にしておく
+    /// (関数型でなかったときに指すため)。
+    fn infer_value_call(&mut self, callee_ty: Ty, args: &[Expr], span: Span) -> TyResult<Ty> {
+        let callee_ty = self.apply_ty(callee_ty);
+        match callee_ty.kind {
+            TyKind::Fn(_) | TyKind::Infer(_) => {}
+            _ => {
+                return Err(TyError::NotCallable {
+                    ty: Box::new(callee_ty),
+                });
+            }
+        }
+
+        let args = args
+            .iter()
+            .map(|a| self.infer_expr(a))
+            .collect::<TyResult<Vec<_>>>()?;
+        let rty = Ty::new(self.fresh(), span.clone());
+
+        // 関数型の値は量化子を持たない (rank 1、
+        // `docs/function-as-the-first-class-type.md`)。
+        // 型の中の `LocGen` は**呼び出し元自身の**ジェネリック引数なので、
+        // 呼び先のものとして具体化する `call_unify` ではなく、
+        // 型が等しいことだけを求める `unify` で照合する。
+        //
+        //   fn use_twice[T](f: fn(T) -> T, x: T) -> T { f(f(x)) }
+        //
+        // の `f(1)` は `T` と `Int` の食い違いとして弾かれなければならない。
+        self.unify(
+            callee_ty,
+            Ty::new(
+                TyKind::Fn(FnTy {
+                    args,
+                    rty: Box::new(rty.clone()),
+                    genargs: vec![],
+                }),
+                span,
+            ),
+        )?;
+
+        // 戻り値の型は単一化で決まっている。続くメンバアクセスなど
+        // (`make(4).value`) が型を見られるように、型変数を外して返す。
+        Ok(self.apply_ty(rty))
+    }
+
+    /// `ty` が struct なら、そのメンバ `name` の型 (型引数を置き換えたもの)。
+    /// struct でないか、メンバが無ければ `None`。
+    fn struct_member_ty(&self, ty: &Ty, name: InternedIdent) -> Option<Ty> {
+        let TyKind::Defined(defined_ty) = &ty.kind else {
+            return None;
+        };
+        let TyDefKind::Struct(struct_) = self.tctx.get_type_definition(&defined_ty.def_id)? else {
+            return None;
+        };
+        let member_ty = struct_.members.get(&name)?;
+        Some(substitute_struct_gens(
+            member_ty,
+            &struct_.genargs,
+            &defined_ty.genargs,
+        ))
     }
 
     fn infer_member_access(&mut self, left_ty: Ty, member_access: &MemberAccess) -> TyResult<Ty> {

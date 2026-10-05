@@ -270,6 +270,21 @@ pub(crate) fn lower_primary(
         biwac_ast::Primary::Block(block) => {
             Some(Primary::Block(lower_block_expr(ctx, block, errors)?))
         }
+
+        // 呼び先が任意の式の呼び出し。式の型が関数型かは型推論が見る。
+        biwac_ast::Primary::Call(call) => {
+            let callee = lower_expr(ctx, &call.callee, errors);
+            let args = call
+                .args
+                .iter()
+                .filter_map(|a| lower_expr(ctx, a, errors))
+                .collect();
+            Some(Primary::FnCall(FnCall {
+                callee: Callee::Expr(Box::new(callee?)),
+                args,
+                span: call.span.clone(),
+            }))
+        }
     }
 }
 

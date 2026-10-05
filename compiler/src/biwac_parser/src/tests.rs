@@ -395,3 +395,73 @@ fn f(c: Int) {
         }
     }
 }
+
+/// 関数型と、任意の式を呼び先にした呼び出し
+/// (`docs/function-as-the-first-class-type-impl-status.md` のステップ 1・2)。
+mod first_class_fn {
+    use biwac_ast::{Exprs, FnDef, Globals, Primary, TypReprVal};
+    use biwac_base::{IdentInterner, ModId, ModPath};
+
+    fn parse_fn(src: &str) -> FnDef {
+        let mod_id = ModId::new_in_self(0);
+        let mut interner = IdentInterner::new();
+
+        let tokens = biwac_lexer::lex(&mut interner, mod_id, src).unwrap();
+        let module = crate::Parser::new(mod_id, ModPath::Main, tokens, &mut interner)
+            .try_parse()
+            .unwrap_or_else(|e| panic!("parse failed: {e:#?}"));
+
+        match module.globals.into_iter().next().unwrap() {
+            Globals::FnDef(f) => f,
+            g => panic!("not a function: {g:#?}"),
+        }
+    }
+
+    #[test]
+    fn fn_type_in_argument() {
+        let f = parse_fn("fn apply(f: fn(Int, Bool) -> Int, g: fn(Int)) {}");
+        let TypReprVal::Fn(f_ty) = &f.args.args[0].typ.val else {
+            panic!("not a fn type: {:#?}", f.args.args[0].typ);
+        };
+        assert_eq!(f_ty.args.len(), 2);
+        assert!(f_ty.rty.is_some());
+        let TypReprVal::Fn(g_ty) = &f.args.args[1].typ.val else {
+            panic!("not a fn type: {:#?}", f.args.args[1].typ);
+        };
+        assert!(g_ty.rty.is_none(), "an omitted return type is Void");
+    }
+
+    /// 呼び出しの結果をさらに呼べる。後置演算子なので左結合。
+    #[test]
+    fn call_on_a_call() {
+        let f = parse_fn("fn foo() -> Int { make()(1)(2) }");
+        let Some(Exprs::Primary(Primary::Call(outer))) = &f.expr else {
+            panic!("not a call: {:#?}", f.expr);
+        };
+        let Exprs::Primary(Primary::Call(inner)) = outer.callee.as_ref() else {
+            panic!("not a nested call: {:#?}", outer.callee);
+        };
+        assert!(matches!(
+            inner.callee.as_ref(),
+            Exprs::Primary(Primary::FnCall(_))
+        ));
+    }
+
+    /// 括弧で包んだ式も呼び先にできる。
+    #[test]
+    fn call_on_a_parenthesized_expression() {
+        let f = parse_fn("fn foo(f: fn(Int) -> Int) -> Int { (f)(1) }");
+        assert!(matches!(&f.expr, Some(Exprs::Primary(Primary::Call(_)))));
+    }
+
+    /// `x.bar(..)` は構文の上では今までどおりメソッド呼び出し。
+    /// メンバの値の呼び出しかは型推論が決める。
+    #[test]
+    fn dot_call_stays_a_method_call() {
+        let f = parse_fn("fn foo(b: Button) { b.on_click(1) }");
+        assert!(matches!(
+            &f.expr,
+            Some(Exprs::Primary(Primary::MethodCall(_)))
+        ));
+    }
+}

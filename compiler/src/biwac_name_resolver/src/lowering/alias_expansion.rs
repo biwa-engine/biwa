@@ -241,8 +241,12 @@ fn expand_expr(expr: &mut Expr, aliases: &HashMap<TyDefId, TypeAliasDef>) {
 fn expand_primary(primary: &mut Primary, aliases: &HashMap<TyDefId, TypeAliasDef>) {
     match primary {
         Primary::FnCall(call) => {
-            if let Callee::AssocFn { self_ty, .. } = &mut call.callee {
-                *self_ty = expand_ty(self_ty.clone(), aliases);
+            match &mut call.callee {
+                Callee::AssocFn { self_ty, .. } => {
+                    *self_ty = expand_ty(self_ty.clone(), aliases);
+                }
+                Callee::Expr(callee) => expand_expr(callee, aliases),
+                Callee::Var(_) | Callee::Fn(_) | Callee::TraitAssoc { .. } => {}
             }
             for arg in &mut call.args {
                 expand_expr(arg, aliases);

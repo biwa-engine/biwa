@@ -14,6 +14,12 @@ pub enum Primary {
     Match(MatchExpr),
     Block(BlockExpr),
     MethodCall(MethodCall),
+    /// 任意の式を呼び先にした呼び出し (`(f)(x)`、`make()(x)`)。
+    ///
+    /// 呼び先がパス (名前) なら [`Primary::FnCall`] になる。
+    /// `x.bar(..)` は構文の上では [`Primary::MethodCall`] で、
+    /// メンバ `bar` (関数型) の値の呼び出しかメソッドかは型推論が決める。
+    Call(CallExpr),
 }
 
 impl Primary {
@@ -27,6 +33,7 @@ impl Primary {
             Self::Match(m) => m.span.clone(),
             Self::Block(b) => b.span.clone(),
             Self::MethodCall(m) => m.span.clone(),
+            Self::Call(c) => c.span.clone(),
         }
     }
 }
@@ -49,6 +56,14 @@ impl Variable {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FnCall {
     pub path: Path,
+    pub args: Vec<Exprs>,
+    pub span: Span,
+}
+
+/// 任意の式を呼び先にした呼び出し。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallExpr {
+    pub callee: Box<Exprs>,
     pub args: Vec<Exprs>,
     pub span: Span,
 }

@@ -48,6 +48,17 @@ pub enum ResolveError {
         assoc2: AssocNameTreeItem,
     },
 
+    /// 関数型の struct のメンバの名前が、その型の関連アイテム
+    /// (関連関数・メソッド・trait impl の項目) と衝突した。
+    ///
+    /// `x.bar(..)` を「メンバ `bar` (関数型) の値の呼び出し」か「メソッド `bar` の呼び出し」かに
+    /// 一意に決めるためである (`docs/function-as-the-first-class-type.md`)。
+    /// 関数型でないメンバは呼び先になり得ないので、関連アイテムと同じ名前でもよい。
+    StructMemberNameConflict {
+        name: InternedIdent,
+        span: Span,
+    },
+
     UnexpectedSelfType {
         span: Span,
     },
@@ -341,6 +352,19 @@ impl BiwacError for ResolveError {
                     .label(at(span2), format!("`{name}` is declared again here"))
                     .sub_label(at(span1), "first declared here")
                     .print();
+            }
+
+            Self::StructMemberNameConflict { name, span } => {
+                let name = ident_str(ctx, name);
+
+                ctx.diagnostic(format!(
+                    "Function-typed struct member `{name}` has the same name as an associated item of the type."
+                ))
+                .label(at(span), format!("`{name}` is also an associated item"))
+                .note(
+                    "`x.{name}(..)` could not tell whether it calls the member or the method",
+                )
+                .print();
             }
 
             Self::DuplicatedAssociatedItemForGenArgs {

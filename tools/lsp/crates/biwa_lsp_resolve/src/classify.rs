@@ -452,6 +452,12 @@ fn classify_primary(p: &Primary, param_ids: &HashSet<VarId>, out: &mut Vec<Class
             }
         }
         Primary::MemberAccess(m) => classify_exprs(&m.left, param_ids, out),
+        Primary::Call(c) => {
+            classify_exprs(&c.callee, param_ids, out);
+            for a in &c.args {
+                classify_exprs(a, param_ids, out);
+            }
+        }
         Primary::MethodCall(m) => {
             classify_exprs(&m.left, param_ids, out);
             for a in &m.args {

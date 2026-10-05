@@ -1,8 +1,8 @@
 use biwa_lsp_lexer::SyntaxKind;
 use biwac_ast::{
-    BinOperator, BinaryExpr, BoolLiteral, Exprs, FloatLiteral, FnCall, IntegerLiteral, Literal,
-    MatchExpr, MatchExprArm, MemberAccess, MethodCall, Primary, StringLiteral, StructLiteral,
-    UnOperator, UnaryExpr, Variable,
+    BinOperator, BinaryExpr, BoolLiteral, CallExpr, Exprs, FloatLiteral, FnCall, IntegerLiteral,
+    Literal, MatchExpr, MatchExprArm, MemberAccess, MethodCall, Primary, StringLiteral,
+    StructLiteral, UnOperator, UnaryExpr, Variable,
 };
 use biwac_base::{IdentInterner, ModId};
 use biwac_span::Span;
@@ -254,15 +254,15 @@ fn lower_postfix_expr(
         })));
     }
 
-    if children.peek_kind() == Some(SyntaxKind::CallArgList) {
+    if let Some(args_node) = children.eat_node(SyntaxKind::CallArgList) {
         // `foo()()`, `(x)(1)` のような「パスでない式の呼び出し」。
-        // `FnCall` はパス呼び出し専用、`MethodCall`/`MemberAccess` は `.` 越しの
-        // 呼び出し専用で、biwac_ast には「任意の式を呼ぶ」形が無い。
-        errors.push(LowerError::new(
-            "calling a non-path expression is not representable in the compiler AST",
+        // 実コンパイラでも後置演算子の `(` として `CallExpr` になる。
+        let args = lower_call_arg_list(mod_id, interner, &args_node, errors);
+        return Some(Exprs::Primary(Primary::Call(CallExpr {
+            callee: Box::new(left),
+            args,
             span,
-        ));
-        return None;
+        })));
     }
 
     errors.push(LowerError::new(

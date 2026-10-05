@@ -628,7 +628,14 @@ impl<'a> BodyBuilder<'a> {
             }
 
             Primary::FnCall(c) => {
-                let mut bb = bb;
+                // 呼び先が任意の式なら、引数より先に評価する。
+                let (mut bb, callee_expr) = match &c.callee {
+                    HirCallee::Expr(callee) => {
+                        let (bb, op) = self.lower_operand(bb, callee);
+                        (bb, Some(op))
+                    }
+                    _ => (bb, None),
+                };
                 let mut args = Vec::with_capacity(c.args.len());
                 for arg in &c.args {
                     let (next, operand) = self.lower_operand(bb, arg);
@@ -653,7 +660,48 @@ impl<'a> BodyBuilder<'a> {
                     HirCallee::Var(var_id) => {
                         Callee::Indirect(Operand::from_local(self.local_of(*var_id)))
                     }
+                    HirCallee::Expr(_) => Callee::Indirect(
+                        callee_expr.expect("compiler bug: the callee expression was not lowered"),
+                    ),
                 };
+
+                let next = self.new_block();
+                self.terminate(
+                    bb,
+                    TerminatorKind::Call {
+                        callee,
+                        args,
+                        dest,
+                        target: next,
+                    },
+                    span,
+                );
+                next
+            }
+
+            // メンバ (関数型) の値の呼び出し。レシーバは引数に含めない。
+            Primary::MethodCall(m)
+                if matches!(m.target.get(), Some(biwac_hir::MethodTarget::Member)) =>
+            {
+                // メンバの型は、単一化で引数と戻り値の型に一致している。
+                // 型推論はメンバの型そのものを記録しないので、そこから組み立てる。
+                let member_ty = Ty::new(
+                    TyKind::Fn(biwac_hir::FnTy {
+                        args: m.args.iter().map(|a| self.expr_ty(a)).collect(),
+                        rty: Box::new(self.expr_ty(expr)),
+                        genargs: Vec::new(),
+                    }),
+                    m.method.span.clone(),
+                );
+                let (mut bb, base) = self.lower_place(bb, &m.left);
+                let callee = Callee::Indirect(Operand::Place(base.field(m.method.id, member_ty)));
+
+                let mut args = Vec::with_capacity(m.args.len());
+                for arg in &m.args {
+                    let (next, operand) = self.lower_operand(bb, arg);
+                    bb = next;
+                    args.push(operand);
+                }
 
                 let next = self.new_block();
                 self.terminate(
@@ -693,6 +741,7 @@ impl<'a> BodyBuilder<'a> {
                         self_ty: self.expr_ty(&m.left),
                         genargs,
                     },
+                    biwac_hir::MethodTarget::Member => unreachable!("handled above"),
                 };
 
                 let next = self.new_block();

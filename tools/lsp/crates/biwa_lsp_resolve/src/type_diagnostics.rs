@@ -182,6 +182,14 @@ fn to_diagnostic(report: &TyErrorReport, interner: &IdentInterner) -> Option<(Sp
             ))
         }
 
+        TyError::NotCallable { ty } => Some((
+            ty.span.clone(),
+            format!(
+                "`{}` is not a function and cannot be called.",
+                names.render(&ty.kind)
+            ),
+        )),
+
         TyError::MethodAsValue { span } => Some((
             span.clone(),
             "A method cannot be used as a value yet.".to_string(),

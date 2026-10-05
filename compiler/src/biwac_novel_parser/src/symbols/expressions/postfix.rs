@@ -1,6 +1,6 @@
 use biwac_span::Span;
 
-use biwac_ast::{Exprs, MemberAccess, MethodCall, Primary};
+use biwac_ast::{CallExpr, Exprs, MemberAccess, MethodCall, Primary};
 
 use crate::{NCodeTokenOption, NovelParseError, NovelSourceStream, token::NCodeTkKind};
 
@@ -49,6 +49,20 @@ impl<'src> NovelSourceStream<'src> {
                             }),
                         ))?)
                     }
+                }
+                // 任意の式の後ろの `(` は呼び出し (`make()(x)`、`(f)(x)`)。
+                // 通常のパーサーと同じ規則である。
+                //
+                // 埋め込み式 (`$f(x)(テキスト)`) の範囲は字句の段 (`scan.rs`) が
+                // 最初の呼び出しの `)` までで切るので、ここには届かない。
+                NCodeTkKind::MarkLPare => {
+                    let (args, span) = self.consume_arguments()?;
+
+                    self.consume_postfix_after_expression(Exprs::Primary(Primary::Call(CallExpr {
+                        span: Span::merge(&expr.span(), &span),
+                        callee: Box::new(expr),
+                        args,
+                    })))
                 }
                 _ => Ok(expr),
             }

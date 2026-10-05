@@ -149,6 +149,16 @@ fn to_diagnostic(err: &ResolveError, interner: &IdentInterner) -> Option<RawDiag
             )
         }
 
+        E::StructMemberNameConflict { name: n, span } => {
+            let n = name(interner, n);
+            raw(
+                span.clone(),
+                format!(
+                    "Function-typed struct member `{n}` has the same name as an associated item of the type."
+                ),
+            )
+        }
+
         E::DuplicatedAssociatedItemForGenArgs { .. } => {
             // AssocNameTreeItem は span を持たないので、位置を示せる label が無い。
             // ここでは LSP 診断として出しようがないので諦める。

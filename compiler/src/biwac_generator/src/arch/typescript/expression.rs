@@ -43,6 +43,8 @@ impl<'a> AsOxcLocal<'a, oxc_span::Ident<'a>> for Callee {
             Self::Fn(def_id) | Self::AssocFn { def_id, .. } => {
                 oxc_span::Ident::new_const(ctx.allocator.alloc_str(&def_id.mangled(ctx)))
             }
+            // 名前にならない。呼び出しの側 (`Primary::FnCall`) が式として出す。
+            Self::Expr(_) => panic!("compiler bug: a callee expression has no name"),
         }
     }
 }
@@ -209,23 +211,25 @@ impl<'a> AsOxcLocal<'a, oxc_ast::ast::Expression<'a>> for Expr {
                     ))
                 }
                 Primary::FnCall(c) => {
+                    let callee = match &c.callee {
+                        // 呼び先が任意の式なら、その式の値を呼ぶ。
+                        Callee::Expr(callee) => callee.as_oxc_local(ctx, fctx),
+                        _ => oxc_ast::ast::Expression::Identifier(oxc_allocator::Box::new_in(
+                            oxc_ast::ast::IdentifierReference {
+                                span: span(),
+                                name: oxc_span::Ident::new_const(
+                                    ctx.allocator.alloc_str(&c.callee.as_oxc_local(ctx, fctx)),
+                                ),
+                                reference_id: Cell::new(None),
+                            },
+                            ctx.allocator,
+                        )),
+                    };
                     let call =
                         oxc_ast::ast::Expression::CallExpression(oxc_allocator::Box::new_in(
                             oxc_ast::ast::CallExpression {
                                 span: span(),
-                                callee: oxc_ast::ast::Expression::Identifier(
-                                    oxc_allocator::Box::new_in(
-                                        oxc_ast::ast::IdentifierReference {
-                                            span: span(),
-                                            name: oxc_span::Ident::new_const(
-                                                ctx.allocator
-                                                    .alloc_str(&c.callee.as_oxc_local(ctx, fctx)),
-                                            ),
-                                            reference_id: Cell::new(None),
-                                        },
-                                        ctx.allocator,
-                                    ),
-                                ),
+                                callee,
                                 type_arguments: None,
                                 arguments: oxc_allocator::Vec::from_iter_in(
                                     c.args.iter().map(|a| {
@@ -299,6 +303,44 @@ impl<'a> AsOxcLocal<'a, oxc_ast::ast::Expression<'a>> for Expr {
                     ))
                 }
                 Primary::Block(block) => block.as_oxc_local(ctx, fctx),
+                // メンバ (関数型) の値の呼び出し。TypeScript では struct はオブジェクトなので
+                // `left.member(args)` がそのままメンバの関数を呼ぶ。
+                Primary::MethodCall(m)
+                    if matches!(m.target.get(), Some(biwac_hir::MethodTarget::Member)) =>
+                {
+                    let callee = oxc_ast::ast::Expression::StaticMemberExpression(
+                        oxc_allocator::Box::new_in(
+                            oxc_ast::ast::StaticMemberExpression {
+                                span: span(),
+                                object: m.left.as_oxc_local(ctx, fctx),
+                                property: oxc_ast::ast::IdentifierName {
+                                    span: span(),
+                                    name: oxc_span::Ident::new_const(
+                                        ctx.allocator.alloc(ctx.str_of(&m.method.id)),
+                                    ),
+                                },
+                                optional: false,
+                            },
+                            ctx.allocator,
+                        ),
+                    );
+                    oxc_ast::ast::Expression::CallExpression(oxc_allocator::Box::new_in(
+                        oxc_ast::ast::CallExpression {
+                            span: span(),
+                            callee,
+                            type_arguments: None,
+                            arguments: oxc_allocator::Vec::from_iter_in(
+                                m.args.iter().map(|a| {
+                                    oxc_ast::ast::Argument::from(a.as_oxc_local(ctx, fctx))
+                                }),
+                                ctx.allocator,
+                            ),
+                            optional: false,
+                            pure: false,
+                        },
+                        ctx.allocator,
+                    ))
+                }
                 Primary::MethodCall(m) => {
                     // driver が手前で弾いているので、ここに来るのは
                     // 実装が確定しているメソッドだけである。

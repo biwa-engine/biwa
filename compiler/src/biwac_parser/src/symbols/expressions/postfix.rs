@@ -1,7 +1,7 @@
 use biwac_lexer::TkKind;
 use biwac_span::Span;
 
-use biwac_ast::{Exprs, MemberAccess, MethodCall, Primary};
+use biwac_ast::{CallExpr, Exprs, MemberAccess, MethodCall, Primary};
 
 use crate::{ParseError, TokenStream};
 
@@ -50,6 +50,17 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                             }),
                         ))?)
                     }
+                }
+                // 任意の式の後ろの `(` は呼び出し (`make()(x)`、`(f)(x)`)。
+                // 呼び先が関数型かどうかは型推論が見る。
+                TkKind::MarkLPare => {
+                    let (args, span) = self.consume_arguments()?;
+
+                    self.consume_postfix_after_expression(Exprs::Primary(Primary::Call(CallExpr {
+                        span: Span::merge(&expr.span(), &span),
+                        callee: Box::new(expr),
+                        args,
+                    })))
                 }
                 _ => Ok(expr),
             }
