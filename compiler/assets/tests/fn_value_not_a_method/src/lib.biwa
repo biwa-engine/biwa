@@ -1,0 +1,16 @@
+// `self` を取らない関連関数は `x.make(..)` の形では呼べない。
+// 型エラー (`NotAMethod`) にならなければならない。`Holder::make(..)` なら呼べる。
+
+struct Holder {
+  value: Int,
+}
+
+impl Holder {
+  fn make(x: Int) -> Holder {
+    Holder { value = x }
+  }
+}
+
+fn call(h: Holder) -> Holder {
+  h.make(1)
+}

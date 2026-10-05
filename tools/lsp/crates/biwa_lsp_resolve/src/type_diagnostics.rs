@@ -196,10 +196,25 @@ fn to_diagnostic(report: &TyErrorReport, interner: &IdentInterner) -> Option<(Sp
                 .to_string(),
         )),
 
-        TyError::MethodAsValue { span } => Some((
-            span.clone(),
-            "A method cannot be used as a value yet.".to_string(),
-        )),
+        TyError::BoundMethodAsValue { ty, method } => {
+            let name = ident_str(interner, &method.id);
+            let ty = names.render(&ty.kind);
+            Some((
+                method.span.clone(),
+                format!(
+                    "The method `{name}` cannot be used as a value together with its receiver; use `{ty}::{name}`."
+                ),
+            ))
+        }
+
+        TyError::NotAMethod { ty, method } => {
+            let name = ident_str(interner, &method.id);
+            let ty = names.render(&ty.kind);
+            Some((
+                method.span.clone(),
+                format!("`{name}` is not a method of `{ty}`; call it as `{ty}::{name}(..)`."),
+            ))
+        }
 
         TyError::SceneAsValue { span } => Some((
             span.clone(),

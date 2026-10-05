@@ -88,6 +88,28 @@ struct Mapper[T] {
   f: fn(T) -> T,
 }
 
+impl[T] Mapper[T] {
+  fn map(self, x: T) -> T {
+    self.f(x)
+  }
+}
+
+// ステップ 4: メソッドは「第一引数が self の関連関数」。
+// trait のメソッドもパスで呼べる (`T::twice(x)`)。
+trait Twice {
+  fn twice(self) -> Int;
+}
+
+impl Holder: Twice {
+  fn twice(self) -> Int {
+    self.value * 2
+  }
+}
+
+fn via_trait[T: Twice](x: T) -> Int {
+  T::twice(x) + x.twice()
+}
+
 struct Holder {
   value: Int,
 }
@@ -148,10 +170,17 @@ fn compute() -> Int {
   let k = Op::new(add_one).run(1);       // 2 (一時的な値のメンバを呼ぶ)
   let zero = IntTagged::zero;
   let l = zero().n;                      // 0
+  // ステップ 4: メソッドをパスで呼ぶ・値にする。
+  let n = Op::exec(op, 1);               // 2
+  let exec = Op::exec;
+  let o = exec(Op::new(add_one), 1);     // 2
+  let map = Mapper::map;
+  let p = map(m, 1);                     // 2 (`T` は受け手から決まる)
+  let q = via_trait(Holder::make(3));    // 12
   call_void(ignore, 1);
   if e {
     if compare_later() {
-      a + b + c + d + g + h + i + j + k + l
+      a + b + c + d + g + h + i + j + k + l + n + o + p + q
     } else {
       0
     }

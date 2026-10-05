@@ -60,8 +60,14 @@ pub(crate) fn build_scene(
 pub(crate) fn build_native_fn(def_id: ValDefId, n: &NativeFnDef) -> MirItem {
     MirItem::Native(NativeItem {
         def_id,
-        self_ty: n.signature.self_ty.clone(),
-        args: n.signature.args.iter().map(|a| a.ty.clone()).collect(),
+        // MIR の native は self を別に持つ (`%param0%` の番号付けなどで使う)。
+        self_ty: n.signature.self_ty().cloned(),
+        args: n
+            .signature
+            .explicit_args()
+            .iter()
+            .map(|a| a.ty.clone())
+            .collect(),
         rty: n.signature.rty.clone(),
         genargs: n.signature.all_genargs().map(|g| g.def_id).collect(),
         native_body: n.native_body.clone(),
@@ -118,15 +124,8 @@ impl<'a> BodyBuilder<'a> {
         // _0 は戻り値スロット。
         self.new_local(signature.rty.clone(), signature.rty.span.clone());
 
-        // _1 ..= arg_count が引数。メソッドなら _1 が self。
+        // _1 ..= arg_count が引数。メソッドなら _1 が self (シグニチャの第一引数)。
         let mut arg_count = 0;
-        if let Some(self_ty) = &signature.self_ty {
-            let var_id = body.self_var_id.unwrap_or(VarId::SELF_VARIABLE);
-            let ty = self.var_ty(var_id, self_ty);
-            let local = self.new_local(ty, self_ty.span.clone());
-            self.var_map.insert(var_id, local);
-            arg_count += 1;
-        }
         for arg in &signature.args {
             let ty = self.var_ty(arg.var_id, &arg.ty);
             let local = self.new_local(ty, arg.id.span.clone());

@@ -141,8 +141,8 @@ impl<'a> AsOxcGlobal<'a, oxc_ast::ast::Statement<'a>> for FnDef {
                         kind: oxc_ast::ast::FormalParameterKind::FormalParameter,
                         items: oxc_allocator::Vec::from_iter_in(
                             self.signature
-                                .self_ty
-                                .iter()
+                                .self_ty()
+                                .into_iter()
                                 .map(|ty| oxc_ast::ast::FormalParameter {
                                     span: span(),
                                     decorators: oxc_allocator::Vec::new_in(ctx.allocator),
@@ -173,7 +173,7 @@ impl<'a> AsOxcGlobal<'a, oxc_ast::ast::Statement<'a>> for FnDef {
                                     readonly: false,
                                     r#override: false,
                                 })
-                                .chain(self.signature.args.iter().map(|arg| {
+                                .chain(self.signature.explicit_args().iter().map(|arg| {
                                     oxc_ast::ast::FormalParameter {
                                         span: span(),
                                         decorators: oxc_allocator::Vec::new_in(ctx.allocator),
@@ -317,8 +317,8 @@ impl<'a> AsOxcGlobal<'a, oxc_ast::ast::Statement<'a>> for NativeFnDef {
                             // (他の引数も str_of で生の名前を使っている)、
                             // レシーバも `self` という名前で受ける。
                             self.signature
-                                .self_ty
-                                .iter()
+                                .self_ty()
+                                .into_iter()
                                 .map(|ty| oxc_ast::ast::FormalParameter {
                                     span: span(),
                                     decorators: oxc_allocator::Vec::new_in(ctx.allocator),
@@ -345,7 +345,7 @@ impl<'a> AsOxcGlobal<'a, oxc_ast::ast::Statement<'a>> for NativeFnDef {
                                     readonly: false,
                                     r#override: false,
                                 })
-                                .chain(self.signature.args.iter().map(|arg| {
+                                .chain(self.signature.explicit_args().iter().map(|arg| {
                                     oxc_ast::ast::FormalParameter {
                                         span: span(),
                                         decorators: oxc_allocator::Vec::new_in(ctx.allocator),

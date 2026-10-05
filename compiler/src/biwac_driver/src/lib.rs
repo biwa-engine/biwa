@@ -1207,7 +1207,8 @@ mod tests {
             | "fn_value_member_conflict"
             | "fn_value_not_callable"
             | "fn_value_trait_item"
-            | "fn_value_eq" => &["std"],
+            | "fn_value_eq"
+            | "fn_value_not_a_method" => &["std"],
             _ => &[],
         };
         if deps.is_empty() {
@@ -1839,9 +1840,9 @@ mod tests {
         );
     }
 
-    /// 受け手を取るメソッドはまだ値にできないこと。
+    /// 受け手付きのメソッド (`c.get`) は値にできないこと (`Counter::get` ならできる)。
     #[test]
-    fn method_as_value_is_an_error() {
+    fn bound_method_as_value_is_an_error() {
         ensure_fixture_deps("fn_value_method");
         let result = with_build_lock(|_| {
             compile(
@@ -1853,7 +1854,30 @@ mod tests {
                 },
             )
         });
-        assert!(result.is_err(), "a method used as a value must be rejected");
+        assert!(
+            result.is_err(),
+            "a method bound to its receiver used as a value must be rejected"
+        );
+    }
+
+    /// `self` を取らない関連関数を `x.make(..)` の形で呼ぶのは型エラーであること。
+    #[test]
+    fn calling_an_associated_function_as_a_method_is_an_error() {
+        ensure_fixture_deps("fn_value_not_a_method");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_not_a_method").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "an associated function without `self` called as a method must be rejected"
+        );
     }
 
     /// struct のメンバ名と関連アイテムの衝突が名前解決のエラーになること。

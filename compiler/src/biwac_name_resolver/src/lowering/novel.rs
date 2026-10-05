@@ -30,7 +30,7 @@ pub(super) fn lower_novel_scene(
         &scene_def.args,
         &scene_def.rtype,
         None,
-        false,
+        None,
         &None,
         Vec::new(),
         scene_def.span.clone(),

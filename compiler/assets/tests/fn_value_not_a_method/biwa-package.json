@@ -1,7 +1,7 @@
 {
-  "name": "fn_value_method",
+  "name": "fn_value_not_a_method",
   "version": "0.1.0",
-  "description": "rejects a method bound to its receiver used as a value",
+  "description": "rejects calling an associated function without self as a method",
   "dependencies": [
     {
       "name": "std",

@@ -281,9 +281,11 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
     ) -> TyResult<Ty> {
         let own: HashSet<LocalGenDefId> = callee_sign.genargs.iter().map(|g| g.def_id).collect();
 
-        let mut callee_args: Vec<Ty> = callee_sign.args.iter().map(|a| a.ty.clone()).collect();
-        if let (Some(self_ty), Some(recv)) = (&callee_sign.self_ty, receiver) {
-            callee_args.insert(0, self_ty.clone());
+        // メソッドならシグニチャの第一引数が `self` なので、受け手を先頭に置けば揃う。
+        let callee_args: Vec<Ty> = callee_sign.args.iter().map(|a| a.ty.clone()).collect();
+        if let Some(recv) = receiver
+            && callee_sign.has_self
+        {
             args.insert(0, recv);
         }
 
@@ -370,7 +372,7 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                     var_id: a.var_id,
                 })
                 .collect(),
-            self_ty: sig.self_ty.clone().map(|t| t.embody_by_gen_ty_id(&assigns)),
+            has_self: sig.has_self,
             impl_self_ty: sig
                 .impl_self_ty
                 .clone()
@@ -860,13 +862,9 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
             return Err(TyError::SceneAsValue { span });
         }
 
+        // メソッドも値にできる。シグニチャの第一引数が `self` なので、
+        // `Foo::bar` は `fn(Foo, A) -> B` になる。
         let callee_sign = self.tctx.get_value_signature(&def_id).unwrap();
-
-        // 受け手 (`self`) を取るメソッドは、まだ「第一引数が self の関連関数」に
-        // 統一していないので値にできない (impl-status §4 の 4)。
-        if callee_sign.self_ty.is_some() {
-            return Err(TyError::MethodAsValue { span });
-        }
 
         // codegen が関数への参照を出力するので、外部パッケージなら import が要る
         self.tctx
@@ -1509,7 +1507,28 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
             Primary::MemberAccess(m) => {
                 let left = self.infer_expr(&m.left)?;
 
-                self.infer_member_access(left, m)
+                match self.infer_member_access(left.clone(), m) {
+                    // メンバが無いが同じ名前のメソッドがある: `x.bar` を値にしようとした。
+                    // 受け手を含んだ値は実質クロージャなので作れない。`Foo::bar` なら値にできる。
+                    Err(
+                        e @ (TyError::StructNotHasMember { .. } | TyError::ExprNotHasMember { .. }),
+                    ) => {
+                        let left = self.apply_ty(left);
+                        match self.tctx.get_method_target(
+                            &left,
+                            &m.member,
+                            self.module,
+                            &self.genarg_bounds,
+                        ) {
+                            Ok(_) => Err(TyError::BoundMethodAsValue {
+                                ty: Box::new(left),
+                                method: Box::new(m.member.clone()),
+                            }),
+                            Err(_) => Err(e),
+                        }
+                    }
+                    res => res,
+                }
             }
             Primary::VariantCtor(ctor) => self.infer_variant_ctor(ctor),
 
@@ -1719,6 +1738,19 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                 }
                 Err(e) => return Err(e),
             };
+        // `x.bar(..)` で呼べるのは `self` を取るものだけである。
+        let has_self = match target {
+            MethodTarget::Direct(def_id) => {
+                self.tctx.get_value_signature(&def_id).unwrap().has_self
+            }
+            MethodTarget::Trait(assoc) => self.trait_item_signature(assoc, &left)?.has_self,
+        };
+        if !has_self {
+            return Err(TyError::NotAMethod {
+                ty: Box::new(left),
+                method: Box::new(m.member.clone()),
+            });
+        }
         set_call_target(call, CallTarget::Method(target));
 
         match target {
@@ -1788,12 +1820,9 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                     args.insert(0, self_ty);
                 }
             }
-            StaticPrefix::Receiver(receiver) => {
-                if let Some(self_ty) = &callee_sign.self_ty {
-                    callee_args.insert(0, self_ty.clone());
-                    args.insert(0, receiver);
-                }
-            }
+            // メソッドのシグニチャの第一引数は `self` なので、受け手を先頭に置けば揃う。
+            // `self` を取らない関連関数はここに来ない (`infer_dot_call` が `NotAMethod` にする)。
+            StaticPrefix::Receiver(receiver) => args.insert(0, receiver),
         }
 
         let callee_ty = Ty::new(
@@ -2232,20 +2261,15 @@ impl<'a> TyCtx<'a> {
         // 外部パッケージのものは import が必要になる。
         {
             let mut deps = self.hir.deps_recorder.borrow_mut();
-            if let Some(ty) = &fn_signature.self_ty {
-                deps.depends_on_ty(ty);
-            }
+            // メソッドなら第一引数が `self` である。
             for arg in &fn_signature.args {
                 deps.depends_on_ty(&arg.ty);
             }
             deps.depends_on_ty(&fn_signature.rty);
         }
 
-        if let Some(ty) = &fn_signature.self_ty {
-            fctx.vars.insert(VarId::SELF_VARIABLE, ty.clone());
-        }
         // 引数を決定済みの型として文脈に記録
-        // arg_var_ids は第一引数がselfのときはそれも含む
+        // メソッドなら第一引数が `self` (`VarId::SELF_VARIABLE`) である
         for arg in &fn_signature.args {
             fctx.vars.insert(arg.var_id, arg.ty.clone());
         }

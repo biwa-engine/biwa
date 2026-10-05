@@ -74,9 +74,18 @@ pub enum TyError {
         ty: Box<Ty>,
     },
 
-    /// 受け手 (`self`) を取るメソッドを値として使った。まだ値にできない。
-    MethodAsValue {
-        span: Span,
+    /// 受け手付きのメソッド (`x.bar`) を値として使った。
+    ///
+    /// 受け手を含んだ値は実質クロージャなので作れない。`Foo::bar` なら値にできる。
+    BoundMethodAsValue {
+        ty: Box<Ty>,
+        method: Box<Ident>,
+    },
+
+    /// `self` を取らない関連関数を `x.bar(..)` の形で呼んだ。
+    NotAMethod {
+        ty: Box<Ty>,
+        method: Box<Ident>,
     },
 
     /// scene を値として使った。まだ値にできない。
@@ -468,13 +477,31 @@ impl BiwacError for TyErrorReport {
                 .print();
             }
 
-            TyError::MethodAsValue { span } => {
-                ctx.diagnostic("A method cannot be used as a value yet.")
-                    .label(at(span), "this function takes `self`")
-                    .note(
-                        "only functions and associated functions without `self` \
-                         can be used as values for now",
+            TyError::BoundMethodAsValue { ty, method } => {
+                let name = ident_str(&method.id);
+                let ty = names.render(&ty.kind);
+
+                ctx.diagnostic(format!(
+                    "The method `{name}` cannot be used as a value together with its receiver."
+                ))
+                .label(at(&method.span), format!("`{name}` is a method of `{ty}`"))
+                .note(format!(
+                    "a value bound to its receiver would be a closure; \
+                     use the associated function `{ty}::{name}` (it takes the receiver as its first argument)"
+                ))
+                .print();
+            }
+
+            TyError::NotAMethod { ty, method } => {
+                let name = ident_str(&method.id);
+                let ty = names.render(&ty.kind);
+
+                ctx.diagnostic(format!("`{name}` is not a method of `{ty}`."))
+                    .label(
+                        at(&method.span),
+                        "this associated function does not take `self`",
                     )
+                    .note(format!("call it as `{ty}::{name}(..)`"))
                     .print();
             }
 
@@ -648,6 +675,8 @@ pub(crate) fn error_tys(error: &TyError) -> Vec<&Ty> {
         | TyError::MethodNotInScope { ty, .. }
         | TyError::AmbiguousMethod { ty, .. }
         | TyError::TraitBoundNotSatisfied { ty, .. }
+        | TyError::BoundMethodAsValue { ty, .. }
+        | TyError::NotAMethod { ty, .. }
         | TyError::OccursCheckFailed { ty, .. } => vec![ty],
 
         TyError::TypeConfliced { t1, t2 } => vec![t1, t2],
@@ -674,7 +703,6 @@ pub(crate) fn error_tys(error: &TyError) -> Vec<&Ty> {
         | TyError::StructNotHasMember { .. }
         | TyError::InvalidAssignOperation { .. }
         | TyError::InsufficientContext
-        | TyError::MethodAsValue { .. }
         | TyError::SceneAsValue { .. }
         | TyError::TraitItemAsValue { .. }
         | TyError::MissingLangItem { .. } => Vec::new(),

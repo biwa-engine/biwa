@@ -1,6 +1,7 @@
-// 受け手 (`self`) を取るメソッドは、まだ値として使えない。
+// 受け手付きのメソッド (`c.get`) は値として使えない。
 //
-// 「第一引数が self の関連関数」への統一 (impl-status §4 の 4) までは型エラーにする。
+// 受け手を含んだ値は実質クロージャなので作れない。`Counter::get` (受け手を第一引数に取る
+// 関連関数) なら値にできる。型エラー (`BoundMethodAsValue`) にならなければならない。
 
 struct Counter {
   n: Int,
@@ -12,7 +13,8 @@ impl Counter {
   }
 }
 
-fn take() -> Int {
-  let f = Counter::get;
+fn take(c: Counter) -> Int {
+  let ok = Counter::get;
+  let f = c.get;
   0
 }

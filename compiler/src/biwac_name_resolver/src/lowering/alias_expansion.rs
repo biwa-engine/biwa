@@ -156,9 +156,6 @@ fn expand_fn_signature(sig: &mut FnSignature, aliases: &HashMap<TyDefId, TypeAli
     for arg in &mut sig.args {
         arg.ty = expand_ty(arg.ty.clone(), aliases);
     }
-    if let Some(self_ty) = &mut sig.self_ty {
-        *self_ty = expand_ty(self_ty.clone(), aliases);
-    }
     if let Some(impl_self_ty) = &mut sig.impl_self_ty {
         *impl_self_ty = expand_ty(impl_self_ty.clone(), aliases);
     }

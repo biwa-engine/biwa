@@ -2355,45 +2355,53 @@ impl DepMetadata {
             })
             .collect();
 
-        // 引数を変換 (self 引数は FnSignature.args には含まない)
-        let args: Vec<FnArgDecl> = fn_data
-            .args
-            .0
-            .iter()
-            .enumerate()
-            .map(|(i, a)| {
-                let name_str = self.get_str(a.name).unwrap_or("");
-                let name_id = interner.get_or_insert(name_str);
-                let ty = self.impl_disk_ty_to_ty(&a.ty, pkg_id, gen_owner_sym, Some(fn_sym_idx));
-                FnArgDecl {
+        // 引数を変換。`.biwameta` は `self` を引数として書かないので、
+        // メソッドなら先頭に `self` (型は impl の対象型) を足す。
+        let self_arg = if fn_data.has_self != 0 {
+            self.impl_decode_impl_self_ty(fn_data, fn_sym_idx, pkg_id)
+                .map(|ty| FnArgDecl {
                     id: Ident {
-                        id: name_id,
+                        id: biwac_base::InternedIdent::SELF,
                         span: Span::dummy(),
                     },
                     ty,
-                    // var_id は外部 fn の型推論では使われないためダミー値を使用
-                    var_id: VarId::new(i as u32 + 1),
-                }
-            })
-            .collect();
+                    var_id: VarId::SELF_VARIABLE,
+                })
+        } else {
+            None
+        };
+        let explicit_args = fn_data.args.0.iter().enumerate().map(|(i, a)| {
+            let name_str = self.get_str(a.name).unwrap_or("");
+            let name_id = interner.get_or_insert(name_str);
+            let ty = self.impl_disk_ty_to_ty(&a.ty, pkg_id, gen_owner_sym, Some(fn_sym_idx));
+            FnArgDecl {
+                id: Ident {
+                    id: name_id,
+                    span: Span::dummy(),
+                },
+                ty,
+                // var_id は外部 fn の型推論では使われないためダミー値を使用
+                var_id: VarId::new(i as u32 + 1),
+            }
+        });
+        // `self` の型が引けなければ (壊れたメタデータ)、`self` の無いものとして扱う。
+        // `has_self` と `args` の先頭が食い違わないようにするため。
+        let has_self = self_arg.is_some();
+        let args: Vec<FnArgDecl> = self_arg.into_iter().chain(explicit_args).collect();
 
         let rty = self.impl_disk_ty_to_ty(&fn_data.rty, pkg_id, gen_owner_sym, Some(fn_sym_idx));
 
         FnSignature {
-            args,
-            // メソッドなら impl の self 型を入れる。トップレベル関数なら None になる。
+            // メソッドなら先頭の `self` の型は impl の self 型である。
             //
             // メソッド呼び出しの単一化はレシーバを第 1 引数として含めるので、
-            // ここが空だと impl ブロックのジェネリック引数がレシーバから決まらず、
+            // ここが無いと impl ブロックのジェネリック引数がレシーバから決まらず、
             // 戻り値が `Self` のメソッドで型変数が解けないまま残る
             // (単相化に必要な割り当てが記録されず、MIR の符号化まで漏れる)。
             // レシーバを取るかは `has_self` に記録してある。
             // `impl_self_ty` は関連関数にも入るので、それだけでは区別できない。
-            self_ty: if fn_data.has_self != 0 {
-                self.impl_decode_impl_self_ty(fn_data, fn_sym_idx, pkg_id)
-            } else {
-                None
-            },
+            args,
+            has_self,
             impl_self_ty: self.impl_decode_impl_self_ty(fn_data, fn_sym_idx, pkg_id),
             rty,
             genargs,
@@ -2972,9 +2980,11 @@ fn impl_encode_fn_data(
             .collect(),
     );
 
+    // `self` は書かない。レシーバを取るかは `has_self` に書き、
+    // 型は `impl_self_ty` と同じなので読み込みで復元する。
     let disk_args = DiskVec(
         signature
-            .args
+            .explicit_args()
             .iter()
             .map(|arg| {
                 let arg_name_str = interner.get_str(&arg.id.id).unwrap_or("");
@@ -3014,7 +3024,7 @@ fn impl_encode_fn_data(
     );
 
     format::DiskFnData {
-        has_self: u32::from(signature.self_ty.is_some()),
+        has_self: u32::from(signature.has_self),
         trait_of: DiskVec(
             trait_of
                 .map(|ty| {
