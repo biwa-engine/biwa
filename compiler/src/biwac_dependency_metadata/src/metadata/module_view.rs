@@ -146,6 +146,7 @@ impl DepMetadataModuleView {
                 SymbolBody::Struct(struct_data) => (struct_data.name, ExternalChildKind::Ty),
                 SymbolBody::Mod(mod_data) => (mod_data.name, ExternalChildKind::Mod),
                 SymbolBody::NativeTypeAlias(alias) => (alias.name, ExternalChildKind::Ty),
+                SymbolBody::TypeAlias(alias) => (alias.name, ExternalChildKind::Ty),
                 SymbolBody::Enum(enum_data) => (enum_data.name, ExternalChildKind::Ty),
                 SymbolBody::Trait(trait_data) => (trait_data.name, ExternalChildKind::Trait),
                 // バリアントはモジュールの直下には載らない。enum の子である。

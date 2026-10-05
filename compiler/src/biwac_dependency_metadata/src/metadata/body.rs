@@ -3,7 +3,8 @@ use super::{
     codec::DiskDecode,
     format::{
         DiskEnumData, DiskFnData, DiskModData, DiskNativeTypeAliasData, DiskStructData,
-        DiskSymbolKind, DiskTraitAssocData, DiskTraitData, DiskTraitImplData, DiskVariantData,
+        DiskSymbolKind, DiskTraitAssocData, DiskTraitData, DiskTraitImplData, DiskTypeAliasData,
+        DiskVariantData,
     },
 };
 use crate::error::DepMetadataError;
@@ -21,6 +22,7 @@ pub enum SymbolBody {
     Trait(DiskTraitData),
     TraitAssoc(DiskTraitAssocData),
     TraitImpl(DiskTraitImplData),
+    TypeAlias(DiskTypeAliasData),
 }
 
 impl SymbolBody {
@@ -63,6 +65,10 @@ impl SymbolBody {
                 let (data, _) = DiskTraitImplData::decode(bytes)?;
                 Ok(SymbolBody::TraitImpl(data))
             }
+            DiskSymbolKind::TypeAlias => {
+                let (data, _) = DiskTypeAliasData::decode(bytes)?;
+                Ok(SymbolBody::TypeAlias(data))
+            }
         }
     }
 }
@@ -79,6 +85,7 @@ impl DiskEncode for SymbolBody {
             Self::Trait(trait_) => trait_.encode(buf),
             Self::TraitAssoc(item) => item.encode(buf),
             Self::TraitImpl(imp) => imp.encode(buf),
+            Self::TypeAlias(alias) => alias.encode(buf),
         }
     }
 }

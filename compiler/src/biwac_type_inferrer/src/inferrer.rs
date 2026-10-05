@@ -858,7 +858,7 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
     ) -> TyResult<Ty> {
         // scene は TypeScript では generator function で、普通の関数と呼び方が違う。
         // 関数型として扱うのは別のステップ (impl-status §4 の 9)。
-        if let Some(ValDefKind::NovelScene(_)) = self.tctx.hir.vals.get(&def_id) {
+        if self.tctx.is_scene(&def_id) {
             return Err(TyError::SceneAsValue { span });
         }
 

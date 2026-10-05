@@ -1208,7 +1208,9 @@ mod tests {
             | "fn_value_not_callable"
             | "fn_value_trait_item"
             | "fn_value_eq"
-            | "fn_value_not_a_method" => &["std"],
+            | "fn_value_not_a_method"
+            | "fn_lib" => &["std"],
+            "fn_user" | "fn_user_scene" => &["std", "fn_lib"],
             _ => &[],
         };
         if deps.is_empty() {
@@ -1817,6 +1819,57 @@ mod tests {
         assert!(wat.contains("(elem declare func"), "{wat}");
         // 関数型のメンバは型付き関数参照のフィールドになる。
         assert!(wat.contains("(field $run (mut (ref null $__fn."), "{wat}");
+    }
+
+    /// 関数型がパッケージをまたげること (ステップ 6)。
+    ///
+    /// 依存 (`fn_lib`) の関数型の引数・戻り値・struct のメンバ・enum のペイロード・
+    /// 関数型の型エイリアスを、`.biwameta` / `.biwamir` 越しに使う。
+    #[test]
+    fn fn_types_across_packages() {
+        ensure_fixture_deps("fn_lib");
+        ensure_fixture_deps("fn_user");
+        let root = Path::new("../../assets/tests/fn_user");
+        with_build_lock(|_| {
+            compile(
+                root.to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: false,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+            .expect("wasm build of fn_user failed");
+        });
+
+        let dir = root
+            .join(biwac_base::BIWA_BUILD_DIRECTORY_NAME)
+            .join(biwac_base::Target::Wasm.build_subdir());
+        let wat = std::fs::read_to_string(dir.join("fn_user.wat")).expect(".wat was not written");
+        assert!(wat.contains("ref.func"), "{wat}");
+        assert!(wat.contains("call_ref"), "{wat}");
+    }
+
+    /// 依存パッケージの scene を値にするのは型エラーであること
+    /// (scene かどうかは `.biwameta` から分かる)。
+    #[test]
+    fn scene_of_a_dependency_as_value_is_an_error() {
+        ensure_fixture_deps("fn_lib");
+        ensure_fixture_deps("fn_user_scene");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_user_scene").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "a scene of a dependency used as a value must be rejected"
+        );
     }
 
     /// 関数型の値は量化子を持たない (rank 1)。

@@ -9,19 +9,42 @@ use biwac_span::{GenDefId, TyDefId};
 
 use crate::ResolveError;
 
-pub(super) fn expand_aliases(hir: &mut Hir, errors: &mut Vec<ResolveError>) {
+/// `ext_aliases` は依存パッケージの型エイリアス (右辺は展開済み)。
+pub(super) fn expand_aliases(
+    hir: &mut Hir,
+    ext_aliases: &HashMap<TyDefId, TypeAliasDef>,
+    errors: &mut Vec<ResolveError>,
+) {
     if let Err(errs) = detect_alias_cycles(&hir.ty_aliases) {
         errors.extend(errs);
         return;
     }
 
-    let aliases = hir.ty_aliases.clone();
+    let mut aliases = hir.ty_aliases.clone();
+    aliases.extend(ext_aliases.iter().map(|(id, def)| (*id, def.clone())));
+
+    // エイリアスの右辺も展開しておく。`.biwameta` には展開済みの右辺を書くので、
+    // 依存元は (依存の依存のエイリアスを含めて) 連鎖を辿らずに済む。
+    for alias in hir.ty_aliases.values_mut() {
+        alias.right = expand_ty(alias.right.clone(), &aliases);
+    }
 
     for defined_ty_impl in hir.tys.values_mut() {
-        if let Some(TyDefKind::Struct(struct_def)) = &mut defined_ty_impl.ty_content {
-            for member_ty in struct_def.members.values_mut() {
-                *member_ty = expand_ty(member_ty.clone(), &aliases);
+        match &mut defined_ty_impl.ty_content {
+            Some(TyDefKind::Struct(struct_def)) => {
+                for member_ty in struct_def.members.values_mut() {
+                    *member_ty = expand_ty(member_ty.clone(), &aliases);
+                }
             }
+            // バリアントのフィールドにもエイリアスが書ける (`Run(IntFn)`)。
+            Some(TyDefKind::Enum(enum_def)) => {
+                for variant in &mut enum_def.variants {
+                    for (_, field_ty) in &mut variant.fields {
+                        *field_ty = expand_ty(field_ty.clone(), &aliases);
+                    }
+                }
+            }
+            _ => {}
         }
         for impl_list in defined_ty_impl.vals.values_mut() {
             for pair in impl_list.vals.values_mut() {

@@ -88,7 +88,14 @@ pub(crate) fn lower(
     // 名前解決は alias をその場で canonical な TyDefId に潰さない
     // (潰すと `type MyGame = Game[A, B]` の [A, B] が失われるため)。
     // 代わりにここで、すべての型・値を lower し終えたあとに一括で展開する。
-    alias_expansion::expand_aliases(&mut hir, &mut errors);
+    //
+    // 依存パッケージの型エイリアス (`fn_lib::IntFn`) も同じく展開する。
+    // `.biwameta` に書かれた右辺は展開済みである。
+    let ext_aliases: HashMap<TyDefId, TypeAliasDef> = ext_pkgs
+        .iter()
+        .flat_map(|p| p.meta.ext_type_aliases(p.pkg_id, interner))
+        .collect();
+    alias_expansion::expand_aliases(&mut hir, &ext_aliases, &mut errors);
 
     if errors.is_empty() {
         Ok(hir)

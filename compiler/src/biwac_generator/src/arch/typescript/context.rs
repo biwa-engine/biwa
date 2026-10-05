@@ -12,6 +12,8 @@ pub(super) struct AstBuildCtx<'a> {
     hir: &'a Hir,
     /// シンボル名の生成。ターゲットに依存しないので共有している。
     mangle: Mangler<'a>,
+    /// 依存パッケージのメタデータ。外部の scene を見分けるのに使う。
+    ext_pkgs: &'a [(PackageId, Arc<DepMetadata>)],
     pub(super) allocator: &'a oxc_allocator::Allocator,
 }
 
@@ -26,6 +28,7 @@ impl<'a> AstBuildCtx<'a> {
         Self {
             hir,
             mangle: Mangler::new(hir, interner, srcs, ext_pkgs),
+            ext_pkgs,
             allocator,
         }
     }
@@ -64,8 +67,16 @@ impl<'a> AstBuildCtx<'a> {
     /// 関数と scene を区別して持っていない。
     /// パッケージを跨いだ scene 呼び出しを解禁するときは、
     /// メタデータに種別を載せる必要がある。
+    /// scene か。scene は generator なので、呼ぶ側が `yield*` で委譲しなければならない。
+    /// 依存パッケージの scene は `.biwameta` の印で見分ける。
     pub(super) fn is_scene(&self, def_id: &ValDefId) -> bool {
-        matches!(self.hir.vals.get(def_id), Some(ValDefKind::NovelScene(_)))
+        if def_id.pkg().is_self() {
+            return matches!(self.hir.vals.get(def_id), Some(ValDefKind::NovelScene(_)));
+        }
+        self.ext_pkgs
+            .iter()
+            .find(|(pkg_id, _)| *pkg_id == def_id.pkg())
+            .is_some_and(|(_, meta)| meta.is_scene(def_id.local_idx()))
     }
 }
 
