@@ -4,9 +4,9 @@ use biwac_ast::{PathSegmentResolution, VariantShape};
 use biwac_span::{DefIdKind, VarId};
 
 use biwac_hir::{
-    BinaryExpr, BlockExpr, Callee, DecledVar, DefinedTy, Expr, ExprId, ExprVal, FnCall, Ident,
-    IfExpr, Literal, MatchExpr, MatchExprArm, MemberAccess, MethodCall, Primary, Stmt,
-    StructLiteral, Ty, TyKind, UnaryExpr, VarIdKind, Variable, VariantCtor, VariantCtorFields,
+    BinaryExpr, BlockExpr, Call, DecledVar, DefinedTy, Expr, ExprId, ExprVal, Ident, IfExpr,
+    Literal, MatchExpr, MatchExprArm, MemberAccess, Primary, Stmt, StructLiteral, Ty, TyKind,
+    UnaryExpr, VarIdKind, Variable, VariantCtor, VariantCtorFields,
 };
 
 use crate::ResolveError;
@@ -137,8 +137,24 @@ pub(crate) fn lower_primary(
                         id: VarIdKind::Local(vid),
                         span,
                     })),
+                    // 型を通した関連関数なら、呼び出し位置に書かれた型を残す
+                    // (`VarIdKind::Assoc` を参照)。
                     Ok(DefIdKind::Val(vid)) => Some(Primary::Variable(Variable {
-                        id: VarIdKind::Global(vid),
+                        id: match assoc_fn_self_ty(path) {
+                            Some(self_ty) => VarIdKind::Assoc {
+                                def_id: vid,
+                                self_ty,
+                            },
+                            None => VarIdKind::Fn(vid),
+                        },
+                        span,
+                    })),
+                    // `T::guee`。実装は単相化まで決まらない。
+                    Ok(DefIdKind::TraitAssoc(assoc)) => Some(Primary::Variable(Variable {
+                        id: VarIdKind::TraitAssoc {
+                            assoc,
+                            self_ty: genarg_self_ty(path)?,
+                        },
                         span,
                     })),
                     // `Color::Red` や、import した `Red`。
@@ -150,6 +166,13 @@ pub(crate) fn lower_primary(
                         span,
                         resolved: OnceCell::new(),
                     })),
+                    Ok(DefIdKind::Ty(tid)) => {
+                        errors.push(ResolveError::ValueNotFoundTypeFound {
+                            path: Box::new(path.clone()),
+                            def_id: tid,
+                        });
+                        None
+                    }
                     // 値の位置にモジュールやパッケージ、ジェネリック引数が来た場合。
                     // 名前は解決できているが値ではないので、
                     // その名前の値は無い、という報告になる。
@@ -176,38 +199,6 @@ pub(crate) fn lower_primary(
             }
         },
 
-        biwac_ast::Primary::FnCall(fn_call) => {
-            // `Color::Rgb(1, 2, 3)` は構文の上では関数呼び出しだが、
-            // パスがバリアントに解決されていればタプル形式の構築である。
-            if let Ok(DefIdKind::Variant(variant)) = def_id_kind_from_path(&fn_call.path) {
-                let args = fn_call
-                    .args
-                    .iter()
-                    .filter_map(|a| lower_expr(ctx, a, errors))
-                    .collect();
-
-                return Some(Primary::VariantCtor(VariantCtor {
-                    variant,
-                    fields: VariantCtorFields::Positional(args),
-                    shape: VariantShape::Tuple,
-                    span: fn_call.span.clone(),
-                    resolved: OnceCell::new(),
-                }));
-            }
-
-            let callee = lower_callee(&fn_call.path, errors)?;
-            let args = fn_call
-                .args
-                .iter()
-                .filter_map(|a| lower_expr(ctx, a, errors))
-                .collect();
-            Some(Primary::FnCall(FnCall {
-                callee,
-                args,
-                span: fn_call.span.clone(),
-            }))
-        }
-
         biwac_ast::Primary::MemberAccess(ma) => {
             let left = Box::new(lower_expr(ctx, &ma.left, errors)?);
             let span = ma.span();
@@ -215,22 +206,6 @@ pub(crate) fn lower_primary(
                 left,
                 member: Ident::from(ma.member.clone()),
                 span,
-            }))
-        }
-
-        biwac_ast::Primary::MethodCall(mc) => {
-            let left = Box::new(lower_expr(ctx, &mc.left, errors)?);
-            let args = mc
-                .args
-                .iter()
-                .filter_map(|a| lower_expr(ctx, a, errors))
-                .collect();
-            Some(Primary::MethodCall(MethodCall {
-                left,
-                method: Ident::from(mc.method.clone()),
-                args,
-                span: mc.span.clone(),
-                target: OnceCell::new(),
             }))
         }
 
@@ -271,20 +246,52 @@ pub(crate) fn lower_primary(
             Some(Primary::Block(lower_block_expr(ctx, block, errors)?))
         }
 
-        // 呼び先が任意の式の呼び出し。式の型が関数型かは型推論が見る。
-        biwac_ast::Primary::Call(call) => {
-            let callee = lower_expr(ctx, &call.callee, errors);
-            let args = call
-                .args
-                .iter()
-                .filter_map(|a| lower_expr(ctx, a, errors))
-                .collect();
-            Some(Primary::FnCall(FnCall {
-                callee: Callee::Expr(Box::new(callee?)),
-                args,
-                span: call.span.clone(),
-            }))
-        }
+        biwac_ast::Primary::Call(call) => lower_call(ctx, call, errors),
+    }
+}
+
+/// 呼び出し `<式> ( <引数列> )` を下ろす。
+///
+/// 呼び出しの形は HIR でも 1 つ ([`Call`]) で、呼び先が何かは型推論が決める
+/// (`docs/function-as-the-first-class-type-impl-status.md` §7)。
+/// ただしバリアントの構築だけは、パスの解決結果から lowering で分かるのでここで分ける。
+fn lower_call(
+    ctx: &mut ExprLowerCtx,
+    call: &biwac_ast::CallExpr,
+    errors: &mut Vec<ResolveError>,
+) -> Option<Primary> {
+    // `Color::Rgb(1, 2, 3)` は構文の上では関数呼び出しだが、
+    // パスがバリアントに解決されていればタプル形式の構築である。
+    if let biwac_ast::Exprs::Primary(biwac_ast::Primary::Variable(biwac_ast::Variable::Path(path))) =
+        call.callee.as_ref()
+        && let Ok(DefIdKind::Variant(variant)) = def_id_kind_from_path(path)
+    {
+        let args = call
+            .args
+            .iter()
+            .filter_map(|a| lower_expr(ctx, a, errors))
+            .collect();
+
+        Some(Primary::VariantCtor(VariantCtor {
+            variant,
+            fields: VariantCtorFields::Positional(args),
+            shape: VariantShape::Tuple,
+            span: call.span.clone(),
+            resolved: OnceCell::new(),
+        }))
+    } else {
+        let callee = lower_expr(ctx, &call.callee, errors);
+        let args = call
+            .args
+            .iter()
+            .filter_map(|a| lower_expr(ctx, a, errors))
+            .collect();
+        Some(Primary::Call(Call {
+            callee: Box::new(callee?),
+            args,
+            span: call.span.clone(),
+            target: OnceCell::new(),
+        }))
     }
 }
 
@@ -307,42 +314,6 @@ pub(crate) fn lower_block_expr(
     })
 }
 
-fn lower_callee(path: &biwac_ast::Path, errors: &mut Vec<ResolveError>) -> Option<Callee> {
-    match def_id_kind_from_path(path) {
-        Ok(DefIdKind::Val(vid)) => match assoc_fn_self_ty(path) {
-            Some(self_ty) => Some(Callee::AssocFn {
-                def_id: vid,
-                self_ty,
-            }),
-            None => Some(Callee::Fn(vid)),
-        },
-        Ok(DefIdKind::Var(vid)) => Some(Callee::Var(vid)),
-        // `T::guee(..)`。実装は単相化まで決まらない。
-        Ok(DefIdKind::TraitAssoc(assoc)) => Some(Callee::TraitAssoc {
-            assoc,
-            self_ty: genarg_self_ty(path)?,
-        }),
-        Ok(DefIdKind::Ty(tid)) => {
-            errors.push(ResolveError::ValueNotFoundTypeFound {
-                path: Box::new(path.clone()),
-                def_id: tid,
-            });
-            None
-        }
-        // 同上。呼べる値ではないものが呼び出しの位置に来ている。
-        Ok(_) => {
-            errors.push(ResolveError::IdentNotFound {
-                ident: path.segments.last().unwrap().ident.clone(),
-            });
-            None
-        }
-        Err(e) => {
-            errors.push(e);
-            None
-        }
-    }
-}
-
 /// `Foo::bar(..)` の `Foo` を型として取り出す。
 ///
 /// パスの最後から 2 番目のセグメントが型に解決されていれば、それが
@@ -355,7 +326,7 @@ fn lower_callee(path: &biwac_ast::Path, errors: &mut Vec<ResolveError>) -> Optio
 /// そこで型引数が入る。
 ///
 /// `Self::new(..)` は `abs_header` に `Self` が来てセグメントが 1 つしかないため、
-/// ここでは `None` になる (従来どおり [`Callee::Fn`] になる)。
+/// ここでは `None` になる ([`VarIdKind::Fn`] になる)。
 fn assoc_fn_self_ty(path: &biwac_ast::Path) -> Option<Ty> {
     let owner = path.segments.get(path.segments.len().checked_sub(2)?)?;
 

@@ -159,7 +159,7 @@ fn embedded_string(src: &str) -> String {
         let NovelStmt::ContentPush(biwac_ast::NovelContent::Expr { expr, .. }) = stmt else {
             continue;
         };
-        let Exprs::Primary(Primary::FnCall(call)) = expr else {
+        let Exprs::Primary(Primary::Call(call)) = expr else {
             continue;
         };
         if let Some(Exprs::Primary(Primary::Literal(Literal::String(s)))) = call.args.first() {
@@ -210,7 +210,7 @@ fn embedded_args(src: &str) -> Vec<String> {
         let NovelStmt::ContentPush(biwac_ast::NovelContent::Expr { expr, .. }) = stmt else {
             continue;
         };
-        let Exprs::Primary(Primary::FnCall(call)) = expr else {
+        let Exprs::Primary(Primary::Call(call)) = expr else {
             continue;
         };
         return call

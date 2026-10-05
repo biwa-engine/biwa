@@ -1205,7 +1205,8 @@ mod tests {
             | "fn_value_rank1"
             | "fn_value_method"
             | "fn_value_member_conflict"
-            | "fn_value_not_callable" => &["std"],
+            | "fn_value_not_callable"
+            | "fn_value_trait_item" => &["std"],
             _ => &[],
         };
         if deps.is_empty() {
@@ -1892,6 +1893,26 @@ mod tests {
             )
         });
         assert!(result.is_err(), "calling an `Int` member must be rejected");
+    }
+
+    /// trait 越しの項目 (`T::make`) を値として使うのは型エラーであること。呼び出しは通る。
+    #[test]
+    fn trait_item_as_value_is_an_error() {
+        ensure_fixture_deps("fn_value_trait_item");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_trait_item").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "`T::make` used as a value must be rejected"
+        );
     }
 
     /// `.biwamir` と `.biwameta` の対応が崩れていたら読み込みで止まること。

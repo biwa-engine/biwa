@@ -8,17 +8,18 @@ use crate::{Ident, Path, Stmt, VariantShape};
 pub enum Primary {
     Literal(Literal),
     Variable(Variable),
-    FnCall(FnCall),
     MemberAccess(MemberAccess),
     IfExpr(IfExpr),
     Match(MatchExpr),
     Block(BlockExpr),
-    MethodCall(MethodCall),
-    /// 任意の式を呼び先にした呼び出し (`(f)(x)`、`make()(x)`)。
+    /// 呼び出し `<式> ( <引数列> )`。
     ///
-    /// 呼び先がパス (名前) なら [`Primary::FnCall`] になる。
-    /// `x.bar(..)` は構文の上では [`Primary::MethodCall`] で、
-    /// メンバ `bar` (関数型) の値の呼び出しかメソッドかは型推論が決める。
+    /// 呼び出しの形はこれ 1 つである (`docs/function-as-the-first-class-type-impl-status.md` §7)。
+    /// 呼び先が何か (関数・関連関数・メソッド・関数型の値) は構文では決めない。
+    ///
+    /// - `f(x)`、`Foo::new(x)` — 呼び先はパスの変数
+    /// - `x.bar(a)` — 呼び先はメンバアクセス `x.bar`。メソッドかメンバ (関数型) の値かは型推論が決める
+    /// - `make()(x)` — 呼び先は任意の式
     Call(CallExpr),
 }
 
@@ -27,12 +28,10 @@ impl Primary {
         match self {
             Self::Literal(l) => l.span(),
             Self::Variable(v) => v.span().clone(),
-            Self::FnCall(f) => f.span.clone(),
             Self::MemberAccess(m) => m.span(),
             Self::IfExpr(i) => i.span.clone(),
             Self::Match(m) => m.span.clone(),
             Self::Block(b) => b.span.clone(),
-            Self::MethodCall(m) => m.span.clone(),
             Self::Call(c) => c.span.clone(),
         }
     }
@@ -53,14 +52,7 @@ impl Variable {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FnCall {
-    pub path: Path,
-    pub args: Vec<Exprs>,
-    pub span: Span,
-}
-
-/// 任意の式を呼び先にした呼び出し。
+/// 呼び出し。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallExpr {
     pub callee: Box<Exprs>,
@@ -79,14 +71,6 @@ impl MemberAccess {
     pub fn span(&self) -> Span {
         Span::merge(&self.left.span(), &self.member.span)
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MethodCall {
-    pub left: Box<Exprs>,
-    pub method: Ident,
-    pub args: Vec<Exprs>,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

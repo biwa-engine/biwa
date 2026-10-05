@@ -1,8 +1,8 @@
 use biwa_lsp_lexer::SyntaxKind;
 use biwac_ast::{
-    BinOperator, BinaryExpr, BoolLiteral, CallExpr, Exprs, FloatLiteral, FnCall, IntegerLiteral,
-    Literal, MatchExpr, MatchExprArm, MemberAccess, MethodCall, Primary, StringLiteral,
-    StructLiteral, UnOperator, UnaryExpr, Variable,
+    BinOperator, BinaryExpr, BoolLiteral, CallExpr, Exprs, FloatLiteral, IntegerLiteral, Literal,
+    MatchExpr, MatchExprArm, MemberAccess, Primary, StringLiteral, StructLiteral, UnOperator,
+    UnaryExpr, Variable,
 };
 use biwac_base::{IdentInterner, ModId};
 use biwac_span::Span;
@@ -207,11 +207,9 @@ fn lower_postfix_base(
 /// 「その 1 段」の演算子 1 つだけを持ち、それより手前の連鎖は
 /// 先頭の子として再帰的にネストしている。
 ///
-/// 実コンパイラでは「レシーバなしの呼び出し (`foo(1, 2)`)」は後置演算子ではなく
-/// primary 式のその場での分岐として作られる (`FnCall`) のに対し、
-/// biwa-lsp-parser の CST では区別せず同じ `PostfixExpr` 形にまとめてしまうため、
-/// ここで「先頭が `IdentPath` かつ直後が `CallArgList`」の形だけ `FnCall` として
-/// 特別扱いし、実コンパイラの AST 形へ復元している。
+/// 実コンパイラの AST でも呼び出しは `<式> ( <引数列> )` (`Primary::Call`) の 1 つの形なので、
+/// そのまま対応させる。ただし CST は `.ident(args)` を 1 段にまとめているので、
+/// それは「メンバアクセス `x.ident` の呼び出し」に開く。
 fn lower_postfix_expr(
     mod_id: ModId,
     interner: &mut IdentInterner,
@@ -222,41 +220,28 @@ fn lower_postfix_expr(
     let mut children = Children::of(node);
     let first = children.next_elem()?;
 
-    if let rowan::NodeOrToken::Node(first_node) = &first
-        && first_node.kind() == SyntaxKind::IdentPath
-        && children.peek_kind() == Some(SyntaxKind::CallArgList)
-    {
-        let path =
-            lower_ident_path(mod_id, interner, first_node).filter(path_is_usable_as_value)?;
-        let args_node = children.eat_node(SyntaxKind::CallArgList)?;
-        let args = lower_call_arg_list(mod_id, interner, &args_node, errors);
-        return Some(Exprs::Primary(Primary::FnCall(FnCall { path, args, span })));
-    }
-
     let left = lower_postfix_base(mod_id, interner, &first, errors)?;
 
     if children.eat_token(SyntaxKind::Dot).is_some() {
         let member_tok = children.eat_token(SyntaxKind::Ident)?;
         let member = intern_ident_token(mod_id, interner, &member_tok);
+        let member_access = Exprs::Primary(Primary::MemberAccess(MemberAccess {
+            left: Box::new(left),
+            member,
+        }));
 
         if let Some(args_node) = children.eat_node(SyntaxKind::CallArgList) {
             let args = lower_call_arg_list(mod_id, interner, &args_node, errors);
-            return Some(Exprs::Primary(Primary::MethodCall(MethodCall {
-                left: Box::new(left),
-                method: member,
+            return Some(Exprs::Primary(Primary::Call(CallExpr {
+                callee: Box::new(member_access),
                 args,
                 span,
             })));
         }
-        return Some(Exprs::Primary(Primary::MemberAccess(MemberAccess {
-            left: Box::new(left),
-            member,
-        })));
+        return Some(member_access);
     }
 
     if let Some(args_node) = children.eat_node(SyntaxKind::CallArgList) {
-        // `foo()()`, `(x)(1)` のような「パスでない式の呼び出し」。
-        // 実コンパイラでも後置演算子の `(` として `CallExpr` になる。
         let args = lower_call_arg_list(mod_id, interner, &args_node, errors);
         return Some(Exprs::Primary(Primary::Call(CallExpr {
             callee: Box::new(left),

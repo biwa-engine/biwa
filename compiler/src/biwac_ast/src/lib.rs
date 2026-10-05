@@ -6,10 +6,10 @@ pub use attribute::{AttrArg, AttrBody, AttrValue, Attribute, Attrs};
 pub use symbols::{
     AbsolutePathHeader, Ident, ModAst, Path, PathSegment, PathSegmentResolution, SelfTypHeader,
     expressions::{
-        BinOperator, BinaryExpr, BlockExpr, BoolLiteral, CallExpr, Exprs, FloatLiteral, FnCall,
+        BinOperator, BinaryExpr, BlockExpr, BoolLiteral, CallExpr, Exprs, FloatLiteral,
         IdentPattern, IfExpr, IntegerLiteral, Literal, MatchExpr, MatchExprArm, MemberAccess,
-        MethodCall, Pattern, PatternFields, Primary, StringLiteral, StructLiteral, UnOperator,
-        UnaryExpr, Variable, VariantPattern,
+        Pattern, PatternFields, Primary, StringLiteral, StructLiteral, UnOperator, UnaryExpr,
+        Variable, VariantPattern,
     },
     globals::{
         ArgDecl, ArgDeclList, EnumDef, FnDef, Globals, ImplBlock, ImportDecl, MethodArgDeclList,

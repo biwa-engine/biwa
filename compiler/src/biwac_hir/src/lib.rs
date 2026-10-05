@@ -10,10 +10,10 @@ pub use crate::hir::{
     symbols::{
         Ident,
         expressions::{
-            BinaryExpr, BlockExpr, Callee, Expr, ExprId, ExprVal, FieldBinding, FnCall, IfExpr,
-            Literal, MatchExpr, MatchExprArm, MemberAccess, MethodCall, MethodTarget, Pattern,
-            PatternFields, Primary, ResolvedVariant, StructLiteral, UnaryExpr, VarIdKind, Variable,
-            VariantCtor, VariantCtorFields, VariantPattern,
+            BinaryExpr, BlockExpr, Call, CallTarget, Expr, ExprId, ExprVal, FieldBinding, IfExpr,
+            Literal, MatchExpr, MatchExprArm, MemberAccess, MethodTarget, Pattern, PatternFields,
+            Primary, ResolvedVariant, StructLiteral, UnaryExpr, VarIdKind, Variable, VariantCtor,
+            VariantCtorFields, VariantPattern,
         },
         globals::{
             AssocValDefKind, DecledArg, EnumDef, FnArgDecl, FnBody, FnDef, FnSignature, GenArgDef,

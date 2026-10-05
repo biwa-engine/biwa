@@ -190,6 +190,12 @@ fn to_diagnostic(report: &TyErrorReport, interner: &IdentInterner) -> Option<(Sp
             ),
         )),
 
+        TyError::TraitItemAsValue { span } => Some((
+            span.clone(),
+            "A trait item reached through a generic type cannot be used as a value yet."
+                .to_string(),
+        )),
+
         TyError::MethodAsValue { span } => Some((
             span.clone(),
             "A method cannot be used as a value yet.".to_string(),

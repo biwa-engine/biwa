@@ -98,6 +98,20 @@ impl Holder {
   }
 }
 
+// 型引数が引数にも戻り値にも現れない関連関数。
+// 型エイリアス越し (`IntTagged::zero`) に値にすると、エイリアスが書いた型引数で決まる。
+struct Tagged[T] {
+  n: Int,
+}
+
+impl[T] Tagged[T] {
+  fn zero() -> Self {
+    Tagged { n = 0 }
+  }
+}
+
+type IntTagged = Tagged[Int];
+
 fn compute() -> Int {
   let f: fn(Int) -> Int = add_one;
   let a = f(1);                          // 2
@@ -113,9 +127,11 @@ fn compute() -> Int {
   let make = Holder::make;
   let j = (make)(4).value;               // 4
   let k = Op::new(add_one).run(1);       // 2 (一時的な値のメンバを呼ぶ)
+  let zero = IntTagged::zero;
+  let l = zero().n;                      // 0
   call_void(ignore, 1);
   if e {
-    a + b + c + d + g + h + i + j + k
+    a + b + c + d + g + h + i + j + k + l
   } else {
     0
   }

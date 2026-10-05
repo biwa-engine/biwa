@@ -84,6 +84,11 @@ pub enum TyError {
         span: Span,
     },
 
+    /// trait 越しの項目 (`T::guee`) を値として使った。まだ値にできない。
+    TraitItemAsValue {
+        span: Span,
+    },
+
     MethodNotFound {
         ty: Box<Ty>,
         method: Box<Ident>,
@@ -467,6 +472,18 @@ impl BiwacError for TyErrorReport {
                     .print();
             }
 
+            TyError::TraitItemAsValue { span } => {
+                ctx.diagnostic(
+                    "A trait item reached through a generic type cannot be used as a value yet.",
+                )
+                .label(
+                    at(span),
+                    "its implementation is decided at monomorphization",
+                )
+                .note("it can be called directly: `T::item(..)`")
+                .print();
+            }
+
             TyError::SceneAsValue { span } => {
                 ctx.diagnostic("A scene cannot be used as a value yet.")
                     .label(at(span), "this is a scene")
@@ -653,6 +670,7 @@ pub(crate) fn error_tys(error: &TyError) -> Vec<&Ty> {
         | TyError::InsufficientContext
         | TyError::MethodAsValue { .. }
         | TyError::SceneAsValue { .. }
+        | TyError::TraitItemAsValue { .. }
         | TyError::MissingLangItem { .. } => Vec::new(),
 
         TyError::TypeNotInferable { ty } | TyError::NotCallable { ty } => vec![ty.as_ref()],

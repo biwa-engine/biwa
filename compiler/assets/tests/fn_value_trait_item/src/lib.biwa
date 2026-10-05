@@ -1,0 +1,15 @@
+// trait 越しの項目 (`T::make`) は、実装が単相化まで決まらないので、まだ値として使えない。
+// 型エラー (`TraitItemAsValue`) にならなければならない。呼び出し `T::make()` なら通る。
+
+trait Make {
+  fn make() -> Self;
+}
+
+fn call_it[T: Make]() -> T {
+  T::make()
+}
+
+fn take_it[T: Make]() -> Int {
+  let f = T::make;
+  0
+}

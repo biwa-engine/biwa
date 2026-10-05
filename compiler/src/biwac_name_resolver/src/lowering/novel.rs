@@ -1,8 +1,10 @@
+use std::cell::OnceCell;
+
 use biwac_ast::symbols::novel::{NovelBlockStmt, NovelContent, NovelStmt};
 use biwac_hir::{
-    AssignStmt, BlockStmt, Callee, DecledVar, Expr, ExprStmt, FnBody, FnCall, Ident, Literal,
-    NovelSceneDef, NovelSyscallStmt, Primary, ReturnStmt, Stmt, Ty, TyKind, ValDefKind, VarDecl,
-    VarIdKind, Variable,
+    AssignStmt, BlockStmt, Call, DecledVar, Expr, ExprStmt, FnBody, Ident, Literal, NovelSceneDef,
+    NovelSyscallStmt, Primary, ReturnStmt, Stmt, Ty, TyKind, ValDefKind, VarDecl, VarIdKind,
+    Variable,
 };
 use biwac_lang_item::{LangItem, LangItemTable};
 use biwac_span::{Span, ValDefId, VarId};
@@ -213,10 +215,15 @@ impl NovelCtx<'_> {
         }));
         args.insert(0, game);
 
-        let call = ctx.expr(Primary::FnCall(FnCall {
-            callee: Callee::Fn(def_id),
+        let callee = ctx.expr(Primary::Variable(Variable {
+            id: VarIdKind::Fn(def_id),
+            span: span.clone(),
+        }));
+        let call = ctx.expr(Primary::Call(Call {
+            callee: Box::new(callee),
             args,
             span: span.clone(),
+            target: OnceCell::new(),
         }));
 
         Some(Stmt::NovelSyscall(NovelSyscallStmt { call, span }))

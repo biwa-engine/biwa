@@ -15,9 +15,7 @@ impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::Primary {
                     ctx.resolve_self_var(span).map(|_| ()).map_err(|e| vec![e])
                 }
             },
-            biwac_ast::Primary::FnCall(fn_call) => fn_call.resolve(ctx),
             biwac_ast::Primary::MemberAccess(member_access) => member_access.resolve(ctx),
-            biwac_ast::Primary::MethodCall(method_call) => method_call.resolve(ctx),
             biwac_ast::Primary::IfExpr(if_expr) => if_expr.resolve(ctx),
             biwac_ast::Primary::Match(m) => m.resolve(ctx),
             biwac_ast::Primary::Block(block) => block.resolve(ctx),
@@ -108,45 +106,9 @@ impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::BlockExpr {
     }
 }
 
-impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::FnCall {
-    fn resolve(&self, ctx: &mut C) -> Result<(), Vec<crate::ResolveError>> {
-        let mut errors = Vec::new();
-
-        ctx.resolve_path(&self.path).handle(&mut errors);
-
-        for arg in &self.args {
-            arg.resolve(ctx).handle(&mut errors);
-        }
-
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
-    }
-}
-
 impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::MemberAccess {
     fn resolve(&self, ctx: &mut C) -> Result<(), Vec<crate::ResolveError>> {
         self.left.resolve(ctx)
-    }
-}
-
-impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::MethodCall {
-    fn resolve(&self, ctx: &mut C) -> Result<(), Vec<crate::ResolveError>> {
-        let mut errors = Vec::new();
-
-        self.left.resolve(ctx).handle(&mut errors);
-
-        for arg in &self.args {
-            arg.resolve(ctx).handle(&mut errors);
-        }
-
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
     }
 }
 

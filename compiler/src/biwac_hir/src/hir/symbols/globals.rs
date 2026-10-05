@@ -85,7 +85,7 @@ pub struct FnSignature {
     /// }
     /// ```
     ///
-    /// 呼び出し位置に書かれた型 ([`crate::Callee::AssocFn`] の `self_ty`) と
+    /// 呼び出し位置に書かれた型 ([`crate::VarIdKind::Assoc`] の `self_ty`) と
     /// 単一化して、impl ブロックのジェネリック引数を決めるために使う。
     pub impl_self_ty: Option<Ty>,
 

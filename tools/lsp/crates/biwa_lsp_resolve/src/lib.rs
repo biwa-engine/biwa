@@ -124,7 +124,7 @@ pub fn resolve_document(doc_path: &Path, doc_src: &str) -> Result<DocumentResolu
     //
     // メソッド呼び出しの分類 (`.foo()` が実際どのメソッドか) だけは
     // `biwac_ast`/`Pkg` 側に対応する情報が無く、型推論が埋める
-    // `biwac_hir::MethodCall::target` からしか分からないので、
+    // `biwac_hir::Call::target` からしか分からないので、
     // 型推論に成功したときだけ別枠で集めて `classifications` に混ぜる。
     let (diagnostics, method_classifications) = match resolver.try_resolve(&mut interner) {
         Ok(biwac_name_resolver::ResolveOutput {

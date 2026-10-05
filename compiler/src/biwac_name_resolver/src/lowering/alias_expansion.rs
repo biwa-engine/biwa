@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use biwac_hir::{
-    AssocValDefKind, BlockExpr, BlockStmt, Callee, DefinedTy, Expr, ExprVal, FnBody, FnDef,
-    FnSignature, FnTy, Hir, Literal, NativeFnDef, NovelSceneDef, Primary, Stmt, Ty, TyDefKind,
-    TyKind, TypeAliasDef, ValDefKind, VariantCtorFields,
+    AssocValDefKind, BlockExpr, BlockStmt, DefinedTy, Expr, ExprVal, FnBody, FnDef, FnSignature,
+    FnTy, Hir, Literal, NativeFnDef, NovelSceneDef, Primary, Stmt, Ty, TyDefKind, TyKind,
+    TypeAliasDef, ValDefKind, VarIdKind, VariantCtorFields,
 };
 use biwac_span::{GenDefId, TyDefId};
 
@@ -179,7 +179,7 @@ fn expand_fn_body(body: &mut FnBody, aliases: &HashMap<TyDefId, TypeAliasDef>) {
 
 // 式の中にも型が現れる。
 //
-// `Callee::AssocFn` の `self_ty` がそれで、`CharacterBiwa::new(..)` の
+// `VarIdKind::Assoc` の `self_ty` がそれで、`CharacterBiwa::new(..)` の
 // `CharacterBiwa` をここで `Character[BiwaCharacterProps]` に置き換える。
 // これをやらないと推論がエイリアスの型引数を受け取れない。
 
@@ -240,24 +240,18 @@ fn expand_expr(expr: &mut Expr, aliases: &HashMap<TyDefId, TypeAliasDef>) {
 
 fn expand_primary(primary: &mut Primary, aliases: &HashMap<TyDefId, TypeAliasDef>) {
     match primary {
-        Primary::FnCall(call) => {
-            match &mut call.callee {
-                Callee::AssocFn { self_ty, .. } => {
-                    *self_ty = expand_ty(self_ty.clone(), aliases);
-                }
-                Callee::Expr(callee) => expand_expr(callee, aliases),
-                Callee::Var(_) | Callee::Fn(_) | Callee::TraitAssoc { .. } => {}
-            }
+        Primary::Call(call) => {
+            expand_expr(&mut call.callee, aliases);
             for arg in &mut call.args {
                 expand_expr(arg, aliases);
             }
         }
-        Primary::MethodCall(m) => {
-            expand_expr(&mut m.left, aliases);
-            for arg in &mut m.args {
-                expand_expr(arg, aliases);
+        Primary::Variable(v) => match &mut v.id {
+            VarIdKind::Assoc { self_ty, .. } | VarIdKind::TraitAssoc { self_ty, .. } => {
+                *self_ty = expand_ty(self_ty.clone(), aliases);
             }
-        }
+            VarIdKind::Local(_) | VarIdKind::Fn(_) => {}
+        },
         Primary::Match(m) => {
             expand_expr(&mut m.scrutinee, aliases);
             for arm in &mut m.arms {
@@ -290,7 +284,7 @@ fn expand_primary(primary: &mut Primary, aliases: &HashMap<TyDefId, TypeAliasDef
                 expand_expr(member, aliases);
             }
         }
-        Primary::Literal(_) | Primary::Variable(_) => {}
+        Primary::Literal(_) => {}
     }
 }
 

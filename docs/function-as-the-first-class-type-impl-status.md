@@ -193,6 +193,10 @@ issue #7 の型表現 `fn[T, U](Int, T) -> U` はこの範囲を超えるので�
    - 関数型の struct のメンバの名前を関連アイテムと衝突させない (名前解決で検知。§1.3 の改訂)。
    - `x.bar(..)` は型推論で振り分ける: `x` の型のメンバ `bar` が関数型ならその値の呼び出し、なければメソッド。
    - HIR の `Callee` に「任意の式」を足し、MIR では `Callee::Indirect` に落とす。
+2.5. **呼び出しを AST・HIR で 1 つの形にし、種類の分類を型推論に移す** — **実装済み** (§7)
+   - AST の `FnCall` / `MethodCall` を廃止して `Call { callee, args }` だけにする (第 1 段)。
+   - HIR も `Call { callee, args, target }` にし、型推論が呼び先の式の形と型から `CallTarget`
+     (`Static` / `TraitItem` / `Method` / `Value`) を決める。MIR 以降は今の `Direct` / `TraitAssoc` / `Indirect` のまま (第 2 段)。
 3. **関数値の等価比較を確実に型エラーにする**
    - `==` / `!=` の型の検査を関数の推論の最後に回す (型変数のまますり抜けている問題の解消)。
 4. **メソッドを「第一引数が `self` の関連関数」に統一**
@@ -283,6 +287,9 @@ fn use_twice[T](f: fn(T) -> T, x: T) -> T { f(1) }
 
 ## 6. ステップ 2 の実装状況
 
+> ステップ 2.5 (§7) で AST・HIR の呼び出しの形を 1 つにしたので、下の表の `Primary::Call` / `Callee::Expr` /
+> `MethodTarget::Member` は §7 の `Call` / `CallTarget::Value` に置き換わった。規則 (何が何として呼ばれるか) は変わっていない。
+
 ### 6.1 段ごとの変更
 
 | 段 | 変更 |
@@ -321,4 +328,122 @@ MIR のメンバの射影 (`PlaceElem::Field(name, ty)`) には型が要るが�
 - **他パッケージの trait impl** の項目と関数型のメンバの衝突は検知しない (メンバの型のパッケージでは見えないため)。
   その場合 `x.bar(..)` は**メンバが優先**される。
 - 外部パッケージの型エイリアス越しの関数型のメンバは、衝突の検査で関数型と分からない (エイリアスを展開しないため)。
+
+## 7. ステップ 2.5: 呼び出しの一本化 (実装済み。結果は §7.5)
+
+### 7.1 動機
+
+ステップ 2 で `<式> ( <引数列> )` という一般の形が入ったので、構文としての `FnCall` (パスの呼び出し) と
+`MethodCall` (`.` 越しの呼び出し) は特殊形に過ぎなくなった。型推論の前 (呼び先が本当に関数か分からない段階) では
+これらを区別する理由が無いので廃止し、呼び出しの種類の判断を型推論の意味論的な分類に寄せる。
+MIR 以降は分類の結果に従って種類別の (効率の良い) コードを出す。
+
+### 7.2 調査で分かったこと
+
+- **型推論より前に呼び出しの種類を知る必要のある段は無い。** 名前解決は `FnCall` のパスも `Variable` のパスも
+  同じ `resolve_path` で解き、`MethodCall` は左辺と引数を解決するだけ。`.biwameta` は HIR の本体を持たず、
+  `.biwamir` は MIR なので形式は変わらない。区別を使っているのは型推論・MIR の構築・TypeScript・LSP だけ。
+- **HIR の `Callee` の細分 (`Fn` / `AssocFn{self_ty}` / `TraitAssoc{self_ty}` / `Var`) は「パスが何を指すか」の違い**で、
+  呼び出しの種類ではない。ただし今の HIR には値の位置でこれらを表す形が無い (`VarIdKind::Global(ValDefId)` は
+  `self_ty` を持たないので `CharacterBiwa::new` を値にするとエイリアスの型引数が落ちる。`T::guee` は値の位置では lowering がエラー)。
+  パスで指した値の式に `self_ty` を持たせれば、`Callee` の区別は呼び先の式の側に移せる。
+- **MIR の `Callee` はすでに意味による分類** (`Direct` / `TraitAssoc` / `Indirect`) なので、MIR 以降は変えなくてよい。
+- **型推論の静的な呼び出しが 3 箇所で重複している** (`Callee::Fn`・`Callee::AssocFn`・メソッドの `Direct`)。
+  違いは「呼び出し位置に書かれた型を第 1 引数に混ぜるか」「レシーバを第 1 引数に混ぜるか」だけ。
+- ついでに解消できるもの: §6.2 のメンバの型の組み立て直し (呼び先の `MemberAccess` が ExprId を持てば型推論の記録を使える)、
+  LSP の HIR の走査が `Callee::Expr` の中を歩いていない穴。
+
+### 7.3 形
+
+**AST** (第 1 段)
+
+- `Primary::FnCall` / `Primary::MethodCall` を廃止し、`Primary::Call(CallExpr { callee, args, span })` だけにする。
+  `f(x)` は `Call(Variable(path))`、`x.bar(a)` は `Call(MemberAccess(x, bar))`。
+- パーサーは呼び出しを後置演算子の `(` に一本化する (パスの直後の `(` の特別扱いをやめる)。
+  構造体リテラル `Path { .. }` は primary に残す。`Self::ident` は引数を必須とせずパスの値として読む。
+- 第 1 段では lowering が `Call` を今の HIR の `FnCall` (`Callee::*`) / `MethodCall` に振り分ける。型推論以降は無変更。
+
+**HIR** (第 2 段)
+
+- パスで指した値の式に `self_ty` を持たせる: `VarIdKind` を `Local(VarId)` / `Fn(ValDefId)` / `Assoc { def_id, self_ty }` /
+  `TraitAssoc { assoc, self_ty }` にする (`self_ty` は呼び出し位置に書かれた型。型エイリアスの展開も及ぶ)。
+- 呼び出しは `Primary::Call(Call { callee: Box<Expr>, args, span, target: OnceCell<CallTarget> })` だけにする。
+  `target` は型推論が埋める (今の `MethodCall.target` と同じ流儀。HIR を読む TypeScript・LSP も使える)。
+
+| `CallTarget` | 例 | MIR の `Callee` |
+| --- | --- | --- |
+| `Static` (呼び先は `Fn` / `Assoc` のパスの値) | `foo(..)`、`Foo::new(..)`、scene | `Direct` |
+| `TraitItem` (呼び先は `TraitAssoc` のパスの値) | `T::guee(..)` | `TraitAssoc` |
+| `Method(MethodTarget)` (受け手は呼び先の `MemberAccess` の左辺) | `x.bar(..)` | 受け手を第 1 引数にした `Direct` / `TraitAssoc` |
+| `Value` | 局所変数・関数型のメンバ・任意の式 | `Indirect` (呼び先を値として評価) |
+
+- バリアントの構築 (`Color::Rgb(1, 2, 3)`) は今と同じく lowering で、呼び先がバリアントに解決された `Call` を `VariantCtor` にする。
+
+**型推論** (第 2 段)
+
+- `infer_call` が呼び先の式の形で振り分ける。パスの値なら静的な呼び出しとして型付けする (呼び先を値として推論しないので、
+  `MethodAsValue` / `SceneAsValue` は値の位置でだけ出る)。`MemberAccess` なら左辺を推論し、関数型のメンバなら `Value`、
+  そうでなければメソッド (ステップ 2 の規則)。それ以外は値の呼び出し。
+- 静的な呼び出しの 3 系統を `infer_static_call` 1 つにまとめる。`call_unify` などの細かい扱いは中身を変えずに移す。
+- `T::guee` を値として使うのは当面エラー (目標の md の未決事項)。呼び先の位置なら今どおり。
+
+**MIR の構築・TypeScript・LSP** (第 2 段)
+
+- `target` を見て上の表のとおりに落とす / 出し分ける。TypeScript の scene の `yield*` 判定は `Static` で見る。
+- LSP の lowering は「`IdentPath` の直後に `CallArgList`」の特別扱いが要らなくなる。メソッド名の分類は HIR の `target` が `Method` のときに付ける。
+
+### 7.4 進め方
+
+1. 第 1 段 (AST の一本化) を入れて全テスト・`~/test1` で確認する。
+2. 第 2 段 (HIR の一本化) を入れて同じく確認する。変更の前後で `.biwamir` が変わらないことも比べる。
+
+ステップ 4 (メソッドを関連関数に統一) の前に行う。ステップ 4 では `Foo::bar(x, a)` が「パスの値 + `Static`」として素直に入り、
+`Method` も「受け手を第 1 引数にした `Static`」に寄せられる見込み。
+
+### 7.5 実装の結果
+
+**第 1 段 (AST)**
+
+- AST の `FnCall` / `MethodCall` を削除し、呼び出しは `Primary::Call(CallExpr)` だけになった。
+  パーサー (通常・novel) は呼び出しを後置演算子の `(` だけで読み、`.` <identifier> は常にメンバアクセスになる。
+  `Self::ident` はパスの値として読む (`Self::new` を値にも書ける)。
+- 名前解決は `CallExpr` の呼び先と引数を解決するだけ (`FnCall` / `MethodCall` 専用の解決は削除)。
+- LSP の lowering は「`IdentPath` の直後に `CallArgList`」の特別扱いを削除し、CST の `.ident(args)` は
+  「メンバアクセスの呼び出し」に開く。
+- 確認: compiler / LSP の全テスト。fixture と `~/test1` の `.biwamir` / `.wat` が変更前と**バイト単位で一致**した。
+  `~/test1` は強制再ビルドして Playwright でも確認した。
+
+**第 2 段 (HIR)**
+
+- HIR の `FnCall` / `Callee` / `MethodCall` を削除し、`Primary::Call(Call { callee, args, span, target })` だけになった。
+  `VarIdKind` は `Local` / `Fn` / `Assoc { def_id, self_ty }` / `TraitAssoc { assoc, self_ty }`。
+  lowering で呼び先を分けるのはバリアントの構築だけになった。
+- 型推論: `infer_call` が呼び先の形で振り分ける (§7.3)。静的な呼び出し (関数・型を通した関連関数・実装の決まったメソッド) は
+  `infer_static_call` 1 つにまとめた (第 1 引数に混ぜるものを `StaticPrefix::{None, CallSiteSelfTy, Receiver}` で渡す)。
+  関数型のメンバの呼び出しでは、呼び先のメンバアクセスの型を型推論が記録するので、
+  MIR の構築はそれをそのまま使う (§6.2 の組み立て直しは無くなった)。
+- MIR の構築・TypeScript・LSP の HIR の走査は `Call::target` に従う。LSP の HIR の走査は呼び先の中も歩くようになった
+  (ステップ 2 の `Callee::Expr` の中を歩いていなかった穴が塞がった)。
+- 確認:
+  - compiler (106 件) / LSP (92 件) の全テスト。fixture と `~/test1` の `.biwamir` / `.wat` は**第 1 段の前とバイト単位で一致**した。
+  - TypeScript: HEAD (ステップ 2) のコンパイラと今のコンパイラで、関数・関連関数・型エイリアス越しの関連関数・メソッド・
+    ジェネリックな関数の呼び出しを含む小さなライブラリを出力し、宣言の並び順を除いて一致した
+    (TypeScript の生成は宣言を HashMap 順に出すので、並び順は実行ごとに変わる)。
+  - LSP のメソッド名の分類: `~/test1` の複製に `resolve_document` をかけ、メソッド名が分類され、関数型のメンバの呼び出し
+    (`op.run(..)` の `run`) はメソッドに分類されないことを確認した。
+
+**変わった振る舞い**
+
+- 型エイリアス越しの関連関数を値にしたとき (`let zero = IntTagged::zero;`)、エイリアスが書いた型引数で
+  impl ブロックの型引数が決まるようになった。HEAD では `TypeNotInferable` だった (fixture `fn_value`)。
+- `T::make` を値として使うと、名前解決の「識別子が無い」ではなく型エラー `TraitItemAsValue` になる。呼び出し `T::make()` は今どおり
+  (fixture `fn_value_trait_item`)。
+- 括弧は透過的なので `(x.bar)(1)` は `x.bar(1)` と同じに扱われる (`bar` が関数型のメンバならその値、そうでなければメソッド)。
+
+**見つかった既存の問題 (今回は直していない)**
+
+- LSP のパーサーは、ブロック末尾の `if .. else ..` を式ではなく文として扱う。コンパイラは式として扱うので、
+  `fn f(b: Bool) -> Int { if b { 1 } else { 2 } }` が LSP でだけ「This function must return ..」になり、型推論以降の分類も出ない。
+- TypeScript の生成は関数型の型注釈が `todo!()` で、関数型を書いたコードは TypeScript に出せない (ステップ 1 から tier 2 は未対応のまま)。
+  また scene を含むプログラムは、std の制限つきジェネリクスのため TypeScript では既存の段階で弾かれる。
 

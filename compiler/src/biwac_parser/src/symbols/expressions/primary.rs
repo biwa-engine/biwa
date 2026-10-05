@@ -2,8 +2,8 @@ use biwac_lexer::{TkKind, TkKindName};
 use biwac_span::Span;
 
 use biwac_ast::{
-    AbsolutePathHeader, BoolLiteral, Exprs, FloatLiteral, FnCall, Ident, IntegerLiteral, Literal,
-    Path, Primary, SelfTypHeader, StringLiteral, StructLiteral, Variable,
+    AbsolutePathHeader, BoolLiteral, Exprs, FloatLiteral, Ident, IntegerLiteral, Literal, Path,
+    Primary, SelfTypHeader, StringLiteral, StructLiteral, Variable,
 };
 
 use crate::{ParseError, TokenStream};
@@ -72,16 +72,9 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                 let begin = t.span.clone();
                 let path = self.consume_qualified_identifier()?;
 
+                // 直後の `(` は後置演算子 (呼び出し) として読む。
                 if let Some(t2) = self.peek() {
-                    if let TkKind::MarkLPare = t2.kind {
-                        let (args, span) = self.consume_arguments()?;
-
-                        Ok(Exprs::Primary(Primary::FnCall(FnCall {
-                            path,
-                            args,
-                            span: Span::merge(&begin, &span),
-                        })))
-                    } else if let TkKind::MarkLBrace = t2.kind
+                    if let TkKind::MarkLBrace = t2.kind
                         && !self.no_struct_literal
                     {
                         let (members, span) = self.consume_struct_members()?;
@@ -104,9 +97,11 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                 let begin = t.span.clone();
 
                 // "Self" (
-                //   ( "::" <identifier> "(" ... ")" ) |
-                //   ( "{" ... "}" )?
+                //   ( "::" <identifier> ) |
+                //   ( "{" ... "}" )
                 // )
+                //
+                // `Self::new` はパスの値で、`(..)` が続けば後置演算子の呼び出しになる。
                 self.next();
 
                 if let Some(t) = self.peek().copied() {
@@ -116,18 +111,14 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
 
                             let ident = self.consume_identifier()?;
 
-                            let (args, span) = self.consume_arguments()?;
-
-                            Ok(Exprs::Primary(Primary::FnCall(FnCall {
-                                path: Path::new(
+                            Ok(Exprs::Primary(Primary::Variable(Variable::Path(
+                                Path::new(
                                     Some(AbsolutePathHeader::SelfTyp(SelfTypHeader::new(
                                         begin.clone(),
                                     ))),
                                     vec![ident.into()],
                                 ),
-                                args,
-                                span: Span::merge(&begin, &span),
-                            })))
+                            ))))
                         }
                         TkKind::MarkLBrace if !self.no_struct_literal => {
                             let (members, span) = self.consume_struct_members()?;

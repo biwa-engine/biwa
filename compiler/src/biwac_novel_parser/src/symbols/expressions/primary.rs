@@ -1,8 +1,8 @@
 use biwac_span::Span;
 
 use biwac_ast::{
-    BoolLiteral, Exprs, FloatLiteral, FnCall, Ident, IntegerLiteral, Literal, Primary,
-    StringLiteral, StructLiteral, Variable,
+    BoolLiteral, Exprs, FloatLiteral, Ident, IntegerLiteral, Literal, Primary, StringLiteral,
+    StructLiteral, Variable,
 };
 
 use crate::{
@@ -74,16 +74,9 @@ impl<'src> NovelSourceStream<'src> {
                 let begin = t.span.clone();
                 let path = self.consume_qualified_identifier()?;
 
+                // 直後の `(` は後置演算子 (呼び出し) として読む。
                 if let NCodeTokenOption::Some(t2) = self.peek_token()? {
-                    if let NCodeTkKind::MarkLPare = t2.kind {
-                        let (args, span) = self.consume_arguments()?;
-
-                        Ok(Exprs::Primary(Primary::FnCall(FnCall {
-                            path,
-                            args,
-                            span: Span::merge(&begin, &span),
-                        })))
-                    } else if let NCodeTkKind::MarkLBrace = t2.kind
+                    if let NCodeTkKind::MarkLBrace = t2.kind
                         && self.struct_literal_allowed()
                     {
                         let (members, span) = self.consume_struct_members()?;

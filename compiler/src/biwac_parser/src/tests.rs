@@ -194,7 +194,7 @@ fn foo() {
             panic!("not an if: {:#?}", f.stmts);
         };
 
-        let Exprs::Primary(Primary::FnCall(call)) = &if_stmt.cond else {
+        let Exprs::Primary(Primary::Call(call)) = &if_stmt.cond else {
             panic!("not a call: {:#?}", if_stmt.cond);
         };
         assert!(
@@ -438,12 +438,17 @@ mod first_class_fn {
         let Some(Exprs::Primary(Primary::Call(outer))) = &f.expr else {
             panic!("not a call: {:#?}", f.expr);
         };
-        let Exprs::Primary(Primary::Call(inner)) = outer.callee.as_ref() else {
+        // `make()(1)(2)` = ((make)())(1))(2)
+        let Exprs::Primary(Primary::Call(middle)) = outer.callee.as_ref() else {
             panic!("not a nested call: {:#?}", outer.callee);
         };
+        let Exprs::Primary(Primary::Call(inner)) = middle.callee.as_ref() else {
+            panic!("not a nested call: {:#?}", middle.callee);
+        };
+        assert!(inner.args.is_empty());
         assert!(matches!(
             inner.callee.as_ref(),
-            Exprs::Primary(Primary::FnCall(_))
+            Exprs::Primary(Primary::Variable(_))
         ));
     }
 
@@ -454,14 +459,35 @@ mod first_class_fn {
         assert!(matches!(&f.expr, Some(Exprs::Primary(Primary::Call(_)))));
     }
 
-    /// `x.bar(..)` は構文の上では今までどおりメソッド呼び出し。
-    /// メンバの値の呼び出しかは型推論が決める。
+    /// `x.bar(..)` は「メンバアクセス `x.bar` の呼び出し」として読む。
+    /// メソッドかメンバ (関数型) の値の呼び出しかは型推論が決める。
     #[test]
-    fn dot_call_stays_a_method_call() {
+    fn dot_call_is_a_call_on_a_member_access() {
         let f = parse_fn("fn foo(b: Button) { b.on_click(1) }");
+        let Some(Exprs::Primary(Primary::Call(call))) = &f.expr else {
+            panic!("not a call: {:#?}", f.expr);
+        };
+        assert!(matches!(
+            call.callee.as_ref(),
+            Exprs::Primary(Primary::MemberAccess(_))
+        ));
+    }
+
+    /// `Self::new` はパスの値で、`(..)` が続けば呼び出しになる。
+    #[test]
+    fn self_path_is_a_value() {
+        let f = parse_fn("fn foo() -> Int { Self::new(1) }");
+        let Some(Exprs::Primary(Primary::Call(call))) = &f.expr else {
+            panic!("not a call: {:#?}", f.expr);
+        };
+        assert!(matches!(
+            call.callee.as_ref(),
+            Exprs::Primary(Primary::Variable(_))
+        ));
+        let f = parse_fn("fn foo() -> Int { Self::new }");
         assert!(matches!(
             &f.expr,
-            Some(Exprs::Primary(Primary::MethodCall(_)))
+            Some(Exprs::Primary(Primary::Variable(_)))
         ));
     }
 }

@@ -5,8 +5,8 @@ pub(crate) mod context;
 use biwac_ast::{BinOperator, UnOperator};
 use biwac_base::InternedIdent;
 use biwac_hir::{
-    AssocValDefKind, BlockExpr, BlockStmt, Callee, DefinedTy, Expr, ExprId, ExprVal, FnBody,
-    FnSignature, FnTy, Hir, Ident, InferTy, Literal, MemberAccess, MethodTarget, Pattern,
+    AssocValDefKind, BlockExpr, BlockStmt, Call, CallTarget, DefinedTy, Expr, ExprId, ExprVal,
+    FnBody, FnSignature, FnTy, Hir, Ident, InferTy, Literal, MemberAccess, MethodTarget, Pattern,
     PatternFields, Primary, ResolvedVariant, Stmt, StructLiteral, TraitCond, Ty, TyDefKind, TyKind,
     TyVar, ValDefKind, VarIdKind, VariantCtor, VariantCtorFields,
 };
@@ -27,6 +27,22 @@ struct CallCtx {
 #[derive(Debug, Default)]
 struct DefinedTyCtx {
     gen_assigns: HashMap<GenDefId, Ty>,
+}
+
+/// 静的な呼び出しの単一化で、第 1 引数に混ぜるもの ([`FnTyCtx::infer_static_call`])。
+enum StaticPrefix {
+    None,
+    /// 呼び出し位置に書かれた型 (`CharacterBiwa::new(..)` の `CharacterBiwa`)。
+    CallSiteSelfTy(Ty),
+    /// メソッドの受け手の型。
+    Receiver(Ty),
+}
+
+/// 呼び出しの分類を書く。1 つの呼び出しは 1 度しか推論しない。
+fn set_call_target(call: &Call, target: CallTarget) {
+    call.target
+        .set(target)
+        .expect("compiler bug: a call is inferred twice");
 }
 
 impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
@@ -760,10 +776,14 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
     /// MIR の構築はそれを関数への参照 (`Const::FnDef`) の型引数として使う。
     ///
     /// 返す関数型の `genargs` は空である。値になった関数は量化子を持たない。
+    ///
+    /// `call_site_self_ty` は型を通した関連関数 (`CharacterBiwa::new`) のときの、
+    /// 呼び出し位置に書かれた型である。呼び出しと同じく impl ブロックの型引数を決めるのに使う。
     fn infer_fn_value(
         &mut self,
         expr_id: Option<ExprId>,
         def_id: biwac_span::ValDefId,
+        call_site_self_ty: Option<&Ty>,
         span: Span,
     ) -> TyResult<Ty> {
         // scene は TypeScript では generator function で、普通の関数と呼び方が違う。
@@ -800,6 +820,15 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
             callee_sign.all_genargs().map(|g| g.def_id).collect();
         let mut subst = HashMap::new();
         let fty = self.fresh_loc_gen_ty(fty, &declared, &mut subst);
+
+        // `CharacterBiwa::new` の `CharacterBiwa` が書き込んだ型引数を impl ブロックの型引数に反映する。
+        if let Some(self_ty) = call_site_self_ty
+            && let Some(impl_self_ty) = &callee_sign.impl_self_ty
+            && call_site_self_ty_is_usable(impl_self_ty, self_ty)
+        {
+            let impl_self_ty = self.fresh_loc_gen_ty(impl_self_ty.clone(), &declared, &mut subst);
+            self.unify(impl_self_ty, self_ty.clone())?;
+        }
 
         // 引数にも戻り値にも現れないジェネリック引数にも型変数を割り当てておく。
         // 割り当てが無いと単相化で実体を作れない。決まらなければ
@@ -1416,13 +1445,21 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                 }
             },
             Primary::Variable(v) => {
-                match v.id {
-                    VarIdKind::Global(def_id) => {
-                        self.infer_fn_value(expr_id, def_id, primary.span())
+                match &v.id {
+                    VarIdKind::Fn(def_id) => {
+                        self.infer_fn_value(expr_id, *def_id, None, primary.span())
                     }
+                    VarIdKind::Assoc { def_id, self_ty } => {
+                        self.infer_fn_value(expr_id, *def_id, Some(self_ty), primary.span())
+                    }
+                    // 実装が単相化まで決まらない項目を値にする仕組みはまだ無い
+                    // (目標の md の未決事項)。呼び先の位置なら呼べる (`infer_call`)。
+                    VarIdKind::TraitAssoc { .. } => Err(TyError::TraitItemAsValue {
+                        span: primary.span(),
+                    }),
                     VarIdKind::Local(var_id) => {
                         // 名前解決済みなので存在は保証されている
-                        let ty = self.vars.get(&var_id).unwrap().clone();
+                        let ty = self.vars.get(var_id).unwrap().clone();
 
                         // span は宣言位置ではなくこの使用位置にする。
                         // 型が食い違ったときに指すべきなのは、
@@ -1431,157 +1468,7 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                     }
                 }
             }
-            Primary::FnCall(c) => match &c.callee {
-                Callee::Fn(def_id) => {
-                    // codegen が呼び出しを出力するので、外部パッケージなら import が要る
-                    self.tctx
-                        .hir
-                        .deps_recorder
-                        .borrow_mut()
-                        .depends_on_val(def_id);
-
-                    // let callee_ty = self.tctx.hir.get_fn_sign(vid).unwrap().as_ty();
-                    let callee_sign = self.tctx.get_value_signature(def_id).unwrap();
-                    let callee_ty = callee_sign.as_ty();
-
-                    let args = c
-                        .args
-                        .iter()
-                        .map(|a| self.infer_expr(a))
-                        .collect::<Result<_, _>>()?;
-                    let rty = self.fresh();
-
-                    // NOTE: caller は genargs は 空 vec![] でよい
-                    // unify で計算する
-                    let mut cctx = CallCtx::default();
-                    let unified_ty = self.call_unify(
-                        callee_ty,
-                        Ty::new(
-                            TyKind::Fn(FnTy {
-                                args,
-                                rty: Box::new(Ty::new(rty, primary.span())),
-                                genargs: vec![],
-                            }),
-                            primary.span(),
-                        ),
-                        &mut cctx,
-                    )?;
-
-                    let unified_fty = if let TyKind::Fn(fty) = unified_ty {
-                        fty
-                    } else {
-                        panic!("compiler bug: 2 Ty::Fn unification must be Ty::Fn")
-                    };
-
-                    // 戻り値にしか現れないジェネリック型は、この時点ではまだ決まっていない。
-                    // 型変数を割り当てておき、外側の文脈で解かれた結果を
-                    // 推論の最後 (`resolve_ty`) に拾う。
-                    let mut subst = cctx.gen_assigns.clone();
-                    let declared: HashSet<LocalGenDefId> =
-                        callee_sign.all_genargs().map(|g| g.def_id).collect();
-                    let rty = self.fresh_loc_gen_ty(*unified_fty.rty, &declared, &mut subst);
-                    self.record_obligations(&callee_sign, &subst, primary.span());
-                    self.record_call_genargs(expr_id, subst);
-
-                    Ok(rty)
-                }
-                Callee::AssocFn { def_id, self_ty } => {
-                    // 同上
-                    self.tctx
-                        .hir
-                        .deps_recorder
-                        .borrow_mut()
-                        .depends_on_val(def_id);
-
-                    let callee_sign = self.tctx.get_value_signature(def_id).unwrap();
-
-                    let mut args = c
-                        .args
-                        .iter()
-                        .map(|a| self.infer_expr(a))
-                        .collect::<TyResult<Vec<_>>>()?;
-                    let mut callee_args: Vec<Ty> =
-                        callee_sign.args.iter().map(|a| a.ty.clone()).collect();
-
-                    // 呼び出し位置に書かれた型を、レシーバと同じように
-                    // 第 1 引数として単一化に混ぜる。
-                    //
-                    // これで `type CharacterBiwa = Character[BiwaCharacterProps];` の
-                    // `CharacterBiwa::new(..)` が `P := BiwaCharacterProps` を決められる。
-                    // 引数からしか決まらなかったものが、書かれた型からも決まるようになる。
-                    if let Some(impl_self_ty) = &callee_sign.impl_self_ty
-                        && call_site_self_ty_is_usable(impl_self_ty, self_ty)
-                    {
-                        callee_args.insert(0, impl_self_ty.clone());
-                        args.insert(0, self_ty.clone());
-                    }
-
-                    let callee_ty = Ty::new(
-                        TyKind::Fn(FnTy {
-                            args: callee_args,
-                            rty: Box::new(callee_sign.rty.clone()),
-                            genargs: callee_sign.genargs.iter().map(|g| g.def_id).collect(),
-                        }),
-                        callee_sign.span.clone(),
-                    );
-
-                    let rty = self.fresh();
-
-                    let mut cctx = CallCtx::default();
-                    let unified_ty = self.call_unify(
-                        callee_ty,
-                        Ty::new(
-                            TyKind::Fn(FnTy {
-                                args,
-                                rty: Box::new(Ty::new(rty, primary.span())),
-                                genargs: vec![],
-                            }),
-                            primary.span(),
-                        ),
-                        &mut cctx,
-                    )?;
-
-                    let unified_fty = if let TyKind::Fn(fty) = unified_ty {
-                        fty
-                    } else {
-                        panic!("compiler bug: 2 Ty::Fn unification must be Ty::Fn")
-                    };
-
-                    // 同上
-                    let mut subst = cctx.gen_assigns.clone();
-                    let declared: HashSet<LocalGenDefId> =
-                        callee_sign.all_genargs().map(|g| g.def_id).collect();
-                    let rty = self.fresh_loc_gen_ty(*unified_fty.rty, &declared, &mut subst);
-                    self.record_obligations(&callee_sign, &subst, primary.span());
-                    self.record_call_genargs(expr_id, subst);
-
-                    Ok(rty)
-                }
-                // `T::guee(..)`。実装は単相化まで決まらないので、
-                // 型付けには trait が宣言したシグニチャを使う。
-                Callee::TraitAssoc { assoc, self_ty } => {
-                    let callee_sign = self.trait_item_signature(*assoc, self_ty)?;
-
-                    let args = c
-                        .args
-                        .iter()
-                        .map(|a| self.infer_expr(a))
-                        .collect::<TyResult<Vec<_>>>()?;
-
-                    self.infer_trait_assoc_call(&callee_sign, args, None, expr_id, primary.span())
-                }
-                Callee::Var(v) => {
-                    // 変数は名前解決済みであるため、先に型推論されているはず
-                    let callee_ty = self.vars.get(v).unwrap().clone();
-                    let callee_ty = Ty::new(callee_ty.kind, primary.span());
-                    self.infer_value_call(callee_ty, &c.args, primary.span())
-                }
-                // `make()(x)`、`(f)(x)`。呼び先の式を先に評価する。
-                Callee::Expr(callee) => {
-                    let callee_ty = self.infer_expr(callee)?;
-                    self.infer_value_call(callee_ty, &c.args, primary.span())
-                }
-            },
+            Primary::Call(c) => self.infer_call(expr_id, c, primary.span()),
             Primary::MemberAccess(m) => {
                 let left = self.infer_expr(&m.left)?;
 
@@ -1626,133 +1513,6 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                 Ok(Ty::new(self.unify(then_ty, els_ty)?, primary.span()))
             }
             Primary::Block(block) => self.infer_block_expr(block),
-            Primary::MethodCall(m) => {
-                // ここまでの推論で分かった型を適用してから引く。
-                // impl はジェネリック引数ごとに分かれうる (特殊化) ので、
-                // 受け手の型のジェネリック引数が型変数のままだと引き分けられない。
-                let left = self.infer_expr(&m.left)?;
-                let left = self.apply_ty(left);
-
-                // レシーバの struct に同じ名前のメンバがあり、それが関数型なら
-                // メソッドではなくメンバの値の呼び出しである。
-                // メンバ名と関連アイテムは 1 つの名前空間で一意 (名前解決が検査する) なので、
-                // 自パッケージの型でメンバと関連アイテムが両方見つかることは無い。
-                let member_ty = self.struct_member_ty(&left, m.method.id);
-                if let Some(member_ty) = &member_ty {
-                    let member_ty = self.apply_ty(member_ty.clone());
-                    if let TyKind::Fn(_) = member_ty.kind {
-                        m.target.set(MethodTarget::Member).unwrap();
-                        let callee_ty = Ty::new(member_ty.kind, m.method.span.clone());
-                        return self.infer_value_call(callee_ty, &m.args, primary.span());
-                    }
-                }
-
-                // 左辺値の型のメソッド実装からメソッド名をキーにメソッドを取得
-                let target = match self.tctx.get_method_target(
-                    &left,
-                    &m.method,
-                    self.module,
-                    &self.genarg_bounds,
-                ) {
-                    Ok(target) => target,
-                    // 関数型でないメンバを呼ぼうとした。
-                    Err(TyError::MethodNotFound { .. }) if let Some(member_ty) = member_ty => {
-                        return Err(TyError::NotCallable {
-                            ty: Box::new(Ty::new(member_ty.kind, m.method.span.clone())),
-                        });
-                    }
-                    Err(e) => return Err(e),
-                };
-                m.target.set(target).unwrap();
-
-                // 実装は単相化まで決まらないので、
-                // 型付けには trait が宣言したシグニチャを使う。
-                if let MethodTarget::Trait(assoc) = target {
-                    let callee_sign = self.trait_item_signature(assoc, &left)?;
-                    let args = m
-                        .args
-                        .iter()
-                        .map(|a| self.infer_expr(a))
-                        .collect::<TyResult<Vec<_>>>()?;
-                    return self.infer_trait_assoc_call(
-                        &callee_sign,
-                        args,
-                        Some(left),
-                        expr_id,
-                        primary.span(),
-                    );
-                }
-
-                let MethodTarget::Direct(def_id) = target else {
-                    unreachable!()
-                };
-                // 同上
-                self.tctx
-                    .hir
-                    .deps_recorder
-                    .borrow_mut()
-                    .depends_on_val(&def_id);
-                let callee_sign = self.tctx.get_value_signature(&def_id).unwrap();
-
-                let mut args = m
-                    .args
-                    .iter()
-                    .map(|a| self.infer_expr(a))
-                    .collect::<TyResult<Vec<_>>>()?;
-
-                // レシーバを第 1 引数として単一化に含める。
-                //
-                // `FnSignature::as_ty` は self を落とすので、
-                // それだけで単一化するとレシーバから決まるジェネリック型
-                // (`impl[T] Pair[T, U]` の `T`, `U` など) が確定しないまま残り、
-                // 呼び出し側の式に呼び先のジェネリック型が漏れてしまう。
-                let mut callee_args: Vec<Ty> =
-                    callee_sign.args.iter().map(|a| a.ty.clone()).collect();
-                if let Some(self_ty) = &callee_sign.self_ty {
-                    callee_args.insert(0, self_ty.clone());
-                    args.insert(0, left.clone());
-                }
-
-                let callee_ty = Ty::new(
-                    TyKind::Fn(FnTy {
-                        args: callee_args,
-                        rty: Box::new(callee_sign.rty.clone()),
-                        genargs: callee_sign.genargs.iter().map(|g| g.def_id).collect(),
-                    }),
-                    callee_sign.span.clone(),
-                );
-
-                let rty = Ty::new(self.fresh(), primary.span());
-
-                // NOTE: caller は genargs は 空 vec![] でよい
-                // unify で計算する
-                let mut cctx = CallCtx::default();
-                let caller_ty = Ty::new(
-                    TyKind::Fn(FnTy {
-                        args,
-                        rty: Box::new(rty.clone()),
-                        genargs: vec![],
-                    }),
-                    primary.span(),
-                );
-                let unified_ty = self.call_unify(callee_ty, caller_ty, &mut cctx)?;
-
-                let unified_fty = if let TyKind::Fn(fty) = unified_ty {
-                    fty
-                } else {
-                    panic!("compiler bug: 2 Ty::Fn unification must be Ty::Fn")
-                };
-
-                // 同上。
-                let mut subst = cctx.gen_assigns.clone();
-                let declared: HashSet<LocalGenDefId> =
-                    callee_sign.all_genargs().map(|g| g.def_id).collect();
-                let rty = self.fresh_loc_gen_ty(*unified_fty.rty, &declared, &mut subst);
-                self.record_obligations(&callee_sign, &subst, primary.span());
-                self.record_call_genargs(expr_id, subst);
-
-                Ok(rty)
-            }
         }
     }
 
@@ -1819,6 +1579,228 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                 assigned
             }
         }
+    }
+
+    /// 呼び出し `<式> ( <引数列> )` を型付けし、呼び先を分類する ([`CallTarget`])。
+    ///
+    /// 呼び出しの形は 1 つで、呼び先が何かはここで呼び先の式の形と型から決める
+    /// (`docs/function-as-the-first-class-type-impl-status.md` §7)。
+    ///
+    /// - パスの値 (`foo`、`Foo::new`): 静的な呼び出し。呼び先を値として推論しないので、
+    ///   scene も呼べる (値にするのは `SceneAsValue`)
+    /// - trait の項目のパス (`T::guee`): 実装は単相化で決まる
+    /// - メンバアクセス (`x.bar`): `bar` が関数型のメンバならその値、そうでなければメソッド
+    /// - それ以外: 関数型の値
+    fn infer_call(&mut self, expr_id: Option<ExprId>, call: &Call, span: Span) -> TyResult<Ty> {
+        let callee = call.callee.as_ref();
+        match &callee.expr {
+            ExprVal::Primary(Primary::Variable(v)) => match &v.id {
+                VarIdKind::Fn(def_id) => {
+                    set_call_target(call, CallTarget::Static(*def_id));
+                    self.infer_static_call(*def_id, StaticPrefix::None, &call.args, expr_id, span)
+                }
+                VarIdKind::Assoc { def_id, self_ty } => {
+                    set_call_target(call, CallTarget::Static(*def_id));
+                    self.infer_static_call(
+                        *def_id,
+                        StaticPrefix::CallSiteSelfTy(self_ty.clone()),
+                        &call.args,
+                        expr_id,
+                        span,
+                    )
+                }
+                // `T::guee(..)`。実装は単相化まで決まらないので、
+                // 型付けには trait が宣言したシグニチャを使う。
+                VarIdKind::TraitAssoc { assoc, self_ty } => {
+                    set_call_target(call, CallTarget::TraitItem(*assoc));
+                    let callee_sign = self.trait_item_signature(*assoc, self_ty)?;
+                    let args = call
+                        .args
+                        .iter()
+                        .map(|a| self.infer_expr(a))
+                        .collect::<TyResult<Vec<_>>>()?;
+                    self.infer_trait_assoc_call(&callee_sign, args, None, expr_id, span)
+                }
+                VarIdKind::Local(_) => self.infer_value_callee(call, span),
+            },
+            ExprVal::Primary(Primary::MemberAccess(m)) => {
+                self.infer_dot_call(call, callee, m, expr_id, span)
+            }
+            _ => self.infer_value_callee(call, span),
+        }
+    }
+
+    /// 呼び先を値として評価する呼び出し (`f(x)`、`make()(x)`)。
+    fn infer_value_callee(&mut self, call: &Call, span: Span) -> TyResult<Ty> {
+        set_call_target(call, CallTarget::Value);
+        let callee_ty = self.infer_expr(&call.callee)?;
+        self.infer_value_call(callee_ty, &call.args, span)
+    }
+
+    /// `x.bar(..)`。`bar` が関数型のメンバならその値の呼び出し、そうでなければメソッド呼び出し。
+    fn infer_dot_call(
+        &mut self,
+        call: &Call,
+        callee: &Expr,
+        m: &MemberAccess,
+        expr_id: Option<ExprId>,
+        span: Span,
+    ) -> TyResult<Ty> {
+        // ここまでの推論で分かった型を適用してから引く。
+        // impl はジェネリック引数ごとに分かれうる (特殊化) ので、
+        // 受け手の型のジェネリック引数が型変数のままだと引き分けられない。
+        let left = self.infer_expr(&m.left)?;
+        let left = self.apply_ty(left);
+
+        // レシーバの struct に同じ名前の関数型のメンバがあれば、メソッドではなくその値の呼び出し。
+        // 関数型のメンバの名前は関連アイテムと衝突しない (名前解決が検査する) ので、
+        // 自パッケージの型で両方見つかることは無い。
+        let member_ty = self.struct_member_ty(&left, m.member.id);
+        if let Some(member_ty) = &member_ty {
+            let member_ty = self.apply_ty(member_ty.clone());
+            if let TyKind::Fn(_) = member_ty.kind {
+                set_call_target(call, CallTarget::Value);
+                let callee_ty = Ty::new(member_ty.kind, m.member.span.clone());
+                // 呼び先の式 (メンバアクセス) の型として記録する。MIR の構築がメンバの射影に使う。
+                self.exprs.insert(callee.id, callee_ty.clone());
+                return self.infer_value_call(callee_ty, &call.args, span);
+            }
+        }
+
+        // 左辺値の型のメソッド実装からメソッド名をキーにメソッドを取得
+        let target =
+            match self
+                .tctx
+                .get_method_target(&left, &m.member, self.module, &self.genarg_bounds)
+            {
+                Ok(target) => target,
+                // 関数型でないメンバを呼ぼうとした。
+                Err(TyError::MethodNotFound { .. }) if let Some(member_ty) = member_ty => {
+                    return Err(TyError::NotCallable {
+                        ty: Box::new(Ty::new(member_ty.kind, m.member.span.clone())),
+                    });
+                }
+                Err(e) => return Err(e),
+            };
+        set_call_target(call, CallTarget::Method(target));
+
+        match target {
+            // 実装は単相化まで決まらないので、
+            // 型付けには trait が宣言したシグニチャを使う。
+            MethodTarget::Trait(assoc) => {
+                let callee_sign = self.trait_item_signature(assoc, &left)?;
+                let args = call
+                    .args
+                    .iter()
+                    .map(|a| self.infer_expr(a))
+                    .collect::<TyResult<Vec<_>>>()?;
+                self.infer_trait_assoc_call(&callee_sign, args, Some(left), expr_id, span)
+            }
+            MethodTarget::Direct(def_id) => self.infer_static_call(
+                def_id,
+                StaticPrefix::Receiver(left),
+                &call.args,
+                expr_id,
+                span,
+            ),
+        }
+    }
+
+    /// 呼び先が静的に決まる呼び出しを型付けする (関数・関連関数・実装の決まったメソッド)。
+    ///
+    /// `prefix` は単一化の第 1 引数に混ぜるもの:
+    ///
+    /// - [`StaticPrefix::CallSiteSelfTy`]: 呼び出し位置に書かれた型 (`CharacterBiwa::new(..)`)。
+    ///   impl の対象型と単一化して、impl ブロックのジェネリック引数を決める。
+    ///   これで `type CharacterBiwa = Character[BiwaCharacterProps];` の
+    ///   `CharacterBiwa::new(..)` が `P := BiwaCharacterProps` を決められる。
+    /// - [`StaticPrefix::Receiver`]: メソッドの受け手。
+    ///   `FnSignature.args` は self を含まないので、それだけで単一化すると受け手から決まる
+    ///   ジェネリック型 (`impl[T] Pair[T, U]` の `T`, `U` など) が確定しないまま残り、
+    ///   呼び出し側の式に呼び先のジェネリック型が漏れてしまう。
+    fn infer_static_call(
+        &mut self,
+        def_id: biwac_span::ValDefId,
+        prefix: StaticPrefix,
+        args: &[Expr],
+        expr_id: Option<ExprId>,
+        span: Span,
+    ) -> TyResult<Ty> {
+        // codegen が呼び出しを出力するので、外部パッケージなら import が要る
+        self.tctx
+            .hir
+            .deps_recorder
+            .borrow_mut()
+            .depends_on_val(&def_id);
+
+        let callee_sign = self.tctx.get_value_signature(&def_id).unwrap();
+
+        let mut args = args
+            .iter()
+            .map(|a| self.infer_expr(a))
+            .collect::<TyResult<Vec<_>>>()?;
+        let mut callee_args: Vec<Ty> = callee_sign.args.iter().map(|a| a.ty.clone()).collect();
+
+        match prefix {
+            StaticPrefix::None => {}
+            StaticPrefix::CallSiteSelfTy(self_ty) => {
+                if let Some(impl_self_ty) = &callee_sign.impl_self_ty
+                    && call_site_self_ty_is_usable(impl_self_ty, &self_ty)
+                {
+                    callee_args.insert(0, impl_self_ty.clone());
+                    args.insert(0, self_ty);
+                }
+            }
+            StaticPrefix::Receiver(receiver) => {
+                if let Some(self_ty) = &callee_sign.self_ty {
+                    callee_args.insert(0, self_ty.clone());
+                    args.insert(0, receiver);
+                }
+            }
+        }
+
+        let callee_ty = Ty::new(
+            TyKind::Fn(FnTy {
+                args: callee_args,
+                rty: Box::new(callee_sign.rty.clone()),
+                genargs: callee_sign.genargs.iter().map(|g| g.def_id).collect(),
+            }),
+            callee_sign.span.clone(),
+        );
+
+        let rty = self.fresh();
+
+        // NOTE: caller は genargs は 空 vec![] でよい
+        // unify で計算する
+        let mut cctx = CallCtx::default();
+        let unified_ty = self.call_unify(
+            callee_ty,
+            Ty::new(
+                TyKind::Fn(FnTy {
+                    args,
+                    rty: Box::new(Ty::new(rty, span.clone())),
+                    genargs: vec![],
+                }),
+                span.clone(),
+            ),
+            &mut cctx,
+        )?;
+
+        let TyKind::Fn(unified_fty) = unified_ty else {
+            panic!("compiler bug: 2 Ty::Fn unification must be Ty::Fn")
+        };
+
+        // 戻り値にしか現れないジェネリック型は、この時点ではまだ決まっていない。
+        // 型変数を割り当てておき、外側の文脈で解かれた結果を
+        // 推論の最後 (`resolve_ty`) に拾う。
+        let mut subst = cctx.gen_assigns.clone();
+        let declared: HashSet<LocalGenDefId> =
+            callee_sign.all_genargs().map(|g| g.def_id).collect();
+        let rty = self.fresh_loc_gen_ty(*unified_fty.rty, &declared, &mut subst);
+        self.record_obligations(&callee_sign, &subst, span);
+        self.record_call_genargs(expr_id, subst);
+
+        Ok(rty)
     }
 
     /// 関数型の値の呼び出しを型付けする (`f(x)`、`make()(x)`、`self.on_click(e)`)。
@@ -2010,7 +1992,7 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
             Stmt::Assign(ass) => {
                 match &ass.dst {
                     // 関数名は値だが、代入先にはならない。
-                    Primary::Variable(v) if matches!(v.id, VarIdKind::Global(_)) => {
+                    Primary::Variable(v) if !matches!(v.id, VarIdKind::Local(_)) => {
                         return Err(TyError::InvalidAssignOperation {
                             ass: Box::new(ass.clone()),
                         });
