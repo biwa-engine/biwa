@@ -112,6 +112,25 @@ impl[T] Tagged[T] {
 
 type IntTagged = Tagged[Int];
 
+// 比較の時点では型変数で、後から `Int` に決まる値の `==` は通る
+// (演算子の型の検査は推論の最後に決まった型でやり直す)。
+enum Slot[T] {
+  Empty,
+  Full(T),
+}
+
+fn takes_int_slot(s: Slot[Int]) {}
+
+fn compare_later() -> Bool {
+  let s = Slot::Empty;
+  let same = match s {
+    Slot::Full(x) => x == x,
+    Slot::Empty => TRUE,
+  };
+  takes_int_slot(s);
+  same
+}
+
 fn compute() -> Int {
   let f: fn(Int) -> Int = add_one;
   let a = f(1);                          // 2
@@ -131,7 +150,11 @@ fn compute() -> Int {
   let l = zero().n;                      // 0
   call_void(ignore, 1);
   if e {
-    a + b + c + d + g + h + i + j + k + l
+    if compare_later() {
+      a + b + c + d + g + h + i + j + k + l
+    } else {
+      0
+    }
   } else {
     0
   }

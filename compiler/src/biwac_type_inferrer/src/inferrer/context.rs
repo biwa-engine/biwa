@@ -605,6 +605,12 @@ pub struct FnTyCtx<'tctx, 'a> {
     /// 呼び出しの時点では割り当てがまだ型変数のことがあるので、
     /// 本体を推論し終えてからまとめて解く。
     pub(super) obligations: Vec<Obligation>,
+    /// 演算子を適用した時点では型がまだ型変数だった、という宿題。
+    ///
+    /// 演算子が受け付ける型は単一化の後で検査するが、その時点で型変数のままなら
+    /// 通すしかない。後で関数型などに決まったものを見逃さないよう、
+    /// 本体を推論し終えてからもう一度検査する (`check_deferred_operators`)。
+    pub(super) deferred_operators: Vec<DeferredOperator>,
     next_tv: usize,
     pub(super) substitutions: HashMap<TyVar, Ty>,
     pub(super) vars: HashMap<VarId, Ty>,
@@ -627,6 +633,22 @@ pub(super) struct Obligation {
     pub(super) span: biwac_span::Span,
 }
 
+/// 演算子の型の検査の宿題。
+pub(super) struct DeferredOperator {
+    /// 演算子を適用した型。本体を推論し終えてから `resolve_ty` を通す。
+    pub(super) ty: Ty,
+    pub(super) op: OperatorKind,
+    /// 演算子の式。診断に使う。
+    pub(super) expr: biwac_hir::Expr,
+}
+
+/// 型を検査する演算子。
+#[derive(Clone, Copy)]
+pub(super) enum OperatorKind {
+    Binary(biwac_ast::BinOperator),
+    Unary(biwac_ast::UnOperator),
+}
+
 // ある関数に対して型推論をした結果得られる型情報
 pub(super) struct TyInfo {
     pub(super) expr_tys: HashMap<ExprId, Ty>,
@@ -646,6 +668,7 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
             module,
             genarg_bounds,
             obligations: Vec::new(),
+            deferred_operators: Vec::new(),
             next_tv: 0,
             substitutions: HashMap::new(),
             vars: HashMap::new(),

@@ -1206,7 +1206,8 @@ mod tests {
             | "fn_value_method"
             | "fn_value_member_conflict"
             | "fn_value_not_callable"
-            | "fn_value_trait_item" => &["std"],
+            | "fn_value_trait_item"
+            | "fn_value_eq" => &["std"],
             _ => &[],
         };
         if deps.is_empty() {
@@ -1912,6 +1913,29 @@ mod tests {
         assert!(
             result.is_err(),
             "`T::make` used as a value must be rejected"
+        );
+    }
+
+    /// 関数型の値どうしの `==` は型エラーであること。
+    ///
+    /// 比較の時点では型変数で、後から関数型に決まる場合もすり抜けない
+    /// (演算子の型の検査を推論の最後に回している)。
+    #[test]
+    fn comparing_function_values_is_an_error() {
+        ensure_fixture_deps("fn_value_eq");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_eq").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "comparing function values must be rejected"
         );
     }
 

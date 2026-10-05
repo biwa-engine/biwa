@@ -353,11 +353,17 @@ impl BiwacError for TyErrorReport {
             }
 
             TyError::InvalidBinaryOperationForType { ty, op, expr } => {
+                let is_fn = matches!(ty.kind, TyKind::Fn(_));
                 let ty = names.render(&ty.kind);
 
-                ctx.diagnostic(format!("`{op}` cannot be applied to `{ty}`."))
-                    .label(at(&expr.span()), format!("this is `{ty}`"))
-                    .print();
+                let diag = ctx
+                    .diagnostic(format!("`{op}` cannot be applied to `{ty}`."))
+                    .label(at(&expr.span()), format!("this is `{ty}`"));
+                if is_fn && matches!(op, BinOperator::Eq | BinOperator::Ne) {
+                    diag.note("function values cannot be compared").print();
+                } else {
+                    diag.print();
+                }
             }
 
             TyError::InvalidUnaryOperationForType { ty, op, expr } => {

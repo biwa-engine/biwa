@@ -102,7 +102,7 @@
 
 - `==` / `!=` は型推論で、両辺を単一化したあと型が `Int` / `Float` / `Bool` (と型変数) のときだけ通す
   (それ以外は `InvalidBinaryOperationForType`)。**関数型は既に弾かれる**。
-- ただし**単一化の時点で型が型変数のままなら通している** (`TyKind::Infer(_)` を許している)。
+- (ステップ 3 で解消。§8) ただし**単一化の時点で型が型変数のままなら通している** (`TyKind::Infer(_)` を許している)。
   後で関数型に決まった場合にすり抜ける。関数の等価比較を確実に型エラーにするには、
   比較の型の検査を関数の推論の最後 (型変数が解けた後) に回す必要がある
   (`solve_obligations` のような宿題に積む)。これは関数に限らず、struct などでも同じすり抜けがある。
@@ -197,7 +197,7 @@ issue #7 の型表現 `fn[T, U](Int, T) -> U` はこの範囲を超えるので�
    - AST の `FnCall` / `MethodCall` を廃止して `Call { callee, args }` だけにする (第 1 段)。
    - HIR も `Call { callee, args, target }` にし、型推論が呼び先の式の形と型から `CallTarget`
      (`Static` / `TraitItem` / `Method` / `Value`) を決める。MIR 以降は今の `Direct` / `TraitAssoc` / `Indirect` のまま (第 2 段)。
-3. **関数値の等価比較を確実に型エラーにする**
+3. **関数値の等価比較を確実に型エラーにする** — **実装済み** (§8)
    - `==` / `!=` の型の検査を関数の推論の最後に回す (型変数のまますり抜けている問題の解消)。
 4. **メソッドを「第一引数が `self` の関連関数」に統一**
    - `FnSignature.args` に `self` を含める + 「`self` を取るか」のフラグ。`Foo::bar(x, a)` で呼べる、
@@ -446,4 +446,20 @@ MIR 以降は分類の結果に従って種類別の (効率の良い) コード
   `fn f(b: Bool) -> Int { if b { 1 } else { 2 } }` が LSP でだけ「This function must return ..」になり、型推論以降の分類も出ない。
 - TypeScript の生成は関数型の型注釈が `todo!()` で、関数型を書いたコードは TypeScript に出せない (ステップ 1 から tier 2 は未対応のまま)。
   また scene を含むプログラムは、std の制限つきジェネリクスのため TypeScript では既存の段階で弾かれる。
+
+## 8. ステップ 3 の実装状況
+
+- 演算子の型の検査 (`check_operator_ty`) は、単一化の後の型がまだ型変数なら宿題 (`FnTyCtx::deferred_operators`) に積み、
+  関数の推論の最後 (制限の宿題を解いた後) に、解けた型で検査し直す (`check_deferred_operators`)。
+  それでも型変数のままなら、型がどこからも決まらなかったので後の `TypeNotInferable` が報告する。
+- 受け付ける型は今までどおり (`operator_accepts` にまとめた):
+  `+ - * / %`・単項 `-`・`< > <= >=` は `Int` / `Float`、`== !=` は `Int` / `Float` / `Bool`。
+  関数型 (と struct・enum など) の比較は `InvalidBinaryOperationForType` で、関数型の `==` / `!=` には
+  「function values cannot be compared」の注記を付ける。
+- 同じすり抜けは `==` / `!=` に限らず、比較・算術・単項 `-` にもあった (型変数のまま通して後で struct などに決まる)。
+  同じ仕組みでまとめて塞いだ。
+- 確認:
+  - fixture `fn_value_eq`: `match` の中の `x == x` の時点では `x` が型変数で、後の呼び出しで関数型に決まる。以前はすり抜け、今は型エラー。
+  - fixture `fn_value` の `compare_later`: 同じ形で後から `Int` に決まるものは通る。
+  - 全テスト。fixture (`fn_value` を除く) と `~/test1` の `.biwamir` / `.wat` は変わらない。`~/test1` は Playwright でも確認した。
 

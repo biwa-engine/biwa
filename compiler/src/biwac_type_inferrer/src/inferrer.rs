@@ -16,7 +16,7 @@ use biwac_trait_solver::cond_matches;
 
 use crate::{
     TyCtx, TyError, TyErrorReport, TyResult,
-    inferrer::context::{FnTyCtx, TyInfo},
+    inferrer::context::{FnTyCtx, OperatorKind, TyInfo},
 };
 
 #[derive(Debug, Default)]
@@ -27,6 +27,38 @@ struct CallCtx {
 #[derive(Debug, Default)]
 struct DefinedTyCtx {
     gen_assigns: HashMap<GenDefId, Ty>,
+}
+
+/// 演算子が受け付ける型か。受け付けなければその演算子の型エラー。
+///
+/// - `+ - * / %`、単項 `-`: `Int` / `Float`
+/// - `< > <= >=`: `Int` / `Float`
+/// - `== !=`: `Int` / `Float` / `Bool`。関数型の値は比べられない
+///   (`docs/function-as-the-first-class-type.md` の決定事項)
+fn operator_accepts(op: OperatorKind, ty: Ty, expr: &Expr) -> TyResult<()> {
+    let accepted = match op {
+        OperatorKind::Binary(BinOperator::Eq | BinOperator::Ne) => {
+            matches!(ty.kind, TyKind::Int | TyKind::Float | TyKind::Bool)
+        }
+        OperatorKind::Binary(_) | OperatorKind::Unary(_) => {
+            matches!(ty.kind, TyKind::Int | TyKind::Float)
+        }
+    };
+    if accepted {
+        return Ok(());
+    }
+    Err(match op {
+        OperatorKind::Binary(op) => TyError::InvalidBinaryOperationForType {
+            ty: Box::new(ty),
+            op,
+            expr: Box::new(expr.clone()),
+        },
+        OperatorKind::Unary(op) => TyError::InvalidUnaryOperationForType {
+            ty: Box::new(ty),
+            op,
+            expr: Box::new(expr.clone()),
+        },
+    })
 }
 
 /// 静的な呼び出しの単一化で、第 1 引数に混ぜるもの ([`FnTyCtx::infer_static_call`])。
@@ -380,6 +412,42 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
     /// - 具体の型 → その型に trait が実装されているかを見る
     /// - 呼び出し元自身のジェネリック引数 → 同じ制限が付いているかを見る
     /// - まだ型変数 → 決まらなかったということなので、文脈が足りない
+    /// 演算子が受け付ける型か検査する。
+    ///
+    /// 型がまだ型変数なら、後で決まる型を検査できるよう宿題に積む
+    /// ([`Self::check_deferred_operators`])。これが無いと、
+    /// 比較の時点では型変数で、後から関数型に決まった値の `==` がすり抜ける。
+    ///
+    /// NOTE: trait による演算子オーバーロードが可能になればこの検査は要らない
+    fn check_operator_ty(&mut self, op: OperatorKind, ty: Ty, expr: &Expr) -> TyResult<()> {
+        let ty = self.apply_ty(ty);
+        if let TyKind::Infer(_) = ty.kind {
+            self.deferred_operators.push(context::DeferredOperator {
+                ty,
+                op,
+                expr: expr.clone(),
+            });
+            return Ok(());
+        }
+        operator_accepts(op, ty, expr)
+    }
+
+    /// 積んでおいた演算子の型の検査を、解けた型でやり直す。
+    ///
+    /// それでも型変数のままなら、型がどこからも決まらなかったということで、
+    /// 後の `TypeNotInferable` の検査が報告する。
+    fn check_deferred_operators(&mut self) -> TyResult<()> {
+        let deferred = std::mem::take(&mut self.deferred_operators);
+        for d in deferred {
+            let ty = self.resolve_ty(&d.ty);
+            if let TyKind::Infer(_) = ty.kind {
+                continue;
+            }
+            operator_accepts(d.op, ty, &d.expr)?;
+        }
+        Ok(())
+    }
+
     fn solve_obligations(&mut self) -> TyResult<()> {
         let obligations = std::mem::take(&mut self.obligations);
 
@@ -876,18 +944,8 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                     // T -> T である演算子
                     UnOperator::Neg => {
                         let ty = self.infer_expr(&u.right)?;
-                        // NOTE: traitによる演算子オーバーロードが可能になれば
-                        // このチェックは要らない
-                        match ty.kind {
-                            TyKind::Infer(_) | TyKind::Int | TyKind::Float => {
-                                Ok(Ty::new(ty.kind, expr.span()))
-                            }
-                            _ => Err(TyError::InvalidUnaryOperationForType {
-                                ty: Box::new(ty),
-                                op: u.op,
-                                expr: Box::new(expr.clone()),
-                            }),
-                        }
+                        self.check_operator_ty(OperatorKind::Unary(u.op), ty.clone(), expr)?;
+                        Ok(Ty::new(ty.kind, expr.span()))
                     }
                 }
             }
@@ -903,19 +961,12 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                     let right = self.infer_expr(&b.right)?;
 
                     let tk = self.unify(left.clone(), right.clone())?;
-
-                    // NOTE: traitによる演算子オーバーロードが可能になれば
-                    // このチェックは要らない
-                    match tk {
-                        TyKind::Infer(_) | TyKind::Int | TyKind::Float => {
-                            Ok(Ty::new(tk, expr.span()))
-                        }
-                        _ => Err(TyError::InvalidBinaryOperationForType {
-                            ty: Box::new(Ty::new(tk, left.span)),
-                            op: b.op,
-                            expr: Box::new(expr.clone()),
-                        }),
-                    }
+                    self.check_operator_ty(
+                        OperatorKind::Binary(b.op),
+                        Ty::new(tk.clone(), left.span),
+                        expr,
+                    )?;
+                    Ok(Ty::new(tk, expr.span()))
                 }
                 // T: Int, Uint, Float に対して適用可能で
                 // (T, T) -> Bool である演算子
@@ -924,19 +975,12 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                     let right = self.infer_expr(&b.right)?;
 
                     let tk = self.unify(left.clone(), right.clone())?;
-
-                    // NOTE: traitによる演算子オーバーロードが可能になれば
-                    // このチェックは要らない
-                    match tk {
-                        TyKind::Infer(_) | TyKind::Int | TyKind::Float => {
-                            Ok(Ty::new(TyKind::Bool, expr.span()))
-                        }
-                        _ => Err(TyError::InvalidBinaryOperationForType {
-                            ty: Box::new(Ty::new(tk, left.span)),
-                            op: b.op,
-                            expr: Box::new(expr.clone()),
-                        }),
-                    }
+                    self.check_operator_ty(
+                        OperatorKind::Binary(b.op),
+                        Ty::new(tk, left.span),
+                        expr,
+                    )?;
+                    Ok(Ty::new(TyKind::Bool, expr.span()))
                 }
                 // T: Int, Uint, Float, Bool に対して適用可能で
                 // (T, T) -> Bool である演算子
@@ -945,19 +989,12 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                     let right = self.infer_expr(&b.right)?;
 
                     let tk = self.unify(left.clone(), right.clone())?;
-
-                    // NOTE: traitによる演算子オーバーロードが可能になれば
-                    // このチェックは要らない
-                    match tk {
-                        TyKind::Infer(_) | TyKind::Int | TyKind::Float | TyKind::Bool => {
-                            Ok(Ty::new(TyKind::Bool, expr.span()))
-                        }
-                        _ => Err(TyError::InvalidBinaryOperationForType {
-                            ty: Box::new(Ty::new(tk, left.span)),
-                            op: b.op,
-                            expr: Box::new(expr.clone()),
-                        }),
-                    }
+                    self.check_operator_ty(
+                        OperatorKind::Binary(b.op),
+                        Ty::new(tk, left.span),
+                        expr,
+                    )?;
+                    Ok(Ty::new(TyKind::Bool, expr.span()))
                 }
             },
         };
@@ -2246,6 +2283,9 @@ impl<'a> TyCtx<'a> {
         //
         // 呼び出し位置ではまだ型変数だったものが、ここでは決まっている。
         fctx.solve_obligations()?;
+
+        // 演算子を適用した時点では型変数だった型を、決まった型で検査し直す。
+        fctx.check_deferred_operators()?;
 
         // 記録した型に残っている型変数を、最後にまとめて解く。
         let expr_tys: HashMap<_, Ty> = fctx
