@@ -663,6 +663,28 @@ fn parse_type_repr(p: &mut Parser) {
             p.skip_trivia();
             p.bump();
         }
+        // 関数型 `fn(A, B) -> C` / `fn(A)`。量化子 (`fn[T](..)`) は書けない。
+        // 子は TypeRepr ノードと区切りのトークンのまま並べる (lowering が `fn` で見分ける)。
+        SyntaxKind::KwFn => {
+            p.skip_trivia();
+            p.bump(); // fn
+            p.expect(SyntaxKind::LParen);
+            while !p.at(SyntaxKind::RParen) && p.current_non_trivia() != SyntaxKind::Eof {
+                parse_type_repr(p);
+                if p.at(SyntaxKind::Comma) {
+                    p.skip_trivia();
+                    p.bump();
+                } else {
+                    break;
+                }
+            }
+            p.expect(SyntaxKind::RParen);
+            if p.at(SyntaxKind::Arrow) {
+                p.skip_trivia();
+                p.bump(); // ->
+                parse_type_repr(p);
+            }
+        }
         _ => {
             // identifier path
             parse_identifier_path(p);
@@ -1160,6 +1182,8 @@ fn parse_primary(p: &mut Parser) {
         SyntaxKind::LBrace => {
             parse_block_expr(p);
         }
+        // 無名関数。型の位置の `fn(A) -> B` とは、式の位置に現れることで区別される。
+        SyntaxKind::KwFn => parse_fn_literal(p),
         SyntaxKind::IntLiteral
         | SyntaxKind::FloatLiteral
         | SyntaxKind::StringLiteral
@@ -1194,6 +1218,43 @@ fn parse_primary(p: &mut Parser) {
             p.finish_node();
         }
     }
+}
+
+/// `fn ( <引数> ,* ) ( -> <型> )? <ブロック>`。引数の型は省略できる。
+fn parse_fn_literal(p: &mut Parser) {
+    p.start_node(SyntaxKind::FnLiteral);
+    p.skip_trivia();
+    p.bump(); // fn
+    p.expect(SyntaxKind::LParen);
+    while !p.at(SyntaxKind::RParen) && p.current_non_trivia() != SyntaxKind::Eof {
+        p.start_node(SyntaxKind::FnLiteralArg);
+        p.skip_trivia();
+        p.expect(SyntaxKind::Ident);
+        if p.at(SyntaxKind::Colon) {
+            p.skip_trivia();
+            p.bump(); // :
+            parse_type_repr(p);
+        }
+        p.finish_node();
+        if p.at(SyntaxKind::Comma) {
+            p.skip_trivia();
+            p.bump();
+        } else {
+            break;
+        }
+    }
+    p.expect(SyntaxKind::RParen);
+    if p.at(SyntaxKind::Arrow) {
+        p.skip_trivia();
+        p.bump(); // ->
+        parse_type_repr(p);
+    }
+    // 本体の中では構造体リテラルを書いてよい (条件式の中に書かれていても)。
+    let saved = p.no_struct_literal;
+    p.no_struct_literal = false;
+    parse_block(p);
+    p.no_struct_literal = saved;
+    p.finish_node();
 }
 
 fn parse_struct_literal_fields(p: &mut Parser) {
@@ -1354,6 +1415,21 @@ impl[T] Foo[T] {
         no_errors("type MyInt = Int;");
         no_errors("type MyGame = Game[MyGameCharacters, MyGameState];");
         no_errors("type Boxed[T] = Box[T];");
+    }
+
+    #[test]
+    fn parse_fn_literal() {
+        no_errors("fn f() -> Int { let g = fn(x, y: Int) -> Int { x + y }; g(1, 2) }");
+        no_errors("fn f() { apply(fn(x) { x * 2 }, 3); }");
+        no_errors("fn f() -> Int { fn(x) { let y = x; y }(1) }");
+    }
+
+    #[test]
+    fn parse_fn_type() {
+        no_errors("fn apply(f: fn(Int, Bool) -> Int, x: Int) -> Int { x }");
+        no_errors("struct Button { on_click: fn(Event), }");
+        no_errors("fn pick() -> fn(Int) -> fn() { f }");
+        no_errors("type Mapper[T, U] = fn(T) -> U;");
     }
 
     #[test]

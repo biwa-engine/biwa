@@ -10,9 +10,9 @@ use std::collections::HashMap;
 
 use biwac_ast::{BinOperator, UnOperator};
 use biwac_hir::{
-    BlockExpr, BlockStmt, Callee as HirCallee, DecledVar, Expr, ExprId, ExprVal, FnBody, FnDef,
-    FnSignature, Literal, NativeFnDef, NovelSceneDef, Pattern, PatternFields, Primary, Stmt, Ty,
-    TyKind, VarIdKind, VariantCtorFields,
+    BlockExpr, BlockStmt, CallTarget, DecledVar, Expr, ExprId, ExprVal, FnBody, FnDef, FnSignature,
+    Literal, MethodTarget, NativeFnDef, NovelSceneDef, Pattern, PatternFields, Primary, Stmt, Ty,
+    TyKind, VarIdKind, Variable, VariantCtorFields,
 };
 use biwac_mir::{
     AggregateKind, BasicBlock, BasicBlockData, BinOp, Body, Callee, Const, GenArgs, Local,
@@ -60,8 +60,14 @@ pub(crate) fn build_scene(
 pub(crate) fn build_native_fn(def_id: ValDefId, n: &NativeFnDef) -> MirItem {
     MirItem::Native(NativeItem {
         def_id,
-        self_ty: n.signature.self_ty.clone(),
-        args: n.signature.args.iter().map(|a| a.ty.clone()).collect(),
+        // MIR の native は self を別に持つ (`%param0%` の番号付けなどで使う)。
+        self_ty: n.signature.self_ty().cloned(),
+        args: n
+            .signature
+            .explicit_args()
+            .iter()
+            .map(|a| a.ty.clone())
+            .collect(),
         rty: n.signature.rty.clone(),
         genargs: n.signature.all_genargs().map(|g| g.def_id).collect(),
         native_body: n.native_body.clone(),
@@ -86,6 +92,10 @@ struct BodyBuilder<'a> {
     /// HIR の変数と MIR の local の対応。
     /// 引数も宣言された変数も同じ表に入る。
     var_map: HashMap<VarId, Local>,
+
+    /// この関数のジェネリック引数。無名関数を持ち上げた関数はこれを引き継いでいるので、
+    /// 無名関数への参照はこれをそのまま (恒等の割り当てで) 渡す。
+    own_genargs: Vec<biwac_span::LocalGenDefId>,
 }
 
 impl<'a> BodyBuilder<'a> {
@@ -105,6 +115,7 @@ impl<'a> BodyBuilder<'a> {
             locals: Vec::new(),
             blocks: Vec::new(),
             var_map: HashMap::new(),
+            own_genargs: Vec::new(),
         }
     }
 
@@ -115,18 +126,13 @@ impl<'a> BodyBuilder<'a> {
         body: &FnBody,
         genargs: Vec<biwac_span::LocalGenDefId>,
     ) -> Body {
+        self.own_genargs = genargs.clone();
+
         // _0 は戻り値スロット。
         self.new_local(signature.rty.clone(), signature.rty.span.clone());
 
-        // _1 ..= arg_count が引数。メソッドなら _1 が self。
+        // _1 ..= arg_count が引数。メソッドなら _1 が self (シグニチャの第一引数)。
         let mut arg_count = 0;
-        if let Some(self_ty) = &signature.self_ty {
-            let var_id = body.self_var_id.unwrap_or(VarId::SELF_VARIABLE);
-            let ty = self.var_ty(var_id, self_ty);
-            let local = self.new_local(ty, self_ty.span.clone());
-            self.var_map.insert(var_id, local);
-            arg_count += 1;
-        }
         for arg in &signature.args {
             let ty = self.var_ty(arg.var_id, &arg.ty);
             let local = self.new_local(ty, arg.id.span.clone());
@@ -455,8 +461,8 @@ impl<'a> BodyBuilder<'a> {
         match dst {
             Primary::Variable(v) => match v.id {
                 VarIdKind::Local(var_id) => (bb, Place::from_local(self.local_of(var_id))),
-                VarIdKind::Global(_) => {
-                    unreachable!("global variables are not supported yet (see type inferrer)")
+                VarIdKind::Fn(_) | VarIdKind::Assoc { .. } | VarIdKind::TraitAssoc { .. } => {
+                    unreachable!("compiler bug: a function cannot be assigned (see type inferrer)")
                 }
             },
             Primary::MemberAccess(m) => {
@@ -479,9 +485,8 @@ impl<'a> BodyBuilder<'a> {
                     VarIdKind::Local(var_id) => {
                         return (bb, Place::from_local(self.local_of(var_id)));
                     }
-                    VarIdKind::Global(_) => {
-                        unreachable!("global variables are not supported yet (see type inferrer)")
-                    }
+                    // 関数への参照は値でしかないので、下で一時変数に置く。
+                    VarIdKind::Fn(_) | VarIdKind::Assoc { .. } | VarIdKind::TraitAssoc { .. } => {}
                 },
                 Primary::MemberAccess(m) => {
                     let (bb, base) = self.lower_place(bb, &m.left);
@@ -516,17 +521,69 @@ impl<'a> BodyBuilder<'a> {
                         return (bb, Operand::Const(c));
                     }
                 }
-                Primary::Variable(v) => {
-                    if let VarIdKind::Local(var_id) = v.id {
-                        return (bb, Operand::from_local(self.local_of(var_id)));
+                Primary::Variable(v) => match &v.id {
+                    VarIdKind::Local(var_id) => {
+                        return (bb, Operand::from_local(self.local_of(*var_id)));
                     }
-                }
+                    VarIdKind::Fn(def_id) | VarIdKind::Assoc { def_id, .. } => {
+                        return (bb, Operand::Const(self.fn_def_const(*def_id, expr.id)));
+                    }
+                    VarIdKind::TraitAssoc { .. } => {
+                        unreachable!(
+                            "compiler bug: a trait item used as a value (see type inferrer)"
+                        )
+                    }
+                },
+                Primary::Lambda(l) => return (bb, Operand::Const(self.lambda_const(l))),
                 _ => {}
             }
         }
 
         let (bb, place) = self.lower_place(bb, expr);
         (bb, Operand::Place(place))
+    }
+
+    /// 呼び出しの引数を左から評価する。`first` があれば (メソッドの受け手) 先頭に置く。
+    fn lower_args(
+        &mut self,
+        bb: BasicBlock,
+        first: Option<Operand>,
+        args: &[Expr],
+    ) -> (BasicBlock, Vec<Operand>) {
+        let mut bb = bb;
+        let mut out = Vec::with_capacity(args.len() + 1);
+        out.extend(first);
+        for arg in args {
+            let (next, operand) = self.lower_operand(bb, arg);
+            bb = next;
+            out.push(operand);
+        }
+        (bb, out)
+    }
+
+    /// 無名関数の、持ち上げた関数への参照。
+    ///
+    /// 持ち上げた関数は外側 (この関数) のジェネリック引数を引き継いでいるので、
+    /// 型引数は恒等の割り当て (`T := T`) である。単相化が外側の実体の型に置き換える。
+    fn lambda_const(&self, l: &biwac_hir::Lambda) -> Const {
+        let def_id = *l
+            .lifted
+            .get()
+            .expect("compiler bug: a lambda is not lifted after inference");
+        let mut genargs: GenArgs = self
+            .own_genargs
+            .iter()
+            .map(|g| (*g, Ty::new(TyKind::LocGen(*g), l.span.clone())))
+            .collect();
+        genargs.sort_by_key(|(g, _)| g.value());
+        Const::FnDef(def_id, genargs)
+    }
+
+    /// 関数名を値として使ったときの、関数への参照。
+    ///
+    /// 型引数は型推論が呼び出しと同じく `call_genargs` に記録している。
+    fn fn_def_const(&self, def_id: ValDefId, expr_id: ExprId) -> Const {
+        Const::FnDef(def_id, self.genargs_of(expr_id))
     }
 
     /// リテラルのうち、そのまま定数になるもの。
@@ -603,78 +660,90 @@ impl<'a> BodyBuilder<'a> {
                 bb
             }
 
+            Primary::Variable(Variable {
+                id: VarIdKind::Fn(def_id) | VarIdKind::Assoc { def_id, .. },
+                ..
+            }) => {
+                let c = self.fn_def_const(*def_id, expr.id);
+                self.push_assign(bb, dest, Rvalue::Use(Operand::Const(c)), span);
+                bb
+            }
+
+            // 無名関数は持ち上げた関数への参照である。本体はその関数の側で組み立てる。
+            Primary::Lambda(l) => {
+                let c = self.lambda_const(l);
+                self.push_assign(bb, dest, Rvalue::Use(Operand::Const(c)), span);
+                bb
+            }
+
             Primary::Variable(_) | Primary::MemberAccess(_) => {
                 let (bb, place) = self.lower_place(bb, expr);
                 self.push_assign(bb, dest, Rvalue::Use(Operand::Place(place)), span);
                 bb
             }
 
-            Primary::FnCall(c) => {
-                let mut bb = bb;
-                let mut args = Vec::with_capacity(c.args.len());
-                for arg in &c.args {
-                    let (next, operand) = self.lower_operand(bb, arg);
-                    bb = next;
-                    args.push(operand);
-                }
-
-                let callee = match &c.callee {
-                    // 関連関数も呼び先は直接呼び出しである。
-                    // self 型は推論で型引数を決めるために使うだけなので、
-                    // ここまで来たら `call_genargs` に畳まれている。
-                    HirCallee::Fn(def_id) | HirCallee::AssocFn { def_id, .. } => Callee::Direct {
-                        def_id: *def_id,
-                        genargs: self.genargs_of(expr.id),
-                    },
-                    // 実装は単相化まで決まらない。
-                    HirCallee::TraitAssoc { assoc, self_ty } => Callee::TraitAssoc {
-                        assoc: *assoc,
-                        self_ty: self_ty.clone(),
-                        genargs: self.genargs_of(expr.id),
-                    },
-                    HirCallee::Var(var_id) => {
-                        Callee::Indirect(Operand::from_local(self.local_of(*var_id)))
-                    }
-                };
-
-                let next = self.new_block();
-                self.terminate(
-                    bb,
-                    TerminatorKind::Call {
-                        callee,
-                        args,
-                        dest,
-                        target: next,
-                    },
-                    span,
-                );
-                next
-            }
-
-            Primary::MethodCall(m) => {
-                // レシーバは第 1 引数として渡す。
-                let (mut bb, receiver) = self.lower_operand(bb, &m.left);
-                let mut args = Vec::with_capacity(m.args.len() + 1);
-                args.push(receiver);
-                for arg in &m.args {
-                    let (next, operand) = self.lower_operand(bb, arg);
-                    bb = next;
-                    args.push(operand);
-                }
-
-                let target = *m
+            Primary::Call(c) => {
+                let target = *c
                     .target
                     .get()
-                    .expect("compiler bug: method is not resolved after inference");
-                let genargs = self.genargs_of(expr.id);
-                let callee = match target {
-                    biwac_hir::MethodTarget::Direct(def_id) => Callee::Direct { def_id, genargs },
-                    // 実装はレシーバの型が具体になってから決まる。
-                    biwac_hir::MethodTarget::Trait(assoc) => Callee::TraitAssoc {
-                        assoc,
-                        self_ty: self.expr_ty(&m.left),
-                        genargs,
-                    },
+                    .expect("compiler bug: a call is not classified after inference");
+
+                // 型推論の分類に従って、種類別の呼び出しを出す。
+                let (bb, callee, args) = match target {
+                    // 関連関数も呼び先は直接呼び出しである。
+                    // 呼び出し位置に書かれた型は推論で型引数を決めるために使うだけなので、
+                    // ここまで来たら `call_genargs` に畳まれている。
+                    CallTarget::Static(def_id) => {
+                        let (bb, args) = self.lower_args(bb, None, &c.args);
+                        let callee = Callee::Direct {
+                            def_id,
+                            genargs: self.genargs_of(expr.id),
+                        };
+                        (bb, callee, args)
+                    }
+                    // 実装は単相化まで決まらない。
+                    CallTarget::TraitItem(assoc) => {
+                        let ExprVal::Primary(Primary::Variable(Variable {
+                            id: VarIdKind::TraitAssoc { self_ty, .. },
+                            ..
+                        })) = &c.callee.expr
+                        else {
+                            panic!("compiler bug: a trait item call without a trait item callee")
+                        };
+                        let (bb, args) = self.lower_args(bb, None, &c.args);
+                        let callee = Callee::TraitAssoc {
+                            assoc,
+                            self_ty: self_ty.clone(),
+                            genargs: self.genargs_of(expr.id),
+                        };
+                        (bb, callee, args)
+                    }
+                    // レシーバは第 1 引数として渡す。
+                    CallTarget::Method(method) => {
+                        let ExprVal::Primary(Primary::MemberAccess(m)) = &c.callee.expr else {
+                            panic!("compiler bug: a method call without a member access callee")
+                        };
+                        let (bb, receiver) = self.lower_operand(bb, &m.left);
+                        let (bb, args) = self.lower_args(bb, Some(receiver), &c.args);
+                        let genargs = self.genargs_of(expr.id);
+                        let callee = match method {
+                            MethodTarget::Direct(def_id) => Callee::Direct { def_id, genargs },
+                            // 実装はレシーバの型が具体になってから決まる。
+                            MethodTarget::Trait(assoc) => Callee::TraitAssoc {
+                                assoc,
+                                self_ty: self.expr_ty(&m.left),
+                                genargs,
+                            },
+                        };
+                        (bb, callee, args)
+                    }
+                    // 関数型の値の呼び出し。呼び先を引数より先に評価する。
+                    // 関数型のメンバ (`self.on_click(e)`) ならメンバの場所がそのまま呼び先になる。
+                    CallTarget::Value => {
+                        let (bb, f) = self.lower_operand(bb, &c.callee);
+                        let (bb, args) = self.lower_args(bb, None, &c.args);
+                        (bb, Callee::Indirect(f), args)
+                    }
                 };
 
                 let next = self.new_block();

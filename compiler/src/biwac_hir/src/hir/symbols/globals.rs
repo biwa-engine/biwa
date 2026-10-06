@@ -67,25 +67,34 @@ pub struct FnArgDecl {
 // ```
 #[derive(Debug, Clone)]
 pub struct FnSignature {
-    // explicit arguments (does NOT include `self`)
+    /// 引数。メソッドなら**先頭が `self`** である。
+    ///
+    /// メソッドは「第一引数が `self` の関連関数」として扱う
+    /// (`docs/function-as-the-first-class-type.md`)。
+    /// `Foo::bar(x, a)` と呼べ、`Foo::bar` を `fn(Foo, A) -> B` の値として使えるのはこのため。
+    /// `self` の引数の `var_id` は [`biwac_span::VarId::SELF_VARIABLE`]。
     pub args: Vec<FnArgDecl>,
 
-    // Some if this is a method (first arg is self receiver)
-    pub self_ty: Option<Ty>,
+    /// 第一引数が `self` か (メソッドか)。
+    ///
+    /// `x.bar(..)` で呼べるのはこれが真のものだけである。
+    /// また trait の宣言と実装の突き合わせでは、`self` の型は比べない
+    /// (宣言の `Self` は実装の対象型そのものなので)。
+    pub has_self: bool,
 
     /// この関数を持つ impl ブロックの対象型。
     ///
-    /// `self_ty` と違い、レシーバを取らない関連関数でも入る。
+    /// `self` の型と違い、レシーバを取らない関連関数でも入る。
     /// impl ブロックの外で定義された関数では `None`。
     ///
     /// ```text
     /// impl[P] Character[P] {
-    ///   fn new(..) -> Self { .. }   // self_ty: None, impl_self_ty: Some(Character[P])
-    ///   fn appear(self) { .. }      // self_ty: Some(Character[P]), impl_self_ty: 同上
+    ///   fn new(..) -> Self { .. }   // has_self: false, impl_self_ty: Some(Character[P])
+    ///   fn appear(self) { .. }      // has_self: true (args[0]: Character[P]), impl_self_ty: 同上
     /// }
     /// ```
     ///
-    /// 呼び出し位置に書かれた型 ([`crate::Callee::AssocFn`] の `self_ty`) と
+    /// 呼び出し位置に書かれた型 ([`crate::VarIdKind::Assoc`] の `self_ty`) と
     /// 単一化して、impl ブロックのジェネリック引数を決めるために使う。
     pub impl_self_ty: Option<Ty>,
 
@@ -113,6 +122,20 @@ impl FnSignature {
     /// impl ブロックのぶんが先である。
     pub fn all_genargs(&self) -> impl Iterator<Item = &GenArgDef> {
         self.impl_genargs.iter().chain(self.genargs.iter())
+    }
+
+    /// メソッドなら `self` の型。
+    pub fn self_ty(&self) -> Option<&Ty> {
+        self.has_self.then(|| &self.args[0].ty)
+    }
+
+    /// `self` を除いた引数 (呼び出しの括弧の中に書く引数)。
+    pub fn explicit_args(&self) -> &[FnArgDecl] {
+        if self.has_self {
+            &self.args[1..]
+        } else {
+            &self.args
+        }
     }
 }
 

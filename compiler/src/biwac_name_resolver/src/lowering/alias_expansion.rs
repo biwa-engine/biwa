@@ -1,27 +1,50 @@
 use std::collections::{HashMap, HashSet};
 
 use biwac_hir::{
-    AssocValDefKind, BlockExpr, BlockStmt, Callee, DefinedTy, Expr, ExprVal, FnBody, FnDef,
-    FnSignature, FnTy, Hir, Literal, NativeFnDef, NovelSceneDef, Primary, Stmt, Ty, TyDefKind,
-    TyKind, TypeAliasDef, ValDefKind, VariantCtorFields,
+    AssocValDefKind, BlockExpr, BlockStmt, DefinedTy, Expr, ExprVal, FnBody, FnDef, FnSignature,
+    FnTy, Hir, Literal, NativeFnDef, NovelSceneDef, Primary, Stmt, Ty, TyDefKind, TyKind,
+    TypeAliasDef, ValDefKind, VarIdKind, VariantCtorFields,
 };
 use biwac_span::{GenDefId, TyDefId};
 
 use crate::ResolveError;
 
-pub(super) fn expand_aliases(hir: &mut Hir, errors: &mut Vec<ResolveError>) {
+/// `ext_aliases` は依存パッケージの型エイリアス (右辺は展開済み)。
+pub(super) fn expand_aliases(
+    hir: &mut Hir,
+    ext_aliases: &HashMap<TyDefId, TypeAliasDef>,
+    errors: &mut Vec<ResolveError>,
+) {
     if let Err(errs) = detect_alias_cycles(&hir.ty_aliases) {
         errors.extend(errs);
         return;
     }
 
-    let aliases = hir.ty_aliases.clone();
+    let mut aliases = hir.ty_aliases.clone();
+    aliases.extend(ext_aliases.iter().map(|(id, def)| (*id, def.clone())));
+
+    // エイリアスの右辺も展開しておく。`.biwameta` には展開済みの右辺を書くので、
+    // 依存元は (依存の依存のエイリアスを含めて) 連鎖を辿らずに済む。
+    for alias in hir.ty_aliases.values_mut() {
+        alias.right = expand_ty(alias.right.clone(), &aliases);
+    }
 
     for defined_ty_impl in hir.tys.values_mut() {
-        if let Some(TyDefKind::Struct(struct_def)) = &mut defined_ty_impl.ty_content {
-            for member_ty in struct_def.members.values_mut() {
-                *member_ty = expand_ty(member_ty.clone(), &aliases);
+        match &mut defined_ty_impl.ty_content {
+            Some(TyDefKind::Struct(struct_def)) => {
+                for member_ty in struct_def.members.values_mut() {
+                    *member_ty = expand_ty(member_ty.clone(), &aliases);
+                }
             }
+            // バリアントのフィールドにもエイリアスが書ける (`Run(IntFn)`)。
+            Some(TyDefKind::Enum(enum_def)) => {
+                for variant in &mut enum_def.variants {
+                    for (_, field_ty) in &mut variant.fields {
+                        *field_ty = expand_ty(field_ty.clone(), &aliases);
+                    }
+                }
+            }
+            _ => {}
         }
         for impl_list in defined_ty_impl.vals.values_mut() {
             for pair in impl_list.vals.values_mut() {
@@ -156,9 +179,6 @@ fn expand_fn_signature(sig: &mut FnSignature, aliases: &HashMap<TyDefId, TypeAli
     for arg in &mut sig.args {
         arg.ty = expand_ty(arg.ty.clone(), aliases);
     }
-    if let Some(self_ty) = &mut sig.self_ty {
-        *self_ty = expand_ty(self_ty.clone(), aliases);
-    }
     if let Some(impl_self_ty) = &mut sig.impl_self_ty {
         *impl_self_ty = expand_ty(impl_self_ty.clone(), aliases);
     }
@@ -179,7 +199,7 @@ fn expand_fn_body(body: &mut FnBody, aliases: &HashMap<TyDefId, TypeAliasDef>) {
 
 // 式の中にも型が現れる。
 //
-// `Callee::AssocFn` の `self_ty` がそれで、`CharacterBiwa::new(..)` の
+// `VarIdKind::Assoc` の `self_ty` がそれで、`CharacterBiwa::new(..)` の
 // `CharacterBiwa` をここで `Character[BiwaCharacterProps]` に置き換える。
 // これをやらないと推論がエイリアスの型引数を受け取れない。
 
@@ -240,20 +260,18 @@ fn expand_expr(expr: &mut Expr, aliases: &HashMap<TyDefId, TypeAliasDef>) {
 
 fn expand_primary(primary: &mut Primary, aliases: &HashMap<TyDefId, TypeAliasDef>) {
     match primary {
-        Primary::FnCall(call) => {
-            if let Callee::AssocFn { self_ty, .. } = &mut call.callee {
-                *self_ty = expand_ty(self_ty.clone(), aliases);
-            }
+        Primary::Call(call) => {
+            expand_expr(&mut call.callee, aliases);
             for arg in &mut call.args {
                 expand_expr(arg, aliases);
             }
         }
-        Primary::MethodCall(m) => {
-            expand_expr(&mut m.left, aliases);
-            for arg in &mut m.args {
-                expand_expr(arg, aliases);
+        Primary::Variable(v) => match &mut v.id {
+            VarIdKind::Assoc { self_ty, .. } | VarIdKind::TraitAssoc { self_ty, .. } => {
+                *self_ty = expand_ty(self_ty.clone(), aliases);
             }
-        }
+            VarIdKind::Local(_) | VarIdKind::Fn(_) => {}
+        },
         Primary::Match(m) => {
             expand_expr(&mut m.scrutinee, aliases);
             for arm in &mut m.arms {
@@ -286,7 +304,24 @@ fn expand_primary(primary: &mut Primary, aliases: &HashMap<TyDefId, TypeAliasDef
                 expand_expr(member, aliases);
             }
         }
-        Primary::Literal(_) | Primary::Variable(_) => {}
+        Primary::Literal(_) => {}
+        // 引数と戻り値の注釈、本体。引数の型は外側の関数の変数表にも載っている (そちらは本体の展開で展開される)。
+        Primary::Lambda(l) => {
+            for arg in &mut l.args {
+                if let Some(ty) = &mut arg.ty {
+                    *ty = expand_ty(ty.clone(), aliases);
+                }
+            }
+            if let Some(rty) = &mut l.rty {
+                *rty = expand_ty(rty.clone(), aliases);
+            }
+            for stmt in &mut l.stmts {
+                expand_stmt(stmt, aliases);
+            }
+            if let Some(expr) = &mut l.expr {
+                expand_expr(expr, aliases);
+            }
+        }
     }
 }
 

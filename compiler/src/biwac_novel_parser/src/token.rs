@@ -24,6 +24,7 @@ pub enum NCodeTkKind {
     KwFalse,               // bool literal `FALSE`
     KwPackage,             // package
     KwLet,                 // let
+    KwFn,                  // fn (関数型 `fn(A) -> B`)
     KwIf,                  // if
     KwElse,                // else
     KwWhile,               // while
@@ -70,6 +71,7 @@ pub enum NCodeTkKindName {
     KwFalse,         // bool literal `FALSE`
     KwPackage,       // package
     KwLet,           // let
+    KwFn,            // fn
     KwIf,            // if
     KwElse,          // else
     KwWhile,         // while
@@ -592,6 +594,7 @@ impl<'src> NovelSourceStream<'src> {
                         "FALSE" => (NCodeTkKind::KwFalse, 5),
                         "package" => (NCodeTkKind::KwPackage, 7),
                         "let" => (NCodeTkKind::KwLet, 3),
+                        "fn" => (NCodeTkKind::KwFn, 2),
                         "if" => (NCodeTkKind::KwIf, 2),
                         "else" => (NCodeTkKind::KwElse, 4),
                         "while" => (NCodeTkKind::KwWhile, 5),
@@ -682,6 +685,7 @@ impl NCodeTkKind {
             Self::KwFalse => NCodeTkKindName::KwFalse, // bool literal `FALSE`
             Self::KwPackage => NCodeTkKindName::KwPackage, // package
             Self::KwLet => NCodeTkKindName::KwLet,    // let
+            Self::KwFn => NCodeTkKindName::KwFn,      // fn
             Self::KwIf => NCodeTkKindName::KwIf,      // if
             Self::KwElse => NCodeTkKindName::KwElse,  // else
             Self::KwWhile => NCodeTkKindName::KwWhile, // while
@@ -851,6 +855,7 @@ impl NCodeTkKindName {
             Self::KwFalse => "FALSE",
             Self::KwPackage => "package",
             Self::KwLet => "let",
+            Self::KwFn => "fn",
             Self::KwIf => "if",
             Self::KwElse => "else",
             Self::KwWhile => "while",

@@ -8,12 +8,21 @@ use crate::{Ident, Path, Stmt, VariantShape};
 pub enum Primary {
     Literal(Literal),
     Variable(Variable),
-    FnCall(FnCall),
     MemberAccess(MemberAccess),
     IfExpr(IfExpr),
     Match(MatchExpr),
     Block(BlockExpr),
-    MethodCall(MethodCall),
+    /// 呼び出し `<式> ( <引数列> )`。
+    ///
+    /// 呼び出しの形はこれ 1 つである (`docs/function-as-the-first-class-type-impl-status.md` §7)。
+    /// 呼び先が何か (関数・関連関数・メソッド・関数型の値) は構文では決めない。
+    ///
+    /// - `f(x)`、`Foo::new(x)` — 呼び先はパスの変数
+    /// - `x.bar(a)` — 呼び先はメンバアクセス `x.bar`。メソッドかメンバ (関数型) の値かは型推論が決める
+    /// - `make()(x)` — 呼び先は任意の式
+    Call(CallExpr),
+    /// 無名関数 `fn(x, y: Int) -> Int { x + y }`。外側の局所変数は捕捉できない。
+    FnLiteral(FnLiteral),
 }
 
 impl Primary {
@@ -21,12 +30,12 @@ impl Primary {
         match self {
             Self::Literal(l) => l.span(),
             Self::Variable(v) => v.span().clone(),
-            Self::FnCall(f) => f.span.clone(),
             Self::MemberAccess(m) => m.span(),
             Self::IfExpr(i) => i.span.clone(),
             Self::Match(m) => m.span.clone(),
             Self::Block(b) => b.span.clone(),
-            Self::MethodCall(m) => m.span.clone(),
+            Self::Call(c) => c.span.clone(),
+            Self::FnLiteral(f) => f.span.clone(),
         }
     }
 }
@@ -46,9 +55,38 @@ impl Variable {
     }
 }
 
+/// 無名関数 (関数リテラル)。
+///
+/// ```biwa
+/// fn(x, y) { x + y }                     // 引数・戻り値の型は推論する
+/// fn(x: Int, y: Foo) -> Bar { y.bar(x) } // 注釈も書ける
+/// ```
+///
+/// 型引数は持たない (ジェネリックな無名関数は当面考えない)。
+/// 本体から参照できるのは引数と本体の中の変数、それにグローバルな静的なもの (関数など) だけで、
+/// 外側の局所変数を参照するとエラーになる (クロージャは未対応)。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FnCall {
-    pub path: Path,
+pub struct FnLiteral {
+    pub args: Vec<FnLiteralArg>,
+    /// `-> T` と書かれた戻り値の型。省略したら推論する (関数型 `fn(A)` の省略は Void だが、こちらは推論)。
+    pub rtype: Option<crate::TypRepr>,
+    pub stmts: Vec<Stmt>,
+    pub expr: Option<Box<Exprs>>,
+    pub span: Span,
+}
+
+/// 無名関数の引数。型は省略できる。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FnLiteralArg {
+    pub id: Ident,
+    pub typ: Option<crate::TypRepr>,
+    pub var_id: OnceCell<VarId>,
+}
+
+/// 呼び出し。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallExpr {
+    pub callee: Box<Exprs>,
     pub args: Vec<Exprs>,
     pub span: Span,
 }
@@ -64,14 +102,6 @@ impl MemberAccess {
     pub fn span(&self) -> Span {
         Span::merge(&self.left.span(), &self.member.span)
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MethodCall {
-    pub left: Box<Exprs>,
-    pub method: Ident,
-    pub args: Vec<Exprs>,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

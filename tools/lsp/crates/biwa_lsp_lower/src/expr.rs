@@ -1,8 +1,8 @@
 use biwa_lsp_lexer::SyntaxKind;
 use biwac_ast::{
-    BinOperator, BinaryExpr, BoolLiteral, Exprs, FloatLiteral, FnCall, IntegerLiteral, Literal,
-    MatchExpr, MatchExprArm, MemberAccess, MethodCall, Primary, StringLiteral, StructLiteral,
-    UnOperator, UnaryExpr, Variable,
+    BinOperator, BinaryExpr, BoolLiteral, CallExpr, Exprs, FloatLiteral, FnLiteral, FnLiteralArg,
+    IntegerLiteral, Literal, MatchExpr, MatchExprArm, MemberAccess, Primary, StringLiteral,
+    StructLiteral, UnOperator, UnaryExpr, Variable,
 };
 use biwac_base::{IdentInterner, ModId};
 use biwac_span::Span;
@@ -11,9 +11,10 @@ use crate::cursor::{
     Children, SyntaxElement, SyntaxNode, intern_ident_token, node_span, token_span,
 };
 use crate::error::LowerError;
+use crate::path_ty::lower_type_repr;
 use crate::path_ty::{lower_ident_path, path_is_usable_as_value};
 use crate::pattern::lower_pattern;
-use crate::stmt::lower_block_expr_mandatory;
+use crate::stmt::{lower_block_expr_mandatory, lower_fn_body};
 
 /// `0x..`/`0b..` の基数つき整数と、末尾 `u` を許す biwa-lsp-lexer の
 /// `IntLiteral` 正規表現を読む。基数の対応が `0o` を欠くなど
@@ -207,11 +208,9 @@ fn lower_postfix_base(
 /// 「その 1 段」の演算子 1 つだけを持ち、それより手前の連鎖は
 /// 先頭の子として再帰的にネストしている。
 ///
-/// 実コンパイラでは「レシーバなしの呼び出し (`foo(1, 2)`)」は後置演算子ではなく
-/// primary 式のその場での分岐として作られる (`FnCall`) のに対し、
-/// biwa-lsp-parser の CST では区別せず同じ `PostfixExpr` 形にまとめてしまうため、
-/// ここで「先頭が `IdentPath` かつ直後が `CallArgList`」の形だけ `FnCall` として
-/// 特別扱いし、実コンパイラの AST 形へ復元している。
+/// 実コンパイラの AST でも呼び出しは `<式> ( <引数列> )` (`Primary::Call`) の 1 つの形なので、
+/// そのまま対応させる。ただし CST は `.ident(args)` を 1 段にまとめているので、
+/// それは「メンバアクセス `x.ident` の呼び出し」に開く。
 fn lower_postfix_expr(
     mod_id: ModId,
     interner: &mut IdentInterner,
@@ -222,47 +221,34 @@ fn lower_postfix_expr(
     let mut children = Children::of(node);
     let first = children.next_elem()?;
 
-    if let rowan::NodeOrToken::Node(first_node) = &first
-        && first_node.kind() == SyntaxKind::IdentPath
-        && children.peek_kind() == Some(SyntaxKind::CallArgList)
-    {
-        let path =
-            lower_ident_path(mod_id, interner, first_node).filter(path_is_usable_as_value)?;
-        let args_node = children.eat_node(SyntaxKind::CallArgList)?;
-        let args = lower_call_arg_list(mod_id, interner, &args_node, errors);
-        return Some(Exprs::Primary(Primary::FnCall(FnCall { path, args, span })));
-    }
-
     let left = lower_postfix_base(mod_id, interner, &first, errors)?;
 
     if children.eat_token(SyntaxKind::Dot).is_some() {
         let member_tok = children.eat_token(SyntaxKind::Ident)?;
         let member = intern_ident_token(mod_id, interner, &member_tok);
+        let member_access = Exprs::Primary(Primary::MemberAccess(MemberAccess {
+            left: Box::new(left),
+            member,
+        }));
 
         if let Some(args_node) = children.eat_node(SyntaxKind::CallArgList) {
             let args = lower_call_arg_list(mod_id, interner, &args_node, errors);
-            return Some(Exprs::Primary(Primary::MethodCall(MethodCall {
-                left: Box::new(left),
-                method: member,
+            return Some(Exprs::Primary(Primary::Call(CallExpr {
+                callee: Box::new(member_access),
                 args,
                 span,
             })));
         }
-        return Some(Exprs::Primary(Primary::MemberAccess(MemberAccess {
-            left: Box::new(left),
-            member,
-        })));
+        return Some(member_access);
     }
 
-    if children.peek_kind() == Some(SyntaxKind::CallArgList) {
-        // `foo()()`, `(x)(1)` のような「パスでない式の呼び出し」。
-        // `FnCall` はパス呼び出し専用、`MethodCall`/`MemberAccess` は `.` 越しの
-        // 呼び出し専用で、biwac_ast には「任意の式を呼ぶ」形が無い。
-        errors.push(LowerError::new(
-            "calling a non-path expression is not representable in the compiler AST",
+    if let Some(args_node) = children.eat_node(SyntaxKind::CallArgList) {
+        let args = lower_call_arg_list(mod_id, interner, &args_node, errors);
+        return Some(Exprs::Primary(Primary::Call(CallExpr {
+            callee: Box::new(left),
+            args,
             span,
-        ));
-        return None;
+        })));
     }
 
     errors.push(LowerError::new(
@@ -501,6 +487,57 @@ fn lower_match_expr(
 /// (実際には一度も生成されない予約 kind)。後置演算子が 1 つも
 /// 付かない式は `parse_primary` が直接作った kind (`Literal`, `IdentPath`,
 /// `StructLiteral`, `ParenExpr`, `BlockExpr`, ...) のまま子として現れる。
+/// `FnLiteral` ノード (`fn ( <引数> ,* ) ( -> <型> )? <ブロック>`) を無名関数にする。
+fn lower_fn_literal(
+    mod_id: ModId,
+    interner: &mut IdentInterner,
+    node: &SyntaxNode,
+    errors: &mut Vec<LowerError>,
+) -> Option<FnLiteral> {
+    let span = node_span(mod_id, node);
+    let mut children = Children::of(node);
+    children.eat_token(SyntaxKind::KwFn);
+    children.eat_token(SyntaxKind::LParen);
+
+    let mut args = Vec::new();
+    while let Some(arg_node) = children.eat_node(SyntaxKind::FnLiteralArg) {
+        let mut arg_children = Children::of(&arg_node);
+        let id_tok = arg_children.eat_token(SyntaxKind::Ident)?;
+        let id = intern_ident_token(mod_id, interner, &id_tok);
+        let typ = if arg_children.eat_token(SyntaxKind::Colon).is_some() {
+            let ty_node = arg_children.eat_node(SyntaxKind::TypeRepr)?;
+            Some(lower_type_repr(mod_id, interner, &ty_node, errors)?)
+        } else {
+            None
+        };
+        args.push(FnLiteralArg {
+            id,
+            typ,
+            var_id: std::cell::OnceCell::new(),
+        });
+        children.eat_token(SyntaxKind::Comma);
+    }
+    children.eat_token(SyntaxKind::RParen);
+
+    let rtype = if children.eat_token(SyntaxKind::Arrow).is_some() {
+        let ty_node = children.eat_node(SyntaxKind::TypeRepr)?;
+        Some(lower_type_repr(mod_id, interner, &ty_node, errors)?)
+    } else {
+        None
+    };
+
+    let body_node = children.eat_node(SyntaxKind::BlockStmt)?;
+    let (stmts, expr, _) = lower_fn_body(mod_id, interner, &body_node, errors);
+
+    Some(FnLiteral {
+        args,
+        rtype,
+        stmts,
+        expr: expr.map(Box::new),
+        span,
+    })
+}
+
 pub(crate) fn lower_expr(
     mod_id: ModId,
     interner: &mut IdentInterner,
@@ -529,6 +566,8 @@ pub(crate) fn lower_expr(
         SyntaxKind::IdentPath => lower_ident_path_as_variable(mod_id, interner, node, errors),
         SyntaxKind::StructLiteral => lower_struct_literal(mod_id, interner, node, errors)
             .map(|s| Exprs::Primary(Primary::Literal(Literal::Struct(s)))),
+        SyntaxKind::FnLiteral => lower_fn_literal(mod_id, interner, node, errors)
+            .map(|f| Exprs::Primary(Primary::FnLiteral(f))),
         SyntaxKind::Error => {
             errors.push(LowerError::new(
                 "cannot lower a syntax error into an expression",

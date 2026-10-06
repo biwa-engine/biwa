@@ -299,6 +299,8 @@ impl DepMetadata {
             // `[[host_export="..."]]` の export 名。
             // 属性の付与対象はトップレベルの `fn` だけなので、assoc fn には無い。
             host_export: Option<&'h str>,
+            // scene か。依存元が scene を値にしようとしたら型エラーにするのに使う。
+            is_scene: bool,
         }
         let mut top_fn_items: Vec<TopFnItem> = hir
             .vals
@@ -310,6 +312,7 @@ impl DepMetadata {
                     ValDefKind::Native(f) => (&f.name, &f.signature),
                     ValDefKind::NovelScene(ns) => (&ns.name, &ns.signature),
                 };
+                let is_scene = matches!(val_kind, ValDefKind::NovelScene(_));
                 let ig = sig.impl_genargs.as_slice();
                 Some(TopFnItem {
                     val_def_id: *def_id,
@@ -317,6 +320,7 @@ impl DepMetadata {
                     signature: sig,
                     impl_genargs: ig,
                     host_export: host_exports.get(*def_id),
+                    is_scene,
                 })
             })
             .collect();
@@ -411,6 +415,30 @@ impl DepMetadata {
         });
         next_idx += trait_impl_items.len() as u32;
 
+        // --- type alias ---
+        //
+        // 依存元が名前解決で型として引けるように書き出す。依存元は HIR の段で右辺に展開する。
+        // 既存のシンボルの採番を動かさないよう、末尾に足す。
+        struct TypeAliasItem<'h> {
+            def_id: TyDefId,
+            def: &'h biwac_hir::TypeAliasDef,
+        }
+        let mut type_alias_items: Vec<TypeAliasItem> = hir
+            .ty_aliases
+            .iter()
+            .filter(|(def_id, _)| def_id.pkg().is_self())
+            .map(|(def_id, def)| TypeAliasItem {
+                def_id: *def_id,
+                def,
+            })
+            .collect();
+        type_alias_items.sort_by_key(|i| i.def_id.value());
+        for item in &type_alias_items {
+            ty_to_sym.insert(item.def_id, DiskSymbolIndex(next_idx));
+            symbol_index.insert_ty(item.def_id, next_idx);
+            next_idx += 1;
+        }
+
         let total_syms = next_idx as usize;
 
         // ルートモジュールのシンボルインデックス
@@ -462,7 +490,13 @@ impl DepMetadata {
         }
 
         // top-level fn を所属モジュールに登録
-        for item in &top_fn_items {
+        //
+        // 無名関数を持ち上げた関数は名前で引けてはならないので載せない
+        // (シンボルとしては書き出す。依存元の単相化が `.biwamir` 越しに参照するため)。
+        for item in top_fn_items
+            .iter()
+            .filter(|item| !hir.lambdas.contains(&item.val_def_id))
+        {
             let mod_id = item.name.span.module();
             if let Some(ms) = source_holder.mods.get(&mod_id)
                 && let Some(&sym) = val_to_sym.get(&item.val_def_id)
@@ -478,6 +512,16 @@ impl DepMetadata {
             let mod_id = item.def.name.span.module();
             if let Some(ms) = source_holder.mods.get(&mod_id)
                 && let Some(&sym) = trait_to_sym.get(&item.def_id)
+            {
+                mod_children.entry(ms.modu.clone()).or_default().push(sym);
+            }
+        }
+
+        // type alias を所属モジュールに登録
+        for item in &type_alias_items {
+            let mod_id = item.def.name.span.module();
+            if let Some(ms) = source_holder.mods.get(&mod_id)
+                && let Some(&sym) = ty_to_sym.get(&item.def_id)
             {
                 mod_children.entry(ms.modu.clone()).or_default().push(sym);
             }
@@ -857,7 +901,7 @@ impl DepMetadata {
         // --- top-level fn ボディ ---
         for item in &top_fn_items {
             let fn_sym = val_to_sym.get(&item.val_def_id).map(|s| s.0).unwrap_or(0);
-            let fn_data = impl_encode_fn_data(
+            let mut fn_data = impl_encode_fn_data(
                 item.name,
                 item.signature,
                 item.impl_genargs,
@@ -874,6 +918,7 @@ impl DepMetadata {
                 fn_sym,
                 &mut symbol_index,
             );
+            fn_data.is_scene = u32::from(item.is_scene);
             let body = SymbolBody::Fn(fn_data);
             push_body(
                 &mut body_builder,
@@ -1070,6 +1115,67 @@ impl DepMetadata {
                 &mut sym_hdrs,
                 &mut cache,
                 DiskSymbolKind::TraitImpl,
+                body,
+            );
+        }
+
+        // --- type alias ボディ ---
+        for item in &type_alias_items {
+            let alias_sym = ty_to_sym.get(&item.def_id).map(|s| s.0).unwrap_or(0);
+            let gen_ord: HashMap<GenDefId, u32> = item
+                .def
+                .genargs
+                .iter()
+                .enumerate()
+                .map(|(i, gid)| (*gid, i as u32))
+                .collect();
+            for (gid, ord) in &gen_ord {
+                symbol_index.insert_ty_genarg(*gid, alias_sym, *ord);
+            }
+            let empty_loc_gen: HashMap<LocalGenDefId, u32> = HashMap::new();
+
+            let name_str = interner.get_str(&item.def.name.id).unwrap_or("");
+            let disk_name = strings.push(name_str);
+            let name_span = impl_to_disk_span(&item.def.name.span, &mod_to_file_idx);
+
+            // HIR はエイリアスのジェネリック引数の名前を持たないので空文字列 (struct と同じ)。
+            let empty_name = strings.push("");
+            let disk_genargs = DiskVec(
+                item.def
+                    .genargs
+                    .iter()
+                    .map(|_| DiskGenArg {
+                        name: empty_name,
+                        name_span: DiskSpan {
+                            file: DiskFileIndex(0),
+                            begin: 0,
+                            end: 0,
+                        },
+                        bounds: DiskVec(Vec::new()),
+                    })
+                    .collect(),
+            );
+
+            let right = impl_encode_ty(
+                &item.def.right,
+                &ty_to_sym,
+                &gen_ord,
+                &empty_loc_gen,
+                &mod_to_file_idx,
+                &mut ext_syms,
+            );
+
+            let body = SymbolBody::TypeAlias(format::DiskTypeAliasData {
+                name: disk_name,
+                name_span,
+                genargs: disk_genargs,
+                right,
+            });
+            push_body(
+                &mut body_builder,
+                &mut sym_hdrs,
+                &mut cache,
+                DiskSymbolKind::TypeAlias,
                 body,
             );
         }
@@ -1463,6 +1569,12 @@ impl DepMetadata {
                         self.svh_ty(&mut h, &f.ty);
                     }
                 }
+                SymbolBody::TypeAlias(d) => {
+                    h.write_str("type-alias");
+                    self.svh_name(&mut h, d.name, &d.name_span);
+                    self.svh_genargs(&mut h, &d.genargs.0);
+                    self.svh_ty(&mut h, &d.right);
+                }
                 SymbolBody::NativeTypeAlias(d) => {
                     h.write_str("native-type-alias");
                     self.svh_name(&mut h, d.name, &d.name_span);
@@ -1489,6 +1601,7 @@ impl DepMetadata {
                         self.svh_ty(&mut h, t);
                     }
                     h.write_u32(d.has_self);
+                    h.write_u32(d.is_scene);
                     h.write_usize(d.trait_of.0.len());
                     for t in &d.trait_of.0 {
                         self.svh_ty(&mut h, t);
@@ -1630,6 +1743,7 @@ impl DepMetadata {
             SymbolBody::Struct(d) => (d.name, d.name_span),
             SymbolBody::Fn(d) => (d.name, d.name_span),
             SymbolBody::NativeTypeAlias(d) => (d.name, d.name_span),
+            SymbolBody::TypeAlias(d) => (d.name, d.name_span),
             SymbolBody::Mod(d) => (d.name, d.name_span),
             SymbolBody::Enum(d) => (d.name, d.name_span),
             SymbolBody::Variant(d) => (d.name, d.name_span),
@@ -1722,6 +1836,57 @@ impl DepMetadata {
         };
         let sig = self.impl_disk_fn_to_signature(sym_idx, fn_data, pkg_id, None, interner);
         Some(sig)
+    }
+
+    /// このパッケージが公開している型エイリアスを `(TyDefId, 定義)` として列挙する。
+    ///
+    /// 依存元は HIR の段で、自パッケージのエイリアスと同じように右辺に展開する。
+    /// 右辺は書き出す時点で展開済みなので、他のエイリアスを含まない。
+    pub fn ext_type_aliases(
+        &self,
+        pkg_id: biwac_base::PackageId,
+        interner: &mut biwac_base::IdentInterner,
+    ) -> Vec<(biwac_span::TyDefId, biwac_hir::TypeAliasDef)> {
+        use biwac_span::{DefId, GenDefId, PackageLocalDefId, Span, TyDefId};
+
+        let mut out = Vec::new();
+        for sym_idx in 0..self.sym_hdrs.len() {
+            let Ok(SymbolBody::TypeAlias(data)) = self.get_symbol_body(sym_idx) else {
+                continue;
+            };
+            let sym_idx = sym_idx as u32;
+            // 右辺の `Gen` は struct のメンバと同じく (所属シンボル, 序数) で指す。
+            let genargs: Vec<GenDefId> = (0..data.genargs.0.len())
+                .map(|i| {
+                    GenDefId::new(DefId::new(
+                        pkg_id,
+                        PackageLocalDefId::new(ext_gen_id(sym_idx, i as u32)),
+                    ))
+                })
+                .collect();
+            let right = self.impl_disk_ty_to_ty(&data.right, pkg_id, Some(sym_idx), None);
+            let name_id = interner.get_or_insert(self.get_str(data.name).unwrap_or(""));
+            out.push((
+                TyDefId::new(DefId::new(pkg_id, PackageLocalDefId::new(sym_idx))),
+                biwac_hir::TypeAliasDef {
+                    name: biwac_hir::Ident {
+                        id: name_id,
+                        span: Span::dummy(),
+                    },
+                    genargs,
+                    right,
+                },
+            ));
+        }
+        out
+    }
+
+    /// そのシンボルが scene か。
+    pub fn is_scene(&self, sym_idx: u32) -> bool {
+        matches!(
+            self.get_symbol_body(sym_idx as usize),
+            Ok(SymbolBody::Fn(d)) if d.is_scene != 0
+        )
     }
 
     /// 関連関数・メソッドの impl self 型を復元する。
@@ -2355,45 +2520,53 @@ impl DepMetadata {
             })
             .collect();
 
-        // 引数を変換 (self 引数は FnSignature.args には含まない)
-        let args: Vec<FnArgDecl> = fn_data
-            .args
-            .0
-            .iter()
-            .enumerate()
-            .map(|(i, a)| {
-                let name_str = self.get_str(a.name).unwrap_or("");
-                let name_id = interner.get_or_insert(name_str);
-                let ty = self.impl_disk_ty_to_ty(&a.ty, pkg_id, gen_owner_sym, Some(fn_sym_idx));
-                FnArgDecl {
+        // 引数を変換。`.biwameta` は `self` を引数として書かないので、
+        // メソッドなら先頭に `self` (型は impl の対象型) を足す。
+        let self_arg = if fn_data.has_self != 0 {
+            self.impl_decode_impl_self_ty(fn_data, fn_sym_idx, pkg_id)
+                .map(|ty| FnArgDecl {
                     id: Ident {
-                        id: name_id,
+                        id: biwac_base::InternedIdent::SELF,
                         span: Span::dummy(),
                     },
                     ty,
-                    // var_id は外部 fn の型推論では使われないためダミー値を使用
-                    var_id: VarId::new(i as u32 + 1),
-                }
-            })
-            .collect();
+                    var_id: VarId::SELF_VARIABLE,
+                })
+        } else {
+            None
+        };
+        let explicit_args = fn_data.args.0.iter().enumerate().map(|(i, a)| {
+            let name_str = self.get_str(a.name).unwrap_or("");
+            let name_id = interner.get_or_insert(name_str);
+            let ty = self.impl_disk_ty_to_ty(&a.ty, pkg_id, gen_owner_sym, Some(fn_sym_idx));
+            FnArgDecl {
+                id: Ident {
+                    id: name_id,
+                    span: Span::dummy(),
+                },
+                ty,
+                // var_id は外部 fn の型推論では使われないためダミー値を使用
+                var_id: VarId::new(i as u32 + 1),
+            }
+        });
+        // `self` の型が引けなければ (壊れたメタデータ)、`self` の無いものとして扱う。
+        // `has_self` と `args` の先頭が食い違わないようにするため。
+        let has_self = self_arg.is_some();
+        let args: Vec<FnArgDecl> = self_arg.into_iter().chain(explicit_args).collect();
 
         let rty = self.impl_disk_ty_to_ty(&fn_data.rty, pkg_id, gen_owner_sym, Some(fn_sym_idx));
 
         FnSignature {
-            args,
-            // メソッドなら impl の self 型を入れる。トップレベル関数なら None になる。
+            // メソッドなら先頭の `self` の型は impl の self 型である。
             //
             // メソッド呼び出しの単一化はレシーバを第 1 引数として含めるので、
-            // ここが空だと impl ブロックのジェネリック引数がレシーバから決まらず、
+            // ここが無いと impl ブロックのジェネリック引数がレシーバから決まらず、
             // 戻り値が `Self` のメソッドで型変数が解けないまま残る
             // (単相化に必要な割り当てが記録されず、MIR の符号化まで漏れる)。
             // レシーバを取るかは `has_self` に記録してある。
             // `impl_self_ty` は関連関数にも入るので、それだけでは区別できない。
-            self_ty: if fn_data.has_self != 0 {
-                self.impl_decode_impl_self_ty(fn_data, fn_sym_idx, pkg_id)
-            } else {
-                None
-            },
+            args,
+            has_self,
             impl_self_ty: self.impl_decode_impl_self_ty(fn_data, fn_sym_idx, pkg_id),
             rty,
             genargs,
@@ -2972,9 +3145,11 @@ fn impl_encode_fn_data(
             .collect(),
     );
 
+    // `self` は書かない。レシーバを取るかは `has_self` に書き、
+    // 型は `impl_self_ty` と同じなので読み込みで復元する。
     let disk_args = DiskVec(
         signature
-            .args
+            .explicit_args()
             .iter()
             .map(|arg| {
                 let arg_name_str = interner.get_str(&arg.id.id).unwrap_or("");
@@ -3014,7 +3189,7 @@ fn impl_encode_fn_data(
     );
 
     format::DiskFnData {
-        has_self: u32::from(signature.self_ty.is_some()),
+        has_self: u32::from(signature.has_self),
         trait_of: DiskVec(
             trait_of
                 .map(|ty| {
@@ -3032,5 +3207,7 @@ fn impl_encode_fn_data(
         rty,
         impl_self_ty: disk_impl_self_ty,
         host_export: DiskVec(host_export.map(|n| strings.push(n)).into_iter().collect()),
+        // scene かは呼ぶ側 (トップレベル関数の書き出し) が書き込む。
+        is_scene: 0,
     }
 }

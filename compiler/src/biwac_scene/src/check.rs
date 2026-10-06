@@ -158,12 +158,12 @@ fn check_signature(
         })
     };
 
-    if sig.self_ty.is_some() {
+    if sig.has_self {
         push(SignatureProblem::HasReceiver);
     }
 
-    if sig.args.len() == expected_args.len() {
-        for (index, (arg, expected)) in sig.args.iter().zip(expected_args).enumerate() {
+    if sig.explicit_args().len() == expected_args.len() {
+        for (index, (arg, expected)) in sig.explicit_args().iter().zip(expected_args).enumerate() {
             if is_contract_ty(&arg.ty, *expected, contract_ty) == Some(false) {
                 push(SignatureProblem::ArgType {
                     index,
@@ -173,7 +173,7 @@ fn check_signature(
         }
     } else {
         push(SignatureProblem::ArgCount {
-            found: sig.args.len(),
+            found: sig.explicit_args().len(),
             expected: expected_args.len(),
         });
     }

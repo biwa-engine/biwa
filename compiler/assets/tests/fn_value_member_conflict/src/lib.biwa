@@ -1,0 +1,25 @@
+// 関数型の struct のメンバは、型の関連アイテムと同じ名前にできない。
+//
+// そうでないと `b.on_click(..)` がメンバ (関数型) の値の呼び出しかメソッドかが決まらない。
+// 名前解決のエラー (`StructMemberNameConflict`) にならなければならない。
+// 型エイリアス越しの関数型 (`on_key: Handler`) も同じ。
+//
+// 関数型でないメンバ (`label`) はゲッターと同じ名前でよい。
+
+type Handler = fn(Int);
+
+struct Button {
+  label: Int,
+  on_click: fn(Int),
+  on_key: Handler,
+}
+
+impl Button {
+  fn label(self) -> Int {
+    self.label
+  }
+
+  fn on_click(self, x: Int) {}
+
+  fn on_key(self, x: Int) {}
+}

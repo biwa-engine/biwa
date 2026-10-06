@@ -18,7 +18,7 @@ use super::codec::{DiskDecode, DiskEncode, DiskVec, impl_u32_newtype_codec};
 use crate::error::DepMetadataError;
 
 pub const BIWAC_DEPENDENCY_METADATA_MAGIC: &[u8; 4] = b"bwmt";
-pub const BIWAC_DEPENDENCY_METADATA_FORMAT_VERSION: u32 = 11;
+pub const BIWAC_DEPENDENCY_METADATA_FORMAT_VERSION: u32 = 12;
 
 // --- インデックス / オフセット型 ---
 
@@ -71,6 +71,11 @@ pub enum DiskSymbolKind {
     /// 対象の型が別パッケージのこともあるので、
     /// 型のシンボルからは辿れない。読む側はシンボル表を走査して集める。
     TraitImpl = 8,
+    /// 型エイリアス (`type IntFn = fn(Int) -> Int;`)。
+    ///
+    /// 依存元は名前解決でこれを型として引き、HIR の段で右辺に展開する。
+    /// 右辺は書き出す時点で展開済み (他のエイリアスを含まない)。
+    TypeAlias = 9,
 }
 
 impl TryFrom<u32> for DiskSymbolKind {
@@ -86,6 +91,7 @@ impl TryFrom<u32> for DiskSymbolKind {
             6 => Ok(Self::Trait),
             7 => Ok(Self::TraitAssoc),
             8 => Ok(Self::TraitImpl),
+            9 => Ok(Self::TypeAlias),
             _ => Err(DepMetadataError::UnknownSymbolKind(v)),
         }
     }
@@ -517,6 +523,11 @@ pub struct DiskFnData {
     /// `trait_of` と同じく、0 個か 1 個で `Option` を表す。
     /// 付いているかどうかはヘッダの [`SYMBOL_FLAG_HOST_EXPORT`] にも立つ。
     pub host_export: DiskVec<DiskStringOffset>,
+    /// scene か。scene なら 1。
+    ///
+    /// scene はまだ関数型の値にできず (TypeScript では generator function で呼び方が違う)、
+    /// 依存元が値にしようとしたら型エラーにするのに使う。
+    pub is_scene: u32,
 }
 
 impl DiskDecode for DiskFnData {
@@ -544,6 +555,8 @@ impl DiskDecode for DiskFnData {
         pos += n;
         let (host_export, n) = DiskVec::<DiskStringOffset>::decode(&bytes[pos..])?;
         pos += n;
+        let (is_scene, n) = u32::decode(&bytes[pos..])?;
+        pos += n;
         Ok((
             Self {
                 name,
@@ -557,6 +570,7 @@ impl DiskDecode for DiskFnData {
                 has_self,
                 trait_of,
                 host_export,
+                is_scene,
             },
             pos,
         ))
@@ -576,6 +590,7 @@ impl DiskEncode for DiskFnData {
         self.has_self.encode(buf);
         self.trait_of.encode(buf);
         self.host_export.encode(buf);
+        self.is_scene.encode(buf);
     }
 }
 
@@ -775,6 +790,50 @@ impl DiskEncode for DiskStructData {
         self.genargs.encode(buf);
         self.members.encode(buf);
         self.assoc_symbols.encode(buf);
+    }
+}
+
+// --- DiskTypeAliasData ---
+
+#[derive(Debug)]
+pub struct DiskTypeAliasData {
+    pub name: DiskStringOffset,
+    pub name_span: DiskSpan,
+    /// ジェネリック引数。右辺の `Gen` は (このシンボル, 序数) で指す (struct と同じ)。
+    pub genargs: DiskVec<DiskGenArg>,
+    /// 右辺。展開済みで、他のエイリアスを含まない。
+    pub right: DiskTy,
+}
+
+impl DiskDecode for DiskTypeAliasData {
+    fn decode(bytes: &[u8]) -> Result<(Self, usize), DepMetadataError> {
+        let mut pos = 0;
+        let (name, n) = DiskStringOffset::decode(&bytes[pos..])?;
+        pos += n;
+        let (name_span, n) = DiskSpan::decode(&bytes[pos..])?;
+        pos += n;
+        let (genargs, n) = DiskVec::<DiskGenArg>::decode(&bytes[pos..])?;
+        pos += n;
+        let (right, n) = DiskTy::decode(&bytes[pos..])?;
+        pos += n;
+        Ok((
+            Self {
+                name,
+                name_span,
+                genargs,
+                right,
+            },
+            pos,
+        ))
+    }
+}
+
+impl DiskEncode for DiskTypeAliasData {
+    fn encode(&self, buf: &mut Vec<u8>) {
+        self.name.encode(buf);
+        self.name_span.encode(buf);
+        self.genargs.encode(buf);
+        self.right.encode(buf);
     }
 }
 

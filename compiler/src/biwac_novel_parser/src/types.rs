@@ -75,6 +75,8 @@ impl<'src> NovelSourceStream<'src> {
                         span: path.span(),
                         val: TypReprVal::Defined(DefTyp { path, genargs }),
                     })
+                } else if let NCodeTkKind::KwFn = t.kind {
+                    self.consume_fn_type_representation()
                 } else {
                     Err(NovelParseError::InvalidToken {
                         expecteds: vec![
@@ -82,6 +84,7 @@ impl<'src> NovelSourceStream<'src> {
                             NCodeTkKindName::KwInt,
                             NCodeTkKindName::KwBool,
                             NCodeTkKindName::Ident,
+                            NCodeTkKindName::KwFn,
                         ],
 
                         found: Box::new(t.to_owned().clone()),
@@ -99,6 +102,50 @@ impl<'src> NovelSourceStream<'src> {
                 span: self.span_from(idx, 1),
             }),
         }
+    }
+
+    /// 関数型 `fn(A, B) -> C` / `fn(A)` を読む (通常のパーサーの同名の関数と同じ規則)。
+    /// 型の中に量化子は持てないので、`fn` の直後には `(` を要求する。
+    fn consume_fn_type_representation(&mut self) -> Result<TypRepr, NovelParseError> {
+        let begin = self
+            .must_consume_next(vec![NCodeTkKindName::KwFn])?
+            .span
+            .clone();
+        let _ = self.must_consume_next(vec![NCodeTkKindName::MarkLPare])?;
+
+        let mut args = Vec::new();
+        let mut end = loop {
+            if let NCodeTokenOption::Some(t) = self.peek_token()?
+                && let NCodeTkKind::MarkRPare = t.kind
+            {
+                break self
+                    .must_consume_next(vec![NCodeTkKindName::MarkRPare])?
+                    .span
+                    .clone();
+            }
+            args.push(self.consume_type_representaion()?);
+            let t = self
+                .must_consume_next(vec![NCodeTkKindName::MarkComma, NCodeTkKindName::MarkRPare])?;
+            if let NCodeTkKind::MarkRPare = t.kind {
+                break t.span.clone();
+            }
+        };
+
+        let rty = if let NCodeTokenOption::Some(t) = self.peek_token()?
+            && let NCodeTkKind::MarkArrow = t.kind
+        {
+            self.must_consume_next(vec![NCodeTkKindName::MarkArrow])?;
+            let rty = self.consume_type_representaion()?;
+            end = rty.span.clone();
+            Some(Box::new(rty))
+        } else {
+            None
+        };
+
+        Ok(TypRepr {
+            val: TypReprVal::Fn(biwac_ast::FnTyp { args, rty }),
+            span: biwac_span::Span::merge(&begin, &end),
+        })
     }
 
     /// Optionaly consumes tokens and parses to get generic arguments.

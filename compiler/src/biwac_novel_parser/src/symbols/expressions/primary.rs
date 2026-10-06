@@ -1,8 +1,10 @@
+use std::cell::OnceCell;
+
 use biwac_span::Span;
 
 use biwac_ast::{
-    BoolLiteral, Exprs, FloatLiteral, FnCall, Ident, IntegerLiteral, Literal, Primary,
-    StringLiteral, StructLiteral, Variable,
+    BoolLiteral, Exprs, FloatLiteral, FnLiteral, FnLiteralArg, Ident, IntegerLiteral, Literal,
+    Primary, StringLiteral, StructLiteral, Variable,
 };
 
 use crate::{
@@ -74,16 +76,9 @@ impl<'src> NovelSourceStream<'src> {
                 let begin = t.span.clone();
                 let path = self.consume_qualified_identifier()?;
 
+                // 直後の `(` は後置演算子 (呼び出し) として読む。
                 if let NCodeTokenOption::Some(t2) = self.peek_token()? {
-                    if let NCodeTkKind::MarkLPare = t2.kind {
-                        let (args, span) = self.consume_arguments()?;
-
-                        Ok(Exprs::Primary(Primary::FnCall(FnCall {
-                            path,
-                            args,
-                            span: Span::merge(&begin, &span),
-                        })))
-                    } else if let NCodeTkKind::MarkLBrace = t2.kind
+                    if let NCodeTkKind::MarkLBrace = t2.kind
                         && self.struct_literal_allowed()
                     {
                         let (members, span) = self.consume_struct_members()?;
@@ -110,11 +105,79 @@ impl<'src> NovelSourceStream<'src> {
 
                 Ok(expr)
             }
+            NCodeTkKind::KwFn => Ok(Exprs::Primary(Primary::FnLiteral(
+                self.consume_fn_literal()?,
+            ))),
             _ => Err(NovelParseError::InvalidLineEnd {
                 expecteds: vec![NCodeTkKindName::Ident, NCodeTkKindName::LiteralInteger],
                 span: t.span,
             }),
         }
+    }
+
+    /// 無名関数 `fn ( <引数> ,* ) ( -> <型> )? { <式> }`。
+    ///
+    /// scene のコードは行単位で、本体に文を並べる形は書けない。
+    /// 本体は式 1 つだけである (通常のコードでは文も書ける)。
+    fn consume_fn_literal(&mut self) -> Result<FnLiteral, NovelParseError> {
+        let begin = self
+            .must_consume_next(vec![NCodeTkKindName::KwFn])?
+            .span
+            .clone();
+        let _ = self.must_consume_next(vec![NCodeTkKindName::MarkLPare])?;
+
+        let mut args = Vec::new();
+        loop {
+            if let NCodeTokenOption::Some(t) = self.peek_token()?
+                && let NCodeTkKind::MarkRPare = t.kind
+            {
+                self.next_token()?;
+                break;
+            }
+            let id = self.consume_identifier()?;
+            let typ = if let NCodeTokenOption::Some(t) = self.peek_token()?
+                && let NCodeTkKind::MarkColon = t.kind
+            {
+                self.next_token()?;
+                Some(self.consume_type_representaion()?)
+            } else {
+                None
+            };
+            args.push(FnLiteralArg {
+                id,
+                typ,
+                var_id: OnceCell::new(),
+            });
+            let t = self
+                .must_consume_next(vec![NCodeTkKindName::MarkComma, NCodeTkKindName::MarkRPare])?;
+            if let NCodeTkKind::MarkRPare = t.kind {
+                break;
+            }
+        }
+
+        let rtype = if let NCodeTokenOption::Some(t) = self.peek_token()?
+            && let NCodeTkKind::MarkArrow = t.kind
+        {
+            self.next_token()?;
+            Some(self.consume_type_representaion()?)
+        } else {
+            None
+        };
+
+        let _ = self.must_consume_next(vec![NCodeTkKindName::MarkLBrace])?;
+        let expr = self.consume_delimited_expression()?;
+        let end = self
+            .must_consume_next(vec![NCodeTkKindName::MarkRBrace])?
+            .span
+            .clone();
+
+        Ok(FnLiteral {
+            args,
+            rtype,
+            stmts: Vec::new(),
+            expr: Some(Box::new(expr)),
+            span: Span::merge(&begin, &end),
+        })
     }
 
     pub(super) fn consume_arguments(&mut self) -> Result<(Vec<Exprs>, Span), NovelParseError> {

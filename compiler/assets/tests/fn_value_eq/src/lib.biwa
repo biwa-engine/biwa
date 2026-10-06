@@ -1,0 +1,26 @@
+// 関数型の値どうしの `==` / `!=` は型エラー。
+//
+// `x == x` の時点では `x` の型はまだ型変数 (`s` は `Slot[?]`) で、
+// 後の `takes_fn_slot(s)` で関数型に決まる。比較の検査を推論の最後に回さないと
+// ここがすり抜ける (`InvalidBinaryOperationForType` にならなければならない)。
+
+enum Slot[T] {
+  Empty,
+  Full(T),
+}
+
+fn add_one(x: Int) -> Int {
+  x + 1
+}
+
+fn takes_fn_slot(s: Slot[fn(Int) -> Int]) {}
+
+fn compare_later() -> Bool {
+  let s = Slot::Empty;
+  let same = match s {
+    Slot::Full(x) => x == x,
+    Slot::Empty => FALSE,
+  };
+  takes_fn_slot(s);
+  same
+}

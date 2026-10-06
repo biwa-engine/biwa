@@ -1,0 +1,8 @@
+// 依存パッケージの scene もまだ値にできない。型エラー (`SceneAsValue`) にならなければならない。
+//
+// scene かどうかは `.biwameta` に書かれている (自パッケージの scene と同じ扱いにするため)。
+
+fn take() -> Int {
+  let s = fn_lib::lib_scene;
+  0
+}

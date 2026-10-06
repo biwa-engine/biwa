@@ -10,7 +10,7 @@
 //! この関数はその `Pkg` の AST を直接読むだけでよい。
 //!
 //! 以前は `Hir` から分類していたが、`Hir` は複数セグメントパスの
-//! 「最後のセグメント以外」の解決結果を保持しないうえ、`FnCall`/`StructLiteral`
+//! 「最後のセグメント以外」の解決結果を保持しないうえ、呼び出し/`StructLiteral`
 //! の呼び出し先・型名の正確な span も持たない (呼び出し式全体の span しかない)。
 //! そのため一度 lower し直した AST と span で突き合わせるハックが必要だったが、
 //! `Pkg` の AST に直接 `resolved_id` が残るようになったことで、そのハックは
@@ -30,14 +30,15 @@
 //! # メソッド呼び出しの分類について
 //!
 //! `.foo()` がどのメソッドを指すかは名前解決の範囲外で、型推論
-//! (`biwac_type_inferrer`) が `biwac_hir::MethodCall::target` を埋めて
+//! (`biwac_type_inferrer`) が `biwac_hir::Call::target` を埋めて
 //! 初めて決まる。これは `biwac_ast` 側には対応する field が無い
-//! (`biwac_ast::MethodCall` に `target` は無い) ので、`classify` (この
+//! (`biwac_ast` の呼び出し `x.foo()` は単にメンバアクセスの呼び出しで、
+//! 解決先を持たない) ので、`classify` (この
 //! ファイルの AST ベースの関数) では扱えない。型推論後に呼ぶ
 //! [`classify_resolved_methods`] が `Hir` を直接辿って埋める。
-//! `MethodCall::method: Ident` はそのメソッド名の識別子自身の span を
-//! そのまま持っている (元の AST の `Ident::from(mc.method.clone())` を
-//! 素通ししているだけ) ので、`FnCall`/`StructLiteral` のときのような
+//! 呼び先の `MemberAccess::member: Ident` はそのメソッド名の識別子自身の span を
+//! そのまま持っている (元の AST の識別子を素通ししているだけ) ので、
+//! パス/`StructLiteral` のときのような
 //! span 突き合わせは要らない。
 
 use std::collections::HashSet;
@@ -139,6 +140,14 @@ fn classify_typ_repr(t: &TypRepr, out: &mut Vec<Classification>) {
                 for g in genargs {
                     classify_typ_repr(g, out);
                 }
+            }
+        }
+        TypReprVal::Fn(fn_typ) => {
+            for a in &fn_typ.args {
+                classify_typ_repr(a, out);
+            }
+            if let Some(rty) = &fn_typ.rty {
+                classify_typ_repr(rty, out);
             }
         }
     }
@@ -434,19 +443,28 @@ fn classify_primary(p: &Primary, param_ids: &HashSet<VarId>, out: &mut Vec<Class
         }
         Primary::Literal(_) => {}
         Primary::Variable(Variable::Path(path)) => classify_path(path, param_ids, out),
+        // 無名関数の引数も「引数」として色を付ける。
+        Primary::FnLiteral(f) => {
+            for arg in &f.args {
+                if let Some(typ) = &arg.typ {
+                    classify_typ_repr(typ, out);
+                }
+            }
+            if let Some(rtype) = &f.rtype {
+                classify_typ_repr(rtype, out);
+            }
+            let mut inner = param_ids.clone();
+            inner.extend(f.args.iter().filter_map(|a| a.var_id.get().copied()));
+            let expr = f.expr.as_deref().cloned();
+            classify_body(&f.stmts, &expr, &inner, out);
+        }
         Primary::Variable(Variable::SelfVar(span)) => {
             push(out, span.clone(), ResolvedKind::Parameter);
         }
-        Primary::FnCall(f) => {
-            classify_path(&f.path, param_ids, out);
-            for a in &f.args {
-                classify_exprs(a, param_ids, out);
-            }
-        }
         Primary::MemberAccess(m) => classify_exprs(&m.left, param_ids, out),
-        Primary::MethodCall(m) => {
-            classify_exprs(&m.left, param_ids, out);
-            for a in &m.args {
+        Primary::Call(c) => {
+            classify_exprs(&c.callee, param_ids, out);
+            for a in &c.args {
                 classify_exprs(a, param_ids, out);
             }
         }
@@ -612,19 +630,26 @@ fn walk_hir_primary(p: &biwac_hir::Primary, doc_mod_id: ModId, out: &mut Vec<Cla
         }
         P::Literal(_) => {}
         P::Variable(_) => {}
-        P::FnCall(f) => {
-            for a in &f.args {
-                walk_hir_expr(a, doc_mod_id, out);
+        P::MemberAccess(m) => walk_hir_expr(&m.left, doc_mod_id, out),
+        P::Lambda(l) => {
+            for s in &l.stmts {
+                walk_hir_stmt(s, doc_mod_id, out);
+            }
+            if let Some(e) = &l.expr {
+                walk_hir_expr(e, doc_mod_id, out);
             }
         }
-        P::MemberAccess(m) => walk_hir_expr(&m.left, doc_mod_id, out),
-        P::MethodCall(m) => {
-            walk_hir_expr(&m.left, doc_mod_id, out);
-            for a in &m.args {
+        P::Call(c) => {
+            walk_hir_expr(&c.callee, doc_mod_id, out);
+            for a in &c.args {
                 walk_hir_expr(a, doc_mod_id, out);
             }
-            if m.target.get().is_some() && m.method.span.module() == doc_mod_id {
-                push(out, m.method.span.clone(), ResolvedKind::Method);
+            // メソッド呼び出し (`x.foo()`) なら、メソッド名に印を付ける。
+            if let Some(biwac_hir::CallTarget::Method(_)) = c.target.get()
+                && let biwac_hir::ExprVal::Primary(P::MemberAccess(m)) = &c.callee.expr
+                && m.member.span.module() == doc_mod_id
+            {
+                push(out, m.member.span.clone(), ResolvedKind::Method);
             }
         }
         P::IfExpr(i) => {

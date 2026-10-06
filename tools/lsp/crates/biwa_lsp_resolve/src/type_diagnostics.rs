@@ -182,6 +182,45 @@ fn to_diagnostic(report: &TyErrorReport, interner: &IdentInterner) -> Option<(Sp
             ))
         }
 
+        TyError::NotCallable { ty } => Some((
+            ty.span.clone(),
+            format!(
+                "`{}` is not a function and cannot be called.",
+                names.render(&ty.kind)
+            ),
+        )),
+
+        TyError::TraitItemAsValue { span } => Some((
+            span.clone(),
+            "A trait item reached through a generic type cannot be used as a value yet."
+                .to_string(),
+        )),
+
+        TyError::BoundMethodAsValue { ty, method } => {
+            let name = ident_str(interner, &method.id);
+            let ty = names.render(&ty.kind);
+            Some((
+                method.span.clone(),
+                format!(
+                    "The method `{name}` cannot be used as a value together with its receiver; use `{ty}::{name}`."
+                ),
+            ))
+        }
+
+        TyError::NotAMethod { ty, method } => {
+            let name = ident_str(interner, &method.id);
+            let ty = names.render(&ty.kind);
+            Some((
+                method.span.clone(),
+                format!("`{name}` is not a method of `{ty}`; call it as `{ty}::{name}(..)`."),
+            ))
+        }
+
+        TyError::SceneAsValue { span } => Some((
+            span.clone(),
+            "A scene cannot be used as a value yet.".to_string(),
+        )),
+
         TyError::ReturnTypeRequired { rty } => {
             let ty = names.render(&rty.kind);
             Some((rty.span.clone(), format!("This function must return `{ty}`.")))

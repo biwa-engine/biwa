@@ -1,6 +1,7 @@
 use std::collections::{HashMap, hash_map::Entry};
 
 use biwac_ast::{ArgDecl, RetTypRepr};
+use biwac_hir::TyKind;
 
 use crate::{
     ResolveError, ResolveErrorHandler,
@@ -11,7 +12,7 @@ use crate::{
             module_level::ModuleResolveCtx, trait_def_level::TraitDefResolveCtx,
             ty_def_level::TyDefResolveCtx,
         },
-        def_collector::DefCollector,
+        def_collector::{DefCollector, expand_alias_ty},
     },
 };
 
@@ -118,12 +119,9 @@ impl NameResolve<ModuleResolveCtx<'_>> for biwac_ast::StructDef {
         ctx: &ModuleResolveCtx<'_>,
         def_collector: &mut DefCollector,
     ) -> Result<(), Vec<ResolveError>> {
-        let ctx = TyDefResolveCtx::new(
-            ctx,
-            &self.genargs,
-            def_collector,
-            *self.def_id.get().unwrap(),
-        )?;
+        let module_ctx = ctx;
+        let def_id = *self.def_id.get().unwrap();
+        let ctx = TyDefResolveCtx::new(ctx, &self.genargs, def_collector, def_id)?;
         let mut members = HashMap::new();
         let mut errors = Vec::new();
 
@@ -141,7 +139,27 @@ impl NameResolve<ModuleResolveCtx<'_>> for biwac_ast::StructDef {
                 }
             }
 
-            ctx.resolve_typ(typ).handle(&mut errors);
+            let resolved = ctx.resolve_typ(typ);
+
+            // 関数型のメンバは、型の関連アイテムと同じ名前にできない。
+            // `x.bar(..)` が「メンバ `bar` の値の呼び出し」か「メソッド `bar`」かを
+            // 一意に決めるためである。関数型でないメンバは呼び先になり得ないので、
+            // ゲッターやビルダーの形 (メンバ `width` とメソッド `width(self, ..)`) は書ける。
+            // 型エイリアス越しの関数型も見る (自パッケージのエイリアスだけ)。
+            if resolved.is_ok()
+                && let TyKind::Fn(_) = expand_alias_ty(
+                    &crate::lowering::ty_kind_from_typ_repr(typ, None),
+                    &def_collector.alias_defs,
+                )
+                && module_ctx.ty_has_assoc_item(def_id, ident.id)
+            {
+                errors.push(ResolveError::StructMemberNameConflict {
+                    name: ident.id,
+                    span: ident.span.clone(),
+                });
+            }
+
+            resolved.handle(&mut errors);
         }
 
         if errors.is_empty() {

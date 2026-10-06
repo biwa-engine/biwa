@@ -1,7 +1,7 @@
 use biwac_lexer::TkKind;
 use biwac_span::Span;
 
-use biwac_ast::{Exprs, MemberAccess, MethodCall, Primary};
+use biwac_ast::{CallExpr, Exprs, MemberAccess, Primary};
 
 use crate::{ParseError, TokenStream};
 
@@ -12,49 +12,40 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
         self.consume_postfix_after_expression(expr)
     }
 
+    /// 後置演算子 (`.` <identifier> と `(` <引数列> `)`) を左結合で読む。
+    ///
+    /// 呼び出しの形は `<式> ( <引数列> )` の 1 つだけで、呼び先が何かは構文では決めない。
+    /// `x.bar(a)` も「メンバアクセス `x.bar` の呼び出し」として読み、
+    /// メソッドかメンバ (関数型) の値かは型推論が決める
+    /// (`docs/function-as-the-first-class-type-impl-status.md` §7)。
     fn consume_postfix_after_expression(&mut self, expr: Exprs) -> Result<Exprs, ParseError<'src>> {
-        if let Some(t) = self.peek() {
-            match t.kind {
-                TkKind::MarkDot => {
-                    self.next();
+        let Some(t) = self.peek() else {
+            return Ok(expr);
+        };
 
-                    let mem_or_method = self.consume_identifier()?;
+        match t.kind {
+            TkKind::MarkDot => {
+                self.next();
 
-                    if let Some(t) = self.peek() {
-                        if let TkKind::MarkLPare = t.kind {
-                            let (args, span) = self.consume_arguments()?;
+                let member = self.consume_identifier()?;
 
-                            // メソッド呼び出しの後ろにも後置演算子が続きうる。
-                            // `a.b().c()` や `a.b().c` を切らないよう、ここでも再帰する。
-                            Ok(self.consume_postfix_after_expression(Exprs::Primary(
-                                Primary::MethodCall(MethodCall {
-                                    span: Span::merge(&expr.span(), &span),
-                                    left: Box::new(expr),
-                                    method: mem_or_method,
-                                    args,
-                                }),
-                            ))?)
-                        } else {
-                            Ok(self.consume_postfix_after_expression(Exprs::Primary(
-                                Primary::MemberAccess(MemberAccess {
-                                    left: Box::new(expr),
-                                    member: mem_or_method.clone(),
-                                }),
-                            ))?)
-                        }
-                    } else {
-                        Ok(self.consume_postfix_after_expression(Exprs::Primary(
-                            Primary::MemberAccess(MemberAccess {
-                                left: Box::new(expr),
-                                member: mem_or_method.clone(),
-                            }),
-                        ))?)
-                    }
-                }
-                _ => Ok(expr),
+                self.consume_postfix_after_expression(Exprs::Primary(Primary::MemberAccess(
+                    MemberAccess {
+                        left: Box::new(expr),
+                        member,
+                    },
+                )))
             }
-        } else {
-            Ok(expr)
+            TkKind::MarkLPare => {
+                let (args, span) = self.consume_arguments()?;
+
+                self.consume_postfix_after_expression(Exprs::Primary(Primary::Call(CallExpr {
+                    span: Span::merge(&expr.span(), &span),
+                    callee: Box::new(expr),
+                    args,
+                })))
+            }
+            _ => Ok(expr),
         }
     }
 }

@@ -197,6 +197,15 @@ impl<'a> TyCtx<'a> {
             .map(|(_, d)| d)
     }
 
+    /// その値が scene か。外部パッケージなら `.biwameta` の印を見る。
+    pub(super) fn is_scene(&self, def_id: &ValDefId) -> bool {
+        if def_id.pkg().is_self() {
+            return matches!(self.hir.vals.get(def_id), Some(ValDefKind::NovelScene(_)));
+        }
+        self.find_ext_dep(def_id.pkg())
+            .is_some_and(|dep| dep.is_scene(def_id.local_idx()))
+    }
+
     /// DefinedTyImpl を返す内部ヘルパー。外部パッケージは遅延ロードしてキャッシュする。
     /// 外部 struct をロードした際、assoc fn の ValDefId も assoc_val_map に登録する。
     /// 返す参照のライフタイムは &self と同じ。
@@ -605,10 +614,18 @@ pub struct FnTyCtx<'tctx, 'a> {
     /// 呼び出しの時点では割り当てがまだ型変数のことがあるので、
     /// 本体を推論し終えてからまとめて解く。
     pub(super) obligations: Vec<Obligation>,
+    /// 演算子を適用した時点では型がまだ型変数だった、という宿題。
+    ///
+    /// 演算子が受け付ける型は単一化の後で検査するが、その時点で型変数のままなら
+    /// 通すしかない。後で関数型などに決まったものを見逃さないよう、
+    /// 本体を推論し終えてからもう一度検査する (`check_deferred_operators`)。
+    pub(super) deferred_operators: Vec<DeferredOperator>,
     next_tv: usize,
     pub(super) substitutions: HashMap<TyVar, Ty>,
     pub(super) vars: HashMap<VarId, Ty>,
     pub(super) exprs: HashMap<ExprId, Ty>,
+    /// `let x: T = ..` に書かれた型。初期化式の型と突き合わせる。
+    pub(super) annotations: HashMap<VarId, Ty>,
 
     /// 呼び出し式ごとの、呼び先のジェネリック型への割り当て。
     /// [`biwac_hir::FnDef::call_genargs`] にそのまま渡る。
@@ -625,6 +642,22 @@ pub(super) struct Obligation {
     pub(super) cond: biwac_hir::TraitCond,
     /// 呼び出し位置。診断の下線に使う。
     pub(super) span: biwac_span::Span,
+}
+
+/// 演算子の型の検査の宿題。
+pub(super) struct DeferredOperator {
+    /// 演算子を適用した型。本体を推論し終えてから `resolve_ty` を通す。
+    pub(super) ty: Ty,
+    pub(super) op: OperatorKind,
+    /// 演算子の式。診断に使う。
+    pub(super) expr: biwac_hir::Expr,
+}
+
+/// 型を検査する演算子。
+#[derive(Clone, Copy)]
+pub(super) enum OperatorKind {
+    Binary(biwac_ast::BinOperator),
+    Unary(biwac_ast::UnOperator),
 }
 
 // ある関数に対して型推論をした結果得られる型情報
@@ -646,10 +679,12 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
             module,
             genarg_bounds,
             obligations: Vec::new(),
+            deferred_operators: Vec::new(),
             next_tv: 0,
             substitutions: HashMap::new(),
             vars: HashMap::new(),
             exprs: HashMap::new(),
+            annotations: HashMap::new(),
             call_genargs: HashMap::new(),
             rty,
         }

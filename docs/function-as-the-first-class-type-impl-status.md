@@ -1,0 +1,628 @@
+# 関数を第一級の型にする: 現状と実装の方針
+
+目指す形は `docs/function-as-the-first-class-type.md`。ここには調査で分かった現状と、実装のステップを書く。
+
+## 1. 現状 (2026-10 時点のコード)
+
+> ステップ 1 (§4) の実装で変わった点は §4 の「ステップ 1 の実装状況」にまとめた。
+> 下の表は**ステップ 1 を始める前**の調査結果で、比較のために残している。
+
+### 1.1 全体
+
+| 段                     | 状況                                                                                                                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| AST / パーサー         | 型表現 (`TypReprVal`) は `Primitive` / `Defined` / `SelfTyp` だけで、**関数型を書けない**。関数リテラルの式も無い                                                                    |
+| HIR の型               | `TyKind::Fn(FnTy { args, rty, genargs })` はある。型推論の内部 (呼び出しの単一化 `call_unify`)、`.biwameta` (`DiskTy`)、MIR のエンコード (`TyEntry::Fn`)、単相化の置換で扱われている |
+| 関数型の局所変数を呼ぶ | HIR `Callee::Var` → 型推論 (`call_unify` で関数型と照合) → MIR `Callee::Indirect` まで経路がある。ただし関数型を書けないので、今は実際にこの形の値を作れない                         |
+| 関数名を値として使う   | 名前解決・lowering は `Variable { id: VarIdKind::Global(..) }` を作るが、型推論は `todo!()`、MIR の構築は `unreachable!("global variables are not supported yet")`                   |
+| wasm codegen           | `Callee::Indirect` は `UnsupportedType("an indirect call")`。関数型の値の wasm の型 (`funcref` / `ref $ft`) への対応付けも無い                                                       |
+| TypeScript codegen     | 未確認 (tier 2)                                                                                                                                                                      |
+
+### 1.2 呼び出しの構文 (確認点 1)
+
+**`.` <identifier> `(` .. `)` は無条件でメソッド呼び出しになっている。**
+
+- `biwac_parser` の `consume_postfix_after_expression`: `.` の後の識別子に `(` が続けば
+  `Primary::MethodCall { left, method, args }`、続かなければ `Primary::MemberAccess`。
+- 関数呼び出し `Primary::FnCall { path, args }` は**呼び先がパス (名前) のときだけ**作られる
+  (`consume_primary_expression` で、パスの直後に `(` が来たとき)。
+- 任意の式の後ろに `(` が続く形 (`(f)(x)`、`make()(x)`、`self.handler(e)` を関数呼び出しとして読むこと) は
+  後置演算子として扱われていない。scene の中のコード (novel パーサー、別実装) も同じ構造。
+- HIR の `Callee` は `Var(VarId)` / `Fn(ValDefId)` / `AssocFn { def_id, self_ty }` / `TraitAssoc` で、
+  「任意の式」を呼び先に取る形は無い (`Callee::Var` の型推論には `TODO: callee を式に対応させる` とある)。
+
+### 1.3 struct のメンバと関連アイテムの名前 (確認点 1)
+
+- メンバ名は**名前ツリーに載っていない**。名前ツリー (`TyNameTree.children`) に載るのは
+  関連関数・メソッド・enum のバリアントで、メンバは HIR の `StructDef.members` に別に持つ。
+- そのため今は、メンバ `bar` とメソッド `bar` が同じ型にあっても**衝突検査はされず、共存できる**
+  (`x.bar` はメンバ、`x.bar()` はメソッド、と構文で分かれているため)。
+- **決定 (ステップ 2 で改訂)**: **関数型の**メンバの名前は、型の関連アイテムと同じ名前にできない (衝突を検知する)。
+  これで `x.bar(..)` は、型推論で `x` の型が分かった時点で「メンバ `bar` (関数型) の値の呼び出し」か
+  「メソッド `bar` の呼び出し」かに一意に決まる。
+  - 当初は全メンバを一意にする予定だったが、実装してみると std の UI 要素のビルダー (`game/ui.biwa`、
+    メンバ `width` / `id` / `padding_top` などとメソッド `width(self, ..)` など) だけで 106 件、
+    ほかに `Duration { ms }` と `Duration::ms`、fixture のゲッター (`Pair.x` と `fn x(self)`) が衝突した。
+    関数型でないメンバは呼び先になり得ず曖昧さを生まないので、検査を関数型のメンバに絞った。
+
+### 1.4 関連アイテムの同名が許される場合 (規則と現状のずれ)
+
+名前ツリーは 1 つの名前空間だが、「名前だけで見たとき」重複しているように見えても許される例外が 2 つある。
+
+- **固有の impl** (`impl Type[T1, T2, ..] { .. }`): 具体の `T1, T2, ..` の組が衝突し得ない impl どうしなら、
+  同名の関連アイテムを持てる (例: `impl Holder[Int, Int] { fn describe }` と `impl Holder[Bool, Bool] { fn describe }`)。
+  ただし固有の impl は**その型が定義されたのと同じパッケージ**でなければならない。
+  型パラメータに自パッケージの型が含まれていても、他パッケージの型への固有の impl は認めない。
+- **trait impl** (`impl Type: Trait[T1, T2, ..] { .. }`): 具体の `T1, T2, ..` の組が衝突し得ないなら同じ型に
+  複数実装でき、結果として同名の関連アイテムを持ち得る。ただし `Type` か `Trait` のいずれかが自パッケージで
+  定義されていなければならない (Rust の orphan rule を簡略化し、許容範囲を狭めたもの)。
+
+現状の実装 (`biwac_name_resolver/src/resolving/def_collector.rs`) との対応:
+
+| 規則                                                                                  | 現状                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 固有の impl: 具体の型引数の組が衝突し得なければ同名可                                 | **実装済み** (`register_assoc` が `is_duplicated_for_impl_genarg` で判定。型エイリアス越しの impl もエイリアスを展開して判定する)                                                                                                                            |
+| 固有の impl: 型と同じパッケージに限る                                                 | **未実装** (`// TODO: foreign impl エラー` のまま)。しかも外部パッケージの型への固有の impl は、名前ツリーに型が無いので**黙って読み飛ばされる** (エラーにならず、項目も登録されない)                                                                        |
+| trait impl: 孤児則 (型か trait のどちらかが自パッケージ)                              | **実装済み** (`ForeignTraitImpl`)                                                                                                                                                                                                                            |
+| trait impl: trait の型引数 (`Trait[T1, ..]`) が衝突し得なければ同じ型に複数実装できる | **未対応**。重複判定 (`DuplicatedTraitImpl`) のキーは (型, trait) で、比べているのは**型の側の型引数だけ**。trait の型引数は見ていないので、`impl Foo: Tr[Int]` と `impl Foo: Tr[Bool]` は重複として弾かれる                                                 |
+| trait impl: 結果として同名の関連アイテムを持ち得る                                    | **未対応** (現状はより厳しい)。`TraitImplNameConflict` は、trait impl の項目名が「その型の固有の関連名」か「同じ型の別の trait impl (trait を問わない) の項目名」と同じなら弾く。曖昧さを解く構文 (`[T as Gyao]::guee()`) が無いため、という理由で入れたもの |
+
+(前の版でこの節は「trait impl の項目名の衝突を `TraitImplNameConflict` で弾いていて、1 つの型の名前を一意に保つ方針と揃う」
+と書いていたが、上の規則に照らすと不正確だった。trait impl の項目は本来「名前だけで見たとき」重複しうる例外である。)
+
+### 1.5 メソッドと関連関数の扱い (確認点 1)
+
+> ステップ 4 で統一した (§9)。下はステップ 4 の前の調査結果。
+
+- AST: impl ブロックは `assoc_fns` / `methods` / `native_assoc_fns` / `native_methods` を**別々のリスト**で持つ。
+- HIR: `FnSignature` に `self_ty: Option<Ty>` (メソッドなら `Some`) と、`args` (**`self` を含まない**)。
+  `.biwameta` の `DiskFnData` も `has_self` で区別する。
+- 型推論: `Callee::AssocFn` (パスでの呼び出し) は呼び先の型を `fn(args..) -> rty` で組み立て、
+  **`self` を引数に含めない**。そのため今は `Foo::bar(x, a)` のようにメソッドをパスで呼べない
+  (引数の数が合わない)。
+- **`x.bar(a)` の呼び先は型推論が決める**。名前解決と型推論の bootstrap を避けるため、biwac は名前解決を
+  できるだけ先に済ませる設計で、`<式> . <identifier>` だけは `<式>` の型を知らないと解けないので
+  型推論の段 (`get_method_target`) に任せている。型推論が `MethodCall.target` (`MethodTarget::Direct` /
+  `MethodTarget::Trait`) を埋める。
+- **MIR 以降では、メソッドはすでに「第一引数が `self` の関数」として扱われている**。MIR の構築は
+  `MethodCall` を「受け手を第一引数にした呼び出し」(`Callee::Direct` / `Callee::TraitAssoc`) に落とし、
+  MIR のメソッドの本体も `self` を引数に含む (`Body.arg_count` は `self` を含む)。単相化・codegen はこの上に乗っている。
+- つまり `self` を引数から外しているのは **HIR のシグニチャ (`FnSignature.args`) と型推論** だけである。
+- 「第一引数が `self` の関連関数」への統一で変わる所:
+  - `FnSignature` は `self` を第一引数として `args` に含め、「`self` を取るか」はフラグで持つ
+    (`.biwameta` の `has_self` はそのまま使える)。
+  - `Callee::AssocFn` で `Foo::bar(x, a)` が呼べる (`self` も普通の引数として単一化)。`Foo::bar` を値として使える。
+  - `x.bar(a)` の糖衣を剥がすのは**型推論で呼び先が決まった後**。HIR への lowering の時点では `x` の型が
+    分からないので剥がせない (前の版で「lowering で剥がす」と書いたのは誤り)。型推論は今と同じく
+    `MethodCall` のまま呼び先を決め、MIR の構築が今と同じく受け手を第一引数にした呼び出しに落とす。
+  - trait の宣言と実装の突き合わせ・メソッド解決は「`self` を取るか」のフラグで今と同じ判定ができる。
+  - 影響範囲: 主に AST → HIR のシグニチャ → 型推論 (`self` を含む引数列の扱い、メソッド解決で
+    受け手の型と第一引数を照合する所) → `.biwameta` の読み書き。MIR 以降はほぼそのまま。
+  - `x.bar` (受け手付き) を値にするのは実質クロージャなのでエラー。値にできるのは `Foo::bar` だけ。
+
+### 1.6 関数値の等価比較 (確認点 2)
+
+- `==` / `!=` は型推論で、両辺を単一化したあと型が `Int` / `Float` / `Bool` (と型変数) のときだけ通す
+  (それ以外は `InvalidBinaryOperationForType`)。**関数型は既に弾かれる**。
+- (ステップ 3 で解消。§8) ただし**単一化の時点で型が型変数のままなら通している** (`TyKind::Infer(_)` を許している)。
+  後で関数型に決まった場合にすり抜ける。関数の等価比較を確実に型エラーにするには、
+  比較の型の検査を関数の推論の最後 (型変数が解けた後) に回す必要がある
+  (`solve_obligations` のような宿題に積む)。これは関数に限らず、struct などでも同じすり抜けがある。
+
+### 1.7 scene (確認点 3)
+
+- scene は `ValDefKind::NovelScene` で、シグニチャ `(Game[..]) -> Game[..]` は `biwac_scene` が検査する。
+- TypeScript では generator function として出力され、呼ぶ側は `yield*` で委譲する
+  (`AstBuildCtx::is_scene`)。wasm では普通の関数 (中断はスレッドを止めて行う)。
+- `type Scene[S] = fn(Game[S]) -> Game[S]` として扱うには: 関数型の型エイリアス (ジェネリック) と、
+  scene を関数型の値として扱えること (wasm では素直、TS では generator と普通の関数の呼び方の違いが問題) が要る。
+  当面は wasm を優先し、TS は後回しにできる。
+
+### 1.8 モジュールレベルの変数 (確認点 5)
+
+- AST には `Globals::VarDecl` (モジュール直下の `let`) があるが、def collection は `None` (TODO)、
+  名前解決は `todo!()` で**未実装**。`const` はまだ無い。
+- したがって今、無名関数から参照できる「グローバルな静的なもの」は関数・関連関数 (と enum のバリアントの構築) だけ。
+
+## 2. 確認点 4: rank 1 と rank 2 の違い
+
+**rank は「型の中のどこに `∀` (型引数の量化) が現れるか」で決まる。**
+
+- **rank 0 (単相)**: 量化子が無い。`fn(Int) -> Int`、`Vec[Int]`。
+- **rank 1**: 量化子が**型の一番外側にだけ**ある。名前付きのジェネリックな定義の型がこれ。
+  `fn id[T](x: T) -> T` の型は `∀T. fn(T) -> T`。
+  これを値として使うと、**使う場所で `T` が決まり** rank 0 の値になる:
+  `apply(id, 1)` で `apply(f: fn(Int) -> Int, x: Int)` に渡すとき、`id` は `fn(Int) -> Int` として渡る
+  (`id[Int]` の実体を渡すのと同じ)。単相化と相性が良い (使われた型ごとに実体を作るだけ)。
+  ジェネリックな定義の型引数を使った関数型 (`fn map[T, U](v: Vec[T], f: fn(T) -> U) -> Vec[U]`) も rank 1。
+  `∀T U. fn(Vec[T], fn(T) -> U) -> Vec[U]` で、量化子は一番外側にしかない。
+- **rank 2**: 量化子が**関数型の引数の位置の中**に現れる。
+  `fn use_twice(f: fn[T](T) -> T) { f(1); f(TRUE) }` の `f` の型は `∀T. fn(T) -> T` で、
+  `use_twice` の型は `fn(∀T. fn(T) -> T)` になる。`use_twice` の中で `f` を 2 つの型で使えるのは、
+  `f` 自体が多相のまま渡ってくるから。呼ぶ側は「どの型でも使える関数」を渡さなければならない。
+  - 単相化では、`use_twice` をコンパイルする時点で `f` の中身が分からないので、
+    `f` の `Int` 版と `Bool` 版を作れない。実現するには辞書 (型の情報) を実行時に渡すなどの別の仕組みが要る。
+- **rank 3 以上**: rank 2 の型をさらに引数に取る、のように入れ子が深くなるもの。
+- 関連: 多相な値を struct のメンバや変数・コンテナの要素に入れる
+  (`struct S { f: fn[T](T) -> T }`、`Vec[fn[T](T) -> T]`) のも、型の内側に量化子が現れるので rank 1 の範囲を超える
+  (非叙述的 (impredicative) 多相)。これも許さない。
+
+**rank 2 は多くの場合 rank 1 に書き直せる**: `fn use_twice(f: fn[T](T) -> T)` は
+`fn use_twice[T](f: fn(T) -> T)` とすれば rank 1 になる (量化子が `use_twice` の宣言に移る)。
+違いは「`use_twice` の中で `f` を複数の型で使えるか」(rank 2 なら使える、rank 1 では `T` は呼ぶ側が 1 つに決める) で、
+基本的にはこれで困らない。
+
+**結論 (決定事項と同じ)**: 量化子はジェネリックな定義 (fn・struct・enum・impl・型エイリアス) の宣言にだけ現れ、
+**型の中 (`fn[T](..)` という型表現) には現れない**。関数を値にするときは使う場所で型引数が決まる。
+issue #7 の型表現 `fn[T, U](Int, T) -> U` はこの範囲を超えるので書けないことにする。
+ジェネリックな**無名関数** `fn[T](x: T) { .. }` は当面考えない (無名関数は型引数を持たない)。
+
+## 3. 確認点 5: 無名関数が参照できるものの考慮漏れ
+
+方針 (グローバルな静的なものだけ) に対して、気にしておくべき点:
+
+- **囲む関数のジェネリック引数 (型)**: 値ではなく型なので「捕捉」ではないが、無名関数の型注釈や本体の型に
+  `T` が出てくることはある (`fn foo[T](x: T) { let g = fn(y: T) { .. }; }`)。
+  無名関数をトップレベルの関数に持ち上げるとき、**囲む関数のジェネリック引数 (と trait の制限) を引き継いだ
+  ジェネリック関数**にする必要がある。単相化では、囲む関数の実体ごとに無名関数の実体ができる。
+- **`self` と `Self`**: `self` は局所変数なので参照不可 (エラー)。`Self` (型) は上と同じく型なので使ってよい
+  (impl のジェネリック引数も引き継ぐ)。
+- **scene の中**: scene の引数 `g` や `#let` の変数も局所変数なので参照不可。
+  scene の中で無名関数を書けるようにするか (novel パーサー側の構文) も決める必要がある。
+- **入れ子の無名関数**: 内側の無名関数から外側の無名関数の引数は参照できない (それも局所変数)。
+- **再帰**: 無名関数は名前が無いので自分を呼べない。必要なら名前付きの関数を書く (問題にはならない)。
+- **将来のモジュールレベルの変数 (`Globals::VarDecl`)**: 可変なグローバル変数を参照できるようにすると、
+  捕捉ではないが「無名関数の結果がグローバルな状態に依存する」ことになる。参照してよいのは `const` だけにするのが
+  方針と揃う。`const` の初期化式に関数値 (無名関数を含む) を書けるかも決める必要がある。
+- **lang item / コンパイラが展開するもの**: scene の novel statement は lang item の関数呼び出しに展開される
+  (`content_push(game, ..)`)。無名関数の中に scene の構文は書けないので影響しない。
+- **native**: `[[native]]` の関数は値として使えてよいか (wasm では import した関数や `.wat` 直書きの関数への
+  参照になる)。値として使う場合は、関数参照を作れる形で出力する必要がある。
+
+## 4. 実装のステップ (方針)
+
+各ステップで wasm (tier 1) を優先し、TypeScript (tier 2) の追従は後回しにしてよい。
+
+1. **関数型を書ける・名前付き関数を値として渡して呼べる** — **実装済み** (下の「ステップ 1 の実装状況」)
+   - パーサー (通常・novel の両方) に型表現 `fn(A, B) -> C` / `fn(A)`。量化子付き (`fn[T](..)`) は書けない。
+   - 型推論: `VarIdKind::Global` (関数名を値として使う) を、使う場所で型引数を決める形で型付けする。
+   - MIR: 関数への参照を作る operand (定数)。単相化はその実体を作り、到達性の根に含める。
+   - wasm: 関数型を `(ref $ft)` (型付き関数参照) に対応させ、`ref.func` と `call_ref` (または table と
+     `call_indirect`) で呼ぶ。関数参照を struct のフィールドに持てること。
+   - 関数型を引数・戻り値・struct のメンバに書けること。関数型の値を変数・メンバから呼べること。
+2. **呼び出しを「式 + 引数列」に一般化** — **実装済み** (§6)
+   - パーサー: 後置演算子として `(` を受け、任意の式を呼び先にできるようにする (`(f)(x)`、`make()(x)`)。
+   - 関数型の struct のメンバの名前を関連アイテムと衝突させない (名前解決で検知。§1.3 の改訂)。
+   - `x.bar(..)` は型推論で振り分ける: `x` の型のメンバ `bar` が関数型ならその値の呼び出し、なければメソッド。
+   - HIR の `Callee` に「任意の式」を足し、MIR では `Callee::Indirect` に落とす。
+3. **呼び出しを AST・HIR で 1 つの形にし、種類の分類を型推論に移す** — **実装済み** (§7)
+   - AST の `FnCall` / `MethodCall` を廃止して `Call { callee, args }` だけにする (第 1 段)。
+   - HIR も `Call { callee, args, target }` にし、型推論が呼び先の式の形と型から `CallTarget`
+     (`Static` / `TraitItem` / `Method` / `Value`) を決める。MIR 以降は今の `Direct` / `TraitAssoc` / `Indirect` のまま (第 2 段)。
+4. **関数値の等価比較を確実に型エラーにする** — **実装済み** (§8)
+   - `==` / `!=` の型の検査を関数の推論の最後に回す (型変数のまますり抜けている問題の解消)。
+5. **メソッドを「第一引数が `self` の関連関数」に統一** — **実装済み** (§9)
+   - `FnSignature.args` に `self` を含める + 「`self` を取るか」のフラグ。`Foo::bar(x, a)` で呼べる、
+     `Foo::bar` を値として使える。`x.bar(a)` の呼び先は今と同じく型推論が決め、MIR の構築が受け手を
+     第一引数にした呼び出しに落とす (MIR 以降は今もこの形なので、変更は主に HIR のシグニチャと型推論)。
+   - 他のステップと分けて行う。`x.bar` (受け手付き) を値にするのはエラー。
+6. **関数型を enum のペイロード・ジェネリックな型の引数に、外部パッケージをまたいで** — **実装済み** (§10)
+   - `.biwameta` / `.biwamir` で関数型と関数への参照を運ぶ。関数型の型エイリアス (ジェネリック含む) が機能する。
+7. **無名関数 (捕捉なし)** — **実装済み** (§11)
+   - パーサー (通常・novel) に関数リテラル。名前解決で局所変数の参照を検出してエラーにする。
+   - トップレベルの関数に持ち上げる (囲む定義のジェネリック引数・制限を引き継ぐ)。引数・戻り値の型推論。
+8. **関連アイテムの同名規則を設計どおりにする** (1.4 の表)
+   - 固有の impl を型と同じパッケージに限る (今は外部の型への固有の impl が黙って読み飛ばされている)。
+   - trait impl の重複判定で trait の型引数も見る。trait の型引数が衝突し得ない trait impl どうしの
+     同名の項目を許す (呼び出しの曖昧さの解き方と合わせて)。
+   - 関数を値にする話と独立なので、別の作業として切り出してもよい。
+9. **serialize の marker trait** (関数型を対象外にする) の設計。
+10. **scene を関数型として扱う** (`type Scene[S] = fn(Game[S]) -> Game[S]`)。
+11. **UI Phase3**: `Button.on_click` など、ホストから Biwa の関数を呼ぶ経路。
+
+## 5. ステップ 1 の実装状況
+
+### 5.1 段ごとの変更
+
+| 段                     | 変更                                                                                                                                                                                                                                         |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AST                    | `TypReprVal::Fn(FnTyp { args, rty })` を追加 (`rty: None` は戻り値が Void)。量化子は持たない                                                                                                                                                 |
+| パーサー (通常)        | `consume_fn_type_representation`: `fn` `(` 型,* `)` (`->` 型)?                                                                                                                                                                               |
+| パーサー (novel)       | キーワード `fn` (`NCodeTkKind::KwFn`) を足し、同じ規則で読む。scene の中の `#let f: fn(Int) -> Int = ..` が書ける                                                                                                                            |
+| 名前解決・lowering     | 型表現の中の型を再帰的に解決し、`TyKind::Fn(FnTy { genargs: [] })` に下ろす (struct の中なら `T` は `Gen`、関数の中なら `LocGen`)                                                                                                            |
+| 型推論                 | `VarIdKind::Global` を `infer_fn_value` で型付け。宣言されたジェネリック引数ごとに型変数を割り当てた関数型を返し、割り当ては呼び出しと同じく `call_genargs` に記録する (使う場所で型引数が決まる)。関数名への代入は `InvalidAssignOperation` |
+| 型推論 (`Callee::Var`) | 関数型の値の呼び出しは `call_unify` ではなく `unify` で照合する (下の 5.2)                                                                                                                                                                   |
+| MIR の構築             | 関数名の値は `Operand::Const(Const::FnDef(def_id, genargs))` (この定数は MIR に既にあった)。`Callee::Var` は従来どおり `Callee::Indirect`                                                                                                    |
+| 単相化                 | `Const::FnDef` を置き換えるときに参照先の実体を worklist に積む (既存)。`Callee::Indirect` を弾いていた `MonoError::IndirectCall` を削除                                                                                                     |
+| wasm                   | 下の 5.3                                                                                                                                                                                                                                     |
+| LSP                    | パーサー (`parse_type_repr`)・lowering (`lower_type_repr`)・意味的ハイライトの分類・型エラーの診断に関数型と新しいエラーを追加                                                                                                               |
+
+### 5.2 関数型の値の呼び出しは `unify` で照合する
+
+`Callee::Var` (関数型の局所変数の呼び出し) は以前 `call_unify` で照合していた。`call_unify` は
+callee 側の `LocGen` を「呼び先のジェネリック引数」として具体化するので、
+
+```biwa
+fn use_twice[T](f: fn(T) -> T, x: T) -> T { f(1) }
+```
+
+の `f(1)` で `T := Int` と割り当ててしまい、型エラーにならなかった。関数型の値は量化子を持たない (rank 1) ので、
+型の中の `LocGen` は**呼び出し元自身の**ジェネリック引数である。等しさだけを求める `unify` に変えた
+(fixture `fn_value_rank1`)。
+
+### 5.3 wasm での表現
+
+- 関数型 `fn(A) -> B` は `(ref null $F)`、`$F` は `(type $F (func (param A) (result B)))`。
+  null 許容にしたのは、struct のフィールドや local が既定値を持つ必要があるため (非 null の参照は既定値を持たない)。
+- 関数型の定義は struct / enum と**同じ再帰グループ** (`(rec ..)`) に置く (互いに参照しうるため)。
+  再帰グループの中の型はグループの外で同じ形に書いた型とは別物になる (iso-recursive な同一性) ので、
+  値として参照されうる関数はシグニチャに `(type $F)` を明示してその型を名乗らせる。
+- 関数型は **biwa の型**ごとに 1 つ作る。`fn(Int) -> Int` と `fn(Bool) -> Bool` は wasm では同じ形
+  (`i32 -> i32`) だが別の名前になる。各関数のシグニチャも biwa の型で引くので食い違わない。
+- 値は `ref.func $f` で作る。wasm は本体の外で宣言された関数にしか `ref.func` を許さないので、
+  参照した関数を `(elem declare func ..)` に並べる。
+- 呼び出しは引数を積んだあと関数参照を積んで `call_ref $F`。
+- 確認: fixture `fn_value` (`compiler/assets/tests/fn_value`) を wasm にビルドし、検証 (`wasmparser`) を通ること、
+  `ref.func` / `call_ref` / `(elem declare func` / 関数型のフィールドが出ることを `fn_value_wasm_output` で見ている。
+  実行は `~/test1` の scene 冒頭 (`fn_value_demo()` と `#let fv: fn(Int) -> Int = fv_double`) で確認した。
+
+### 5.4 できること (ステップ 1 の範囲)
+
+- 関数型を引数・戻り値・struct のメンバ (ジェネリックな struct を含む)・`let` の注釈に書ける。
+- 名前付きの関数、ジェネリックな関数 (`apply_twice(id, 7)`、`use_twice(id, TRUE)`)、
+  `self` を取らない関連関数 (`Holder::make`)、native の関数を値として渡せる。
+- 関数を返せる (`fn pick(first: Bool) -> fn(Int) -> Int`)。
+- 関数型の値を局所変数から呼べる (`f(x)`)。scene の埋め込み式 (`$fv(50)`) からも呼べる。
+
+### 5.5 まだできないこと・残した穴
+
+- ~~メンバを直接呼ぶ `self.run(x)`、`make()(x)` / `(f)(x)`~~ → ステップ 2 で実装 (§6)。
+- ~~**`self` を取るメソッドを値にする**のは型エラー `MethodAsValue`~~ → ステップ 4 で値にできるようになった (§9)。
+- **scene を値にする**のは型エラー `SceneAsValue` (ステップ 10)。外部パッケージの scene の素通りは
+  ステップ 6 で塞いだ (§10)。
+- ~~外部パッケージの関数を値にする / 関数型の型エイリアス~~ → ステップ 6 で確認・実装 (§10)。
+- **TypeScript (tier 2)** は未対応・未確認。関数名の値は HIR の `VarIdKind::Global` をマングルした名前に落ちるが、
+  ジェネリックな関数・scene (generator) の扱いは確認していない。
+- **使われない関数値の型引数が決まらない**場合 (`let f = id;` だけ) は `TypeNotInferable` になる (変数の型に型変数が残るため)。
+
+## 6. ステップ 2 の実装状況
+
+> ステップ 2.5 (§7) で AST・HIR の呼び出しの形を 1 つにしたので、下の表の `Primary::Call` / `Callee::Expr` /
+> `MethodTarget::Member` は §7 の `Call` / `CallTarget::Value` に置き換わった。規則 (何が何として呼ばれるか) は変わっていない。
+
+### 6.1 段ごとの変更
+
+| 段                     | 変更                                                                                                                                                                                                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AST                    | `Primary::Call(CallExpr { callee, args })` を追加。呼び先がパスなら従来どおり `Primary::FnCall`、`x.bar(..)` は従来どおり `Primary::MethodCall`                                                                                                                             |
+| パーサー (通常・novel) | 後置演算子の `(` を受ける (`consume_postfix_after_expression`)。後置なので左結合で、`.` と混ざってよい (`make()(1).value`、`Op::new(f).run(1)`)                                                                                                                             |
+| 名前解決               | 関数型のメンバの名前が型の関連アイテム (固有の impl の項目・自パッケージの trait impl の項目) と同じなら `StructMemberNameConflict`。自パッケージの型エイリアス越しの関数型 (`on_key: Handler`) も展開して見る                                                              |
+| HIR                    | `Callee::Expr(Box<Expr>)` (任意の式の呼び出し)、`MethodTarget::Member` (メンバの値の呼び出し) を追加                                                                                                                                                                        |
+| 型推論                 | `Callee::Var` / `Callee::Expr` / メンバの呼び出しを `infer_value_call` にまとめた (§5.2 の `unify` による照合)。`x.bar(..)` は `x` の型の struct に関数型のメンバ `bar` があれば `MethodTarget::Member`、無ければ従来のメソッド解決。関数型でない値を呼んだら `NotCallable` |
+| MIR の構築             | `Callee::Expr` は呼び先の式を**引数より先に**評価して `Callee::Indirect`。`MethodTarget::Member` はレシーバの場所にメンバの射影を付けた `Callee::Indirect(Operand::Place(..))` (レシーバは引数に含めない)                                                                   |
+| wasm                   | 変更なし (ステップ 1 の `call_ref` の上に乗る)                                                                                                                                                                                                                              |
+| TypeScript (tier 2)    | `Callee::Expr` は式をそのまま呼び先にし、メンバの呼び出しは `left.member(args)` を出す (未確認)                                                                                                                                                                             |
+| LSP                    | lowering が `make()(1)` を `Primary::Call` に下ろす (以前は「表現できない」とエラーにしていた)。分類と診断を追加                                                                                                                                                            |
+
+### 6.2 メンバの射影の型
+
+MIR のメンバの射影 (`PlaceElem::Field(name, ty)`) には型が要るが、型推論はメンバの型そのものを記録しない。
+メンバの関数型は単一化で引数と戻り値の型に一致しているので、MIR の構築が
+`fn(引数の式の型..) -> 呼び出し式の型` として組み立てる (biwa には暗黙の型変換が無いので一致する)。
+
+### 6.3 確認
+
+- fixture `fn_value`: `self.run(x)`、`m.f(9)` (ジェネリックな struct のメンバ)、`pick(FALSE)(4)`、`(make)(4).value`、
+  `Op::new(add_one).run(1)` (一時的な値のメンバ)、scene の `#let p = pick(TRUE)(n)`。
+- fixture `fn_value_member_conflict`: 関数型のメンバ `on_click` / エイリアス越しの `on_key` がメソッドと同名ならエラー、
+  関数型でないメンバ `label` はゲッターと同名でよい。
+- fixture `fn_value_not_callable`: `c.n(1)` (`n: Int`) は `NotCallable`。
+- パーサーの単体テスト (通常: `make()(1)(2)` / `(f)(1)` / `b.on_click(1)` が MethodCall のまま、
+  novel: `#let n = pick(TRUE)(1)`、`$name()(ことのは びわ)` の `(..)` は地の文のまま)。
+- `~/test1` の scene 冒頭で `op.run(..)` と `fv_pick(FALSE)(21)` の結果を表示して確認した。
+
+### 6.4 残した穴
+
+- 埋め込み式 `$f()(x)` は書けない (字句の段で最初の呼び出しの `)` で式が終わり、後ろは地の文になる)。
+  `$(f()(x))` と括弧で包めば書ける。
+- **他パッケージの trait impl** の項目と関数型のメンバの衝突は検知しない (メンバの型のパッケージでは見えないため)。
+  その場合 `x.bar(..)` は**メンバが優先**される。
+- 外部パッケージの型エイリアス越しの関数型のメンバは、衝突の検査で関数型と分からない (エイリアスを展開しないため)。
+
+## 7. ステップ 2.5: 呼び出しの一本化 (実装済み。結果は §7.5)
+
+### 7.1 動機
+
+ステップ 2 で `<式> ( <引数列> )` という一般の形が入ったので、構文としての `FnCall` (パスの呼び出し) と
+`MethodCall` (`.` 越しの呼び出し) は特殊形に過ぎなくなった。型推論の前 (呼び先が本当に関数か分からない段階) では
+これらを区別する理由が無いので廃止し、呼び出しの種類の判断を型推論の意味論的な分類に寄せる。
+MIR 以降は分類の結果に従って種類別の (効率の良い) コードを出す。
+
+### 7.2 調査で分かったこと
+
+- **型推論より前に呼び出しの種類を知る必要のある段は無い。** 名前解決は `FnCall` のパスも `Variable` のパスも
+  同じ `resolve_path` で解き、`MethodCall` は左辺と引数を解決するだけ。`.biwameta` は HIR の本体を持たず、
+  `.biwamir` は MIR なので形式は変わらない。区別を使っているのは型推論・MIR の構築・TypeScript・LSP だけ。
+- **HIR の `Callee` の細分 (`Fn` / `AssocFn{self_ty}` / `TraitAssoc{self_ty}` / `Var`) は「パスが何を指すか」の違い**で、
+  呼び出しの種類ではない。ただし今の HIR には値の位置でこれらを表す形が無い (`VarIdKind::Global(ValDefId)` は
+  `self_ty` を持たないので `CharacterBiwa::new` を値にするとエイリアスの型引数が落ちる。`T::guee` は値の位置では lowering がエラー)。
+  パスで指した値の式に `self_ty` を持たせれば、`Callee` の区別は呼び先の式の側に移せる。
+- **MIR の `Callee` はすでに意味による分類** (`Direct` / `TraitAssoc` / `Indirect`) なので、MIR 以降は変えなくてよい。
+- **型推論の静的な呼び出しが 3 箇所で重複している** (`Callee::Fn`・`Callee::AssocFn`・メソッドの `Direct`)。
+  違いは「呼び出し位置に書かれた型を第 1 引数に混ぜるか」「レシーバを第 1 引数に混ぜるか」だけ。
+- ついでに解消できるもの: §6.2 のメンバの型の組み立て直し (呼び先の `MemberAccess` が ExprId を持てば型推論の記録を使える)、
+  LSP の HIR の走査が `Callee::Expr` の中を歩いていない穴。
+
+### 7.3 形
+
+**AST** (第 1 段)
+
+- `Primary::FnCall` / `Primary::MethodCall` を廃止し、`Primary::Call(CallExpr { callee, args, span })` だけにする。
+  `f(x)` は `Call(Variable(path))`、`x.bar(a)` は `Call(MemberAccess(x, bar))`。
+- パーサーは呼び出しを後置演算子の `(` に一本化する (パスの直後の `(` の特別扱いをやめる)。
+  構造体リテラル `Path { .. }` は primary に残す。`Self::ident` は引数を必須とせずパスの値として読む。
+- 第 1 段では lowering が `Call` を今の HIR の `FnCall` (`Callee::*`) / `MethodCall` に振り分ける。型推論以降は無変更。
+
+**HIR** (第 2 段)
+
+- パスで指した値の式に `self_ty` を持たせる: `VarIdKind` を `Local(VarId)` / `Fn(ValDefId)` / `Assoc { def_id, self_ty }` /
+  `TraitAssoc { assoc, self_ty }` にする (`self_ty` は呼び出し位置に書かれた型。型エイリアスの展開も及ぶ)。
+- 呼び出しは `Primary::Call(Call { callee: Box<Expr>, args, span, target: OnceCell<CallTarget> })` だけにする。
+  `target` は型推論が埋める (今の `MethodCall.target` と同じ流儀。HIR を読む TypeScript・LSP も使える)。
+
+| `CallTarget`                                                    | 例                                 | MIR の `Callee`                                 |
+| --------------------------------------------------------------- | ---------------------------------- | ----------------------------------------------- |
+| `Static` (呼び先は `Fn` / `Assoc` のパスの値)                   | `foo(..)`、`Foo::new(..)`、scene   | `Direct`                                        |
+| `TraitItem` (呼び先は `TraitAssoc` のパスの値)                  | `T::guee(..)`                      | `TraitAssoc`                                    |
+| `Method(MethodTarget)` (受け手は呼び先の `MemberAccess` の左辺) | `x.bar(..)`                        | 受け手を第 1 引数にした `Direct` / `TraitAssoc` |
+| `Value`                                                         | 局所変数・関数型のメンバ・任意の式 | `Indirect` (呼び先を値として評価)               |
+
+- バリアントの構築 (`Color::Rgb(1, 2, 3)`) は今と同じく lowering で、呼び先がバリアントに解決された `Call` を `VariantCtor` にする。
+
+**型推論** (第 2 段)
+
+- `infer_call` が呼び先の式の形で振り分ける。パスの値なら静的な呼び出しとして型付けする (呼び先を値として推論しないので、
+  `MethodAsValue` / `SceneAsValue` は値の位置でだけ出る)。`MemberAccess` なら左辺を推論し、関数型のメンバなら `Value`、
+  そうでなければメソッド (ステップ 2 の規則)。それ以外は値の呼び出し。
+- 静的な呼び出しの 3 系統を `infer_static_call` 1 つにまとめる。`call_unify` などの細かい扱いは中身を変えずに移す。
+- `T::guee` を値として使うのは当面エラー (目標の md の未決事項)。呼び先の位置なら今どおり。
+
+**MIR の構築・TypeScript・LSP** (第 2 段)
+
+- `target` を見て上の表のとおりに落とす / 出し分ける。TypeScript の scene の `yield*` 判定は `Static` で見る。
+- LSP の lowering は「`IdentPath` の直後に `CallArgList`」の特別扱いが要らなくなる。メソッド名の分類は HIR の `target` が `Method` のときに付ける。
+
+### 7.4 進め方
+
+1. 第 1 段 (AST の一本化) を入れて全テスト・`~/test1` で確認する。
+2. 第 2 段 (HIR の一本化) を入れて同じく確認する。変更の前後で `.biwamir` が変わらないことも比べる。
+
+ステップ 4 (メソッドを関連関数に統一) の前に行う。ステップ 4 では `Foo::bar(x, a)` が「パスの値 + `Static`」として素直に入り、
+`Method` も「受け手を第 1 引数にした `Static`」に寄せられる見込み。
+
+### 7.5 実装の結果
+
+**第 1 段 (AST)**
+
+- AST の `FnCall` / `MethodCall` を削除し、呼び出しは `Primary::Call(CallExpr)` だけになった。
+  パーサー (通常・novel) は呼び出しを後置演算子の `(` だけで読み、`.` <identifier> は常にメンバアクセスになる。
+  `Self::ident` はパスの値として読む (`Self::new` を値にも書ける)。
+- 名前解決は `CallExpr` の呼び先と引数を解決するだけ (`FnCall` / `MethodCall` 専用の解決は削除)。
+- LSP の lowering は「`IdentPath` の直後に `CallArgList`」の特別扱いを削除し、CST の `.ident(args)` は
+  「メンバアクセスの呼び出し」に開く。
+- 確認: compiler / LSP の全テスト。fixture と `~/test1` の `.biwamir` / `.wat` が変更前と**バイト単位で一致**した。
+  `~/test1` は強制再ビルドして Playwright でも確認した。
+
+**第 2 段 (HIR)**
+
+- HIR の `FnCall` / `Callee` / `MethodCall` を削除し、`Primary::Call(Call { callee, args, span, target })` だけになった。
+  `VarIdKind` は `Local` / `Fn` / `Assoc { def_id, self_ty }` / `TraitAssoc { assoc, self_ty }`。
+  lowering で呼び先を分けるのはバリアントの構築だけになった。
+- 型推論: `infer_call` が呼び先の形で振り分ける (§7.3)。静的な呼び出し (関数・型を通した関連関数・実装の決まったメソッド) は
+  `infer_static_call` 1 つにまとめた (第 1 引数に混ぜるものを `StaticPrefix::{None, CallSiteSelfTy, Receiver}` で渡す)。
+  関数型のメンバの呼び出しでは、呼び先のメンバアクセスの型を型推論が記録するので、
+  MIR の構築はそれをそのまま使う (§6.2 の組み立て直しは無くなった)。
+- MIR の構築・TypeScript・LSP の HIR の走査は `Call::target` に従う。LSP の HIR の走査は呼び先の中も歩くようになった
+  (ステップ 2 の `Callee::Expr` の中を歩いていなかった穴が塞がった)。
+- 確認:
+  - compiler (106 件) / LSP (92 件) の全テスト。fixture と `~/test1` の `.biwamir` / `.wat` は**第 1 段の前とバイト単位で一致**した。
+  - TypeScript: HEAD (ステップ 2) のコンパイラと今のコンパイラで、関数・関連関数・型エイリアス越しの関連関数・メソッド・
+    ジェネリックな関数の呼び出しを含む小さなライブラリを出力し、宣言の並び順を除いて一致した
+    (TypeScript の生成は宣言を HashMap 順に出すので、並び順は実行ごとに変わる)。
+  - LSP のメソッド名の分類: `~/test1` の複製に `resolve_document` をかけ、メソッド名が分類され、関数型のメンバの呼び出し
+    (`op.run(..)` の `run`) はメソッドに分類されないことを確認した。
+
+**変わった振る舞い**
+
+- 型エイリアス越しの関連関数を値にしたとき (`let zero = IntTagged::zero;`)、エイリアスが書いた型引数で
+  impl ブロックの型引数が決まるようになった。HEAD では `TypeNotInferable` だった (fixture `fn_value`)。
+- `T::make` を値として使うと、名前解決の「識別子が無い」ではなく型エラー `TraitItemAsValue` になる。呼び出し `T::make()` は今どおり
+  (fixture `fn_value_trait_item`)。
+- 括弧は透過的なので `(x.bar)(1)` は `x.bar(1)` と同じに扱われる (`bar` が関数型のメンバならその値、そうでなければメソッド)。
+
+**見つかった既存の問題 (今回は直していない)**
+
+- LSP のパーサーは、ブロック末尾の `if .. else ..` を式ではなく文として扱う。コンパイラは式として扱うので、
+  `fn f(b: Bool) -> Int { if b { 1 } else { 2 } }` が LSP でだけ「This function must return ..」になり、型推論以降の分類も出ない。
+- TypeScript の生成は関数型の型注釈が `todo!()` で、関数型を書いたコードは TypeScript に出せない (ステップ 1 から tier 2 は未対応のまま)。
+  また scene を含むプログラムは、std の制限つきジェネリクスのため TypeScript では既存の段階で弾かれる。
+
+## 8. ステップ 3 の実装状況
+
+- 演算子の型の検査 (`check_operator_ty`) は、単一化の後の型がまだ型変数なら宿題 (`FnTyCtx::deferred_operators`) に積み、
+  関数の推論の最後 (制限の宿題を解いた後) に、解けた型で検査し直す (`check_deferred_operators`)。
+  それでも型変数のままなら、型がどこからも決まらなかったので後の `TypeNotInferable` が報告する。
+- 受け付ける型は今までどおり (`operator_accepts` にまとめた):
+  `+ - * / %`・単項 `-`・`< > <= >=` は `Int` / `Float`、`== !=` は `Int` / `Float` / `Bool`。
+  関数型 (と struct・enum など) の比較は `InvalidBinaryOperationForType` で、関数型の `==` / `!=` には
+  「function values cannot be compared」の注記を付ける。
+- 同じすり抜けは `==` / `!=` に限らず、比較・算術・単項 `-` にもあった (型変数のまま通して後で struct などに決まる)。
+  同じ仕組みでまとめて塞いだ。
+- 確認:
+  - fixture `fn_value_eq`: `match` の中の `x == x` の時点では `x` が型変数で、後の呼び出しで関数型に決まる。以前はすり抜け、今は型エラー。
+  - fixture `fn_value` の `compare_later`: 同じ形で後から `Int` に決まるものは通る。
+  - 全テスト。fixture (`fn_value` を除く) と `~/test1` の `.biwamir` / `.wat` は変わらない。`~/test1` は Playwright でも確認した。
+
+## 9. ステップ 4 の実装状況
+
+### 9.1 形
+
+- `FnSignature.args` は、メソッドなら**先頭が `self`** (名前 `self`、型は impl の対象型、`var_id` は `VarId::SELF_VARIABLE`)。
+  `self_ty: Option<Ty>` をやめて `has_self: bool` にした。
+  - `self_ty()` (メソッドなら `self` の型) と `explicit_args()` (`self` を除いた、括弧の中に書く引数) を用意した。
+    「第一引数は `self` だと分かっている」ことを使う所はこれらを使う。
+  - `as_ty()` は `self` を含む関数型 (`Foo::bar` の値の型 `fn(Foo, A) -> B`) になる。
+- AST はそのまま (impl ブロックは `methods` と `assoc_fns` を別に持ち、`MethodArgDeclList` は `self` を含まない)。
+  lowering (`build_fn_signature`) が `self` の位置 (`self_span`) を受け取り、第一引数として足す。
+- `.biwameta` の形式は変えていない。書き出しは `explicit_args()` と `has_self` を書き、
+  読み込みで `has_self` なら `impl_self_ty` を型にした `self` を先頭に足す。
+- MIR も変えていない (MIR は以前から `self` を第一引数として持っていた)。native の `NativeItem` は `self_ty` を別に持つので、
+  `self_ty()` と `explicit_args()` に分けて渡す。
+
+### 9.2 使う側の変更
+
+| 所                             | 変更                                                                                                                                                                           |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 型推論・静的な呼び出し         | シグニチャの引数がそのまま単一化の左辺になる。メソッド呼び出しは受け手を引数の先頭に足すだけ (以前は両側に足していた)                                                          |
+| 型推論・trait 越しの呼び出し   | 同上。`T::twice(x)` (trait のメソッドをパスで呼ぶ) も通る                                                                                                                      |
+| 型推論・関数の値               | メソッドも値にできる (`MethodAsValue` を削除)。`Mapper::map` の `T` は値を呼ぶときの受け手から決まる                                                                           |
+| 型推論・`x.bar(..)`            | `self` を取らない関連関数なら `NotAMethod` (以前は MIR に受け手が余分に渡り、wasm の検証で落ちうるまま通っていた)                                                              |
+| 型推論・`x.bar` (値)           | メンバが無く同名のメソッドがあれば `BoundMethodAsValue` (受け手付きの値は実質クロージャなので作れない。`Foo::bar` を使う)                                                      |
+| 本体の推論・MIR の構築         | `self` も普通の引数として扱う (別扱いの分岐を削除)                                                                                                                             |
+| trait の宣言と実装の突き合わせ | `has_self` を比べ、引数は `explicit_args()` だけを比べる。**`self` の型は比べない** (宣言の `Self` は実装の対象型そのもので、型エイリアスへの impl では表記が食い違いうるだけ) |
+| scene のシグニチャ検査         | `has_self` なら「受け手がある」と報告し、引数の数と型は `explicit_args()` で見る (同じ食い違いを二重に報告しない)                                                              |
+| TypeScript                     | 引数の名前の付け方が `self` と他の引数で違う (native では `self` という名前で受ける) ので、`self_ty()` と `explicit_args()` に分けて出す。出力は変わらない                     |
+
+### 9.3 確認
+
+- 全テスト (compiler 108 件・LSP 92 件)。
+- fixture (`fn_value` / `fn_value_method` を除く) と `~/test1` の std の `.biwamir` / `.wat` / `.biwameta` が変更の前とバイト単位で一致した。
+- TypeScript: HEAD (ステップ 3) のコンパイラと、メソッド・native のメソッド・関連関数を含むライブラリの出力が (宣言の並び順を除いて) 一致した。
+- fixture `fn_value`: `Op::exec(op, 1)` (メソッドをパスで呼ぶ)、`let exec = Op::exec;` (メソッドの値)、
+  `let map = Mapper::map; map(m, 1)` (ジェネリックな impl のメソッドの値)、`T::twice(x)` (trait のメソッドをパスで呼ぶ)。
+  wasm の検証まで通る。
+- fixture `fn_value_method` (`c.get` を値にする → `BoundMethodAsValue`。`Counter::get` は通る)、
+  `fn_value_not_a_method` (`h.make(1)` → `NotAMethod`)。
+- `~/test1`: 依存パッケージ (std) の native のメソッドをパスで呼び、値にする (`String::concat`) デモを scene 冒頭に表示して確認した
+  (`.biwameta` から `self` 付きのシグニチャを復元する経路と、native への関数参照の確認)。Playwright でも確認した。
+
+## 10. ステップ 6 の実装状況
+
+### 10.1 そのままで動いたもの
+
+- 関数型を enum のペイロードに持つ (`Run(fn(Int) -> Int)`)、ジェネリックな struct・enum の型引数にする
+  (`Boxed[fn(Int) -> Int]`、std の `Option[fn(Int) -> Int]`)。単相化の型の置換は関数型の中まで辿っていたので、変更は要らなかった。
+- 関数型は `.biwameta` (`DiskTy`) と `.biwamir` (`ty .. fn`) で既に運べていた。依存の関数のシグニチャ・struct のメンバ・
+  enum のペイロードの関数型、依存の関数への参照 (`Const::FnDef`)、依存のメソッドの値はそのまま通った。
+
+### 10.2 直したもの
+
+- **enum のバリアントのフィールドに型エイリアスが展開されていなかった** (`alias_expansion` が struct のメンバしか見ていなかった)。
+  関数型に限らず、エイリアスをペイロードに書くと `.biwameta` の書き出しでコンパイラが止まっていた。
+- **型エイリアスが `.biwameta` に載っていなかった**。依存の型エイリアス (`fn_lib::IntFn`、`fn_lib::Endo[T]`) を名前で引けなかった
+  (関数型に限らない)。
+  - シンボルの種類 `TypeAlias` (`DiskTypeAliasData { name, genargs, right }`) を足した。既存のシンボルの番号を動かさないよう、
+    シンボル表の末尾に置く。モジュールの子にも載せるので、依存元の名前解決は型として引ける。
+  - 右辺は**展開済み**で書く (自パッケージの `alias_expansion` がエイリアスの右辺も展開するようにした)。依存元は連鎖を辿らずに済む。
+  - 依存元は lowering の最後の `alias_expansion` で、自パッケージのエイリアスと一緒に依存のエイリアス (`ext_type_aliases`) も右辺に展開する。
+    右辺の `Gen` は struct のメンバと同じく (シンボル, 序数) で指す。
+- **外部パッケージの scene を値にしても型エラーにならなかった** (§5.5)。`DiskFnData` に `is_scene` を足し、
+  型推論の `SceneAsValue` の判定 (`TyCtx::is_scene`) が依存の scene も見るようにした。
+  TypeScript の生成の `is_scene` (scene の呼び出しに `yield*` を付けるか) も同じ穴があったので、同じ印を見るようにした (TypeScript では未確認)。
+- `.biwameta` の形式の版を 11 → 12 に上げた (`TypeAlias` と `is_scene`)。
+
+### 10.3 確認
+
+- fixture `fn_value` (自パッケージ): enum のペイロード・`Option[fn(Int) -> Int]`・ジェネリックな struct・
+  関数型の型エイリアス (ジェネリック含む) を足した。
+- fixture `fn_lib` (関数型を公開 API に持つライブラリ) と `fn_user` (それを使う playable): 依存の関数に自パッケージの関数を渡す、
+  依存の関数・メソッドを値にする、依存のジェネリックな関数・struct を関数型で実体化する、依存の struct の関数型のメンバを呼ぶ、
+  依存の enum のペイロードの関数を呼ぶ、依存の型エイリアス (ジェネリック含む) を使う (`fn_types_across_packages`)。
+- fixture `fn_user_scene`: 依存の scene を値にすると `SceneAsValue`。
+- **実行での確認**: `fn_value` と `fn_user` の `compute()` を `[[host_export]]` で export し、生成した wasm を Node (v24) で
+  ホスト関数を空の関数で埋めて実行した。`fn_value_compute` = 102、`fn_user_compute` = 62 で、各行のコメントから計算した期待値と一致した
+  (この実行はテストには組み込んでいない。wasm を実行する仕組みがテストに無いため)。
+- 全テスト (compiler 110 件・LSP 92 件)。fixture と `~/test1` の `.biwamir` の本体 (ヘッダの svh 以外) と `.wat` は変わらない
+  (`.biwameta` は形式を変えたので変わる)。
+- `~/test1`: std の `Option` を関数型で実体化する・enum のペイロード・型エイリアスのデモを scene 冒頭に表示して確認した。Playwright でも確認した。
+
+### 10.4 制約・残したもの
+
+- std の `Vec[T]` は wasm では要素を `anyref` としてホストに渡すので、要素は struct に限る (既存の制約。`Vec[Int]` と同じく
+  `Vec[fn(Int) -> Int]` も使えない)。関数型の値を `anyref` に入れるには、関数参照を struct に包む表現が要る
+  (将来クロージャを入れるときに、関数参照 + 捕捉環境の struct にする余地として残す)。
+- 依存の型エイリアスに `impl` を書くこと (`impl fn_lib::IntFn { .. }`) は考えていない。
+- TypeScript (tier 2) は、関数型の型注釈が `todo!()` のままなので、関数型を含むコードはまだ出せない (§7.5)。
+
+## 11. ステップ 7 の実装状況
+
+### 11.1 構文
+
+```biwa
+fn(x, y) { x + y }                      // 引数・戻り値の型は推論する
+fn(x: Int, y: Int) -> Int {             // 注釈も書ける。本体に文と return も書ける
+  let s = x + y;
+  return s * 2;
+}
+```
+
+- AST `Primary::FnLiteral(FnLiteral { args: Vec<FnLiteralArg { id, typ: Option<TypRepr>, var_id }>, rtype, stmts, expr })`。
+  式の位置の `fn` は無名関数、型の位置の `fn(A) -> B` は関数型として読み分ける。
+- 戻り値の型を省略すると**推論する** (関数型 `fn(A)` の省略は Void だが、無名関数は本体から決める。値を返さない本体なら Void)。
+- 型引数は持たない (ジェネリックな無名関数は当面考えない)。囲む定義のジェネリック引数 (`T`) は注釈に書ける。
+- scene の中 (novel パーサー) では、本体は**式 1 つ**だけ (`#let f = fn(x) { x * 2 }`)。scene のコードは行単位なので、文を並べる本体は書けない。
+
+### 11.2 捕捉の検出 (名前解決)
+
+- `FnResolveCtx` に「無名関数の境界」(`lambda_barriers`) を持たせた。無名関数の本体は境界を張った新しいスコープで解決し、
+  境界より外のスコープの変数を参照したら `CaptureUnsupported` (「クロージャは未対応」) にする。
+  引数・`let` の変数・`self` (メソッドの受け手) のどれも外側の局所変数である。
+- 関数・関連関数などのグローバルな名前、囲む定義のジェネリック引数 (型) は参照できる。
+- 無名関数の引数と本体の変数の `VarId` は外側の関数と通しで振る (持ち上げた後も番号がぶつからない)。
+
+### 11.3 型推論と持ち上げ
+
+- HIR では無名関数は式 (`Primary::Lambda`) のまま残し、**外側の関数と同じ型推論の文脈**で推論する
+  (`infer_lambda`)。注釈の無い引数・戻り値は型変数で、本体の使い方と、無名関数を渡した先・`let` の注釈などの文脈から決まる。
+  本体の `return` は無名関数から返るので、推論の間だけ戻り値の型を差し替える。
+- 推論が終わったら (`TyCtx::lift_lambdas`)、決まった型で**トップレベルの関数に持ち上げる**。
+  - 番号は名前解決が振り終えた次 (`Hir::next_def_id`) から、外側の関数の `ValDefId` 順・本体の出現順に振る (ビルドごとに揃う)。
+  - 持ち上げた関数は**外側の定義のジェネリック引数と制限をそのまま引き継ぐ** (impl のぶんも含む)。
+    式の位置は持ち上げた関数への参照 (`Const::FnDef`) で、型引数は恒等の割り当て (`T := T`)。単相化が外側の実体の型に置き換えるので、
+    外側の実体ごとに持ち上げた関数の実体ができる。
+  - 式・変数の番号は外側と通しなので、型推論の結果 (`expr_tys` など) と変数表は外側のものを引き継ぐ。
+  - 名前は `__lambda<番号>`。名前で引けないよう、`.biwameta` ではモジュールの子に載せない (`Hir::lambdas`)。
+    シンボルとしては書き出す (依存元の単相化が `.biwamir` 越しに参照するため)。
+- これで MIR・単相化・wasm・TypeScript は、名前付きの関数の値と同じ経路で扱える (ステップ 1)。
+
+### 11.4 一緒に直したもの
+
+- **`let x: T = ..` の型注釈が型推論で使われていなかった**。lowering は注釈を変数表に入れていたが、推論は初期化式の型しか見ていなかった。
+  初期化式の型と注釈を突き合わせるようにした (`let typed: fn(Int) -> Int = fn(x) { x };` の `x` が注釈から決まる)。
+- **関数の本体の型注釈に `Self` を書くと lowering で panic していた** (`let x: Self = ..`)。`ExprLowerCtx` に impl の対象型を持たせ、
+  `let` と無名関数の注釈の `Self` を下ろせるようにした。
+- **`.biwameta` を型推論の前に書き出していた**。持ち上げた関数は型推論の後にできるので、書き出しを型推論の後に移した
+  (型推論はシグニチャを変えないので、それ以外の中身は変わらない。推論に失敗したときに `.biwameta` だけ更新される状態も無くなった)。
+
+### 11.5 確認
+
+- fixture `fn_value` の `step7`: 本体から・渡した先から・`let` の注釈から型が決まる、その場で呼ぶ、文と `return` を持つ本体、
+  関数から返す、入れ子、グローバルな関数の参照、struct のメンバ・enum のペイロードに入れる、関数のジェネリック引数・
+  impl ブロックのジェネリック引数を使う無名関数。scene の中の `#let lf = fn(x) { x * 2 }`。
+- fixture `fn_lib` / `fn_user`: 依存のジェネリックな関数の中の無名関数を依存元で実体化する、依存の関数が返す無名関数を呼ぶ。
+- fixture `fn_value_capture`: 引数・`let`・`self` の捕捉がそれぞれ `CaptureUnsupported`。
+- 生成した wasm を Node で実行し、`fn_value_compute` = 168、`fn_user_compute` = 168 (各行のコメントから計算した期待値と一致)。
+- 全テスト (compiler 113 件・LSP 94 件)。既存の fixture の `.biwamir` の本体と `.wat` は変わらない。
+- `~/test1`: 無名関数のデモ (`349`) と scene の中の無名関数 (`#let lam = fn(x) { x * 3 }` → `15`) を表示して確認した。Playwright でも確認した。
+- LSP: パーサー (`FnLiteral` / `FnLiteralArg`)・lowering・意味的ハイライト (無名関数の引数を「引数」として分類)・
+  HIR の走査・`CaptureUnsupported` の診断を追加した。
+
+### 11.6 制約・残したもの
+
+- クロージャ (捕捉) は未対応 (方針どおり)。
+- ジェネリックな無名関数 (`fn[T](x: T) { .. }`) は書けない (方針どおり)。
+- scene の中の無名関数の本体は式 1 つだけ。
+- 外側の関数のジェネリック引数を使わない無名関数でも、持ち上げた関数は外側のジェネリック引数をすべて引き継ぐので、
+  外側の実体ごとに同じ中身の実体ができうる (使わない型引数を落とす最適化はしていない)。
+- (既存の問題として見つけたもの) LSP のパーサーは `return` 文に対応していない。
+

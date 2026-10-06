@@ -46,12 +46,19 @@ impl Expr {
 pub enum Primary {
     Literal(Literal),
     Variable(Variable), // TODO: support using external module variables
-    FnCall(FnCall),
     MemberAccess(MemberAccess),
     IfExpr(IfExpr),
     Match(MatchExpr),
     Block(BlockExpr),
-    MethodCall(MethodCall),
+    /// 呼び出し `<式> ( <引数列> )`。呼び出しの形はこれ 1 つである。
+    ///
+    /// 呼び先が何か (関数・関連関数・trait の項目・メソッド・関数型の値) は
+    /// 型推論が呼び先の式の形と型から決め、[`Call::target`] に書く
+    /// (`docs/function-as-the-first-class-type-impl-status.md` §7)。
+    Call(Call),
+    /// 無名関数。型推論は外側の関数と同じ文脈で行い、その後でトップレベルの関数に持ち上げる
+    /// ([`Lambda::lifted`])。持ち上げた後は、その関数への参照 (値) として扱う。
+    Lambda(Lambda),
     /// enum のバリアントの構築。
     ///
     /// 構文の上では関数呼び出し・構造体リテラル・変数参照のいずれかだが、
@@ -205,10 +212,38 @@ pub struct Variable {
     pub span: Span,
 }
 
+/// 変数・パスで指した値。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VarIdKind {
+    /// 局所変数 (引数・`let`・`self`・パターンの束縛)。
     Local(VarId),
-    Global(ValDefId),
+    /// 関数・scene・native の関数、および呼び出し位置に型の書かれていない関連関数
+    /// (`Self::new`)。
+    Fn(ValDefId),
+    /// 型を通した関連関数 (`Character::new`)。
+    ///
+    /// `self_ty` は**呼び出し位置に書かれた型**である。
+    /// 型エイリアスが型引数を書き込んでいることがあるので残す。
+    ///
+    /// ```text
+    /// type CharacterBiwa = Character[BiwaCharacterProps];
+    /// CharacterBiwa::new(..)   // self_ty = Character[BiwaCharacterProps]
+    /// ```
+    ///
+    /// パスの最後のセグメントだけを見ると `Character::new` に潰れてしまい、
+    /// `BiwaCharacterProps` がどこにも残らない。
+    /// エイリアスの展開 (`alias_expansion`) はこの `self_ty` にも及ぶので、
+    /// 推論の時点では右辺に置き換わっている。
+    ///
+    /// なお呼び出し位置に型引数を書く構文はまだ無いので、
+    /// エイリアスを経由しない `Character::new` の `self_ty` は
+    /// 型引数が空のままである。使えるかどうかは推論側が判断する。
+    Assoc { def_id: ValDefId, self_ty: Ty },
+    /// trait 越しで、まだ実装が決まっていない項目 (`T::guee`)。
+    ///
+    /// `self_ty` は呼び出し位置に書かれた型で、`TyKind::LocGen` である。
+    /// 実装は単相化で決まる。
+    TraitAssoc { assoc: TraitAssocDefId, self_ty: Ty },
 }
 
 impl Primary {
@@ -216,13 +251,13 @@ impl Primary {
         match self {
             Self::Literal(l) => l.span(),
             Self::Variable(v) => v.span.clone(),
-            Self::FnCall(f) => f.span.clone(),
             Self::MemberAccess(m) => m.span.clone(),
             Self::IfExpr(i) => i.span.clone(),
             Self::Match(m) => m.span.clone(),
             Self::VariantCtor(v) => v.span.clone(),
             Self::Block(b) => b.span.clone(),
-            Self::MethodCall(m) => m.span.clone(),
+            Self::Call(c) => c.span.clone(),
+            Self::Lambda(l) => l.span.clone(),
         }
     }
 }
@@ -255,48 +290,59 @@ pub struct StructLiteral {
     pub span: Span,
 }
 
+/// 無名関数 `fn(x, y: Int) -> Int { .. }`。
+///
+/// 本体から外側の局所変数は参照できない (名前解決が弾いている)。
+/// 引数と本体の変数の `VarId` は外側の関数と通しで振られている。
 #[derive(Debug, Clone)]
-pub struct FnCall {
-    pub callee: Callee,
-    pub args: Vec<Expr>,
+pub struct Lambda {
+    pub args: Vec<LambdaArg>,
+    /// `-> T` と書かれた戻り値の型。`None` なら推論する。
+    pub rty: Option<Ty>,
+    pub stmts: Vec<Stmt>,
+    pub expr: Option<Box<Expr>>,
     pub span: Span,
+    /// 型推論の後で持ち上げた先のトップレベルの関数。
+    ///
+    /// 持ち上げた関数は外側の定義のジェネリック引数 (と制限) をそのまま引き継ぐ。
+    pub lifted: OnceCell<ValDefId>,
 }
 
+/// 無名関数の引数。
 #[derive(Debug, Clone)]
-pub enum Callee {
-    Var(VarId),
-    Fn(ValDefId),
-    /// 型を通した関連関数の呼び出し (`Character::new(..)`)。
-    ///
-    /// `self_ty` は**呼び出し位置に書かれた型**である。
-    /// `Callee::Fn` と違ってこれを残すのは、型エイリアスが
-    /// 型引数を書き込んでいることがあるからである。
-    ///
-    /// ```text
-    /// type CharacterBiwa = Character[BiwaCharacterProps];
-    /// CharacterBiwa::new(..)   // self_ty = Character[BiwaCharacterProps]
-    /// ```
-    ///
-    /// パスの最後のセグメントだけを見ると `Character::new` に潰れてしまい、
-    /// `BiwaCharacterProps` がどこにも残らない。
-    /// エイリアスの展開 (`alias_expansion`) はこの `self_ty` にも及ぶので、
-    /// 推論の時点では右辺に置き換わっている。
-    ///
-    /// なお呼び出し位置に型引数を書く構文はまだ無いので、
-    /// エイリアスを経由しない `Character::new(..)` の `self_ty` は
-    /// 型引数が空のままである。使えるかどうかは推論側が判断する。
-    AssocFn {
-        def_id: ValDefId,
-        self_ty: Ty,
-    },
-    /// trait 越しで、まだ実装が決まっていない呼び出し (`T::guee(..)`)。
-    ///
-    /// `self_ty` は呼び出し位置に書かれた型で、`TyKind::LocGen` である。
-    /// 実装は単相化で決まる。
-    TraitAssoc {
-        assoc: TraitAssocDefId,
-        self_ty: Ty,
-    },
+pub struct LambdaArg {
+    pub id: Ident,
+    /// 書かれた型。`None` なら推論する。
+    pub ty: Option<Ty>,
+    pub var_id: VarId,
+}
+
+/// 呼び出し `<式> ( <引数列> )`。
+#[derive(Debug, Clone)]
+pub struct Call {
+    pub callee: Box<Expr>,
+    pub args: Vec<Expr>,
+    pub span: Span,
+    /// 型推論が埋める呼び先の分類。
+    pub target: OnceCell<CallTarget>,
+}
+
+/// 型推論が決めた、呼び出しの呼び先の分類。
+///
+/// MIR の構築はこれに従って種類別の呼び出しを出す。
+#[derive(Debug, Clone, Copy)]
+pub enum CallTarget {
+    /// 呼び先が静的に決まる関数・関連関数 (`foo(..)`、`Foo::new(..)`、scene)。
+    /// 呼び先は [`VarIdKind::Fn`] / [`VarIdKind::Assoc`] のパスの値。MIR では直接呼び出し。
+    Static(ValDefId),
+    /// trait 越しで実装が単相化まで決まらない項目 (`T::guee(..)`)。
+    /// 呼び先は [`VarIdKind::TraitAssoc`] のパスの値。
+    TraitItem(TraitAssocDefId),
+    /// メソッド (`x.bar(..)`)。呼び先は [`MemberAccess`] で、その左辺が受け手 (第 1 引数) になる。
+    Method(MethodTarget),
+    /// 関数型の値の呼び出し (局所変数・関数型のメンバ・任意の式)。
+    /// 呼び先を値として評価して呼ぶ。MIR では間接呼び出し。
+    Value,
 }
 
 /// メソッド呼び出しの解決先。
@@ -313,16 +359,6 @@ pub struct MemberAccess {
     pub left: Box<Expr>,
     pub member: Ident,
     pub span: Span,
-}
-
-#[derive(Debug, Clone)]
-pub struct MethodCall {
-    pub left: Box<Expr>,
-    pub method: Ident,
-    pub args: Vec<Expr>,
-    pub span: Span,
-    /// 型推論が埋める解決先。
-    pub target: OnceCell<MethodTarget>,
 }
 
 #[derive(Debug, Clone)]

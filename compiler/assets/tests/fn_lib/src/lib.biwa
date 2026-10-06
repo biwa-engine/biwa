@@ -1,0 +1,88 @@
+// 関数型を公開 API に持つライブラリ (ステップ 6)。
+//
+// 依存元 (`fn_user`) がこれらを `.biwameta` / `.biwamir` 越しに使う。
+// - 関数型を引数・戻り値・struct のメンバ・enum のペイロードに持つ
+// - 関数型の型エイリアス (ジェネリックを含む)
+// - 依存元から値として渡される関数、依存元が値として使う関数
+// - scene (依存元が値にしようとしたら型エラーになる)
+
+import std::game::Game;
+
+type IntFn = fn(Int) -> Int;
+type Endo[T] = fn(T) -> T;
+
+fn inc(x: Int) -> Int {
+  x + 1
+}
+
+fn apply(f: IntFn, x: Int) -> Int {
+  f(x)
+}
+
+fn twice[T](f: Endo[T], x: T) -> T {
+  f(f(x))
+}
+
+fn pick_inc() -> fn(Int) -> Int {
+  inc
+}
+
+struct Op {
+  run: fn(Int) -> Int,
+}
+
+impl Op {
+  fn new(run: fn(Int) -> Int) -> Self {
+    Op { run = run }
+  }
+
+  fn exec(self, x: Int) -> Int {
+    self.run(x)
+  }
+}
+
+// 関数型のエイリアスをメンバに持つジェネリックな struct。
+struct Slot[T] {
+  f: Endo[T],
+}
+
+impl[T] Slot[T] {
+  fn call(self, x: T) -> T {
+    self.f(x)
+  }
+}
+
+enum Action {
+  Run(IntFn),
+  Nop,
+}
+
+fn run_action(a: Action, x: Int) -> Int {
+  match a {
+    Action::Run(f) => f(x),
+    Action::Nop => x,
+  }
+}
+
+// ジェネリックな関数の中の無名関数。依存元が実体化するとき、持ち上げた関数も一緒に実体化される。
+fn twice_via_lambda[T](x: T) -> T {
+  let id = fn(y: T) { y };
+  twice(id, x)
+}
+
+// 無名関数を返す。
+fn adder() -> fn(Int) -> Int {
+  fn(x) { x + 100 }
+}
+
+struct LibCharacters {}
+
+struct LibState {}
+
+type LibGame = Game[LibCharacters, LibState];
+
+scene lib_scene(g: LibGame) -> LibGame {{
+  From the library.
+
+  #endscene g
+}}

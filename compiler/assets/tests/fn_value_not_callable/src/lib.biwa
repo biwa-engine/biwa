@@ -1,0 +1,11 @@
+// 関数型でない値は呼べない。型エラー (`NotCallable`) にならなければならない。
+//
+// `c.n(..)` は、`n` がメンバだが関数型ではなく、同名のメソッドも無い。
+
+struct Counter {
+  n: Int,
+}
+
+fn call_member(c: Counter) -> Int {
+  c.n(1)
+}

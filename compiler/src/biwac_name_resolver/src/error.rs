@@ -48,11 +48,30 @@ pub enum ResolveError {
         assoc2: AssocNameTreeItem,
     },
 
+    /// 関数型の struct のメンバの名前が、その型の関連アイテム
+    /// (関連関数・メソッド・trait impl の項目) と衝突した。
+    ///
+    /// `x.bar(..)` を「メンバ `bar` (関数型) の値の呼び出し」か「メソッド `bar` の呼び出し」かに
+    /// 一意に決めるためである (`docs/function-as-the-first-class-type.md`)。
+    /// 関数型でないメンバは呼び先になり得ないので、関連アイテムと同じ名前でもよい。
+    StructMemberNameConflict {
+        name: InternedIdent,
+        span: Span,
+    },
+
     UnexpectedSelfType {
         span: Span,
     },
     UnexpectedSelfVariable {
         span: Span,
+    },
+
+    /// 無名関数の中から外側の局所変数 (引数・`let`・`self` など) を参照した。
+    ///
+    /// 捕捉はクロージャになるが、クロージャは未対応である
+    /// (`docs/function-as-the-first-class-type.md`)。
+    CaptureUnsupported {
+        ident: biwac_ast::Ident,
     },
 
     IdentNotFound {
@@ -343,6 +362,19 @@ impl BiwacError for ResolveError {
                     .print();
             }
 
+            Self::StructMemberNameConflict { name, span } => {
+                let name = ident_str(ctx, name);
+
+                ctx.diagnostic(format!(
+                    "Function-typed struct member `{name}` has the same name as an associated item of the type."
+                ))
+                .label(at(span), format!("`{name}` is also an associated item"))
+                .note(
+                    "`x.{name}(..)` could not tell whether it calls the member or the method",
+                )
+                .print();
+            }
+
             Self::DuplicatedAssociatedItemForGenArgs {
                 name,
                 assoc1,
@@ -376,6 +408,24 @@ impl BiwacError for ResolveError {
                 ctx.diagnostic("`self` is not usable here.")
                     .label(at(span), "`self` is only available in a method")
                     .print();
+            }
+
+            Self::CaptureUnsupported { ident } => {
+                let name = if ident.id == InternedIdent::SELF {
+                    "self"
+                } else {
+                    ident_str(ctx, &ident.id)
+                };
+
+                ctx.diagnostic(format!(
+                    "`{name}` is a local variable outside this anonymous function; closures are not supported yet."
+                ))
+                .label(at(&ident.span), "captured here")
+                .note(
+                    "an anonymous function can only refer to its own arguments and variables, \
+                     and to global items such as functions",
+                )
+                .print();
             }
 
             Self::IdentNotFound { ident } => {

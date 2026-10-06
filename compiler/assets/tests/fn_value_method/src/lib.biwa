@@ -1,0 +1,20 @@
+// 受け手付きのメソッド (`c.get`) は値として使えない。
+//
+// 受け手を含んだ値は実質クロージャなので作れない。`Counter::get` (受け手を第一引数に取る
+// 関連関数) なら値にできる。型エラー (`BoundMethodAsValue`) にならなければならない。
+
+struct Counter {
+  n: Int,
+}
+
+impl Counter {
+  fn get(self) -> Int {
+    self.n
+  }
+}
+
+fn take(c: Counter) -> Int {
+  let ok = Counter::get;
+  let f = c.get;
+  0
+}

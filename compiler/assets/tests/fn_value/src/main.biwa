@@ -1,0 +1,288 @@
+// 関数を値として扱う (`docs/function-as-the-first-class-type.md` のステップ 1)。
+//
+// - 関数型 `fn(A) -> B` / `fn(A)` を引数・戻り値・struct のメンバ・変数の型に書ける
+// - 名前付きの関数 (ジェネリックなもの、関連関数を含む) を値として渡せる
+// - 関数型の値を変数・メンバから呼べる
+//
+// ステップ 2:
+// - 任意の式を呼び先にできる (`pick(FALSE)(4)`、`(f)(x)`)
+// - `x.bar(..)` は、`bar` が関数型のメンバならその値の呼び出し、そうでなければメソッド
+//
+// scene の中 (novel パーサー) でも関数型を書ける。
+
+import std::game::Game;
+import std::game::config::Config;
+import std::game::window::GameWindow;
+import std::game::window::Window;
+import std::option::Option;
+
+struct MyGameState {}
+
+struct MyGameCharacters {}
+
+type MyGame = Game[MyGameCharacters, MyGameState];
+
+fn app() -> Window {
+  Window::new()
+}
+
+fn on_new_game(window: GameWindow) -> MyGame {
+  Game::new(window, "fn_value", MyGameCharacters {}, MyGameState {}, Config::default())
+}
+
+fn add_one(x: Int) -> Int {
+  x + 1
+}
+
+fn double(x: Int) -> Int {
+  x * 2
+}
+
+fn id[T](x: T) -> T {
+  x
+}
+
+fn apply_twice(f: fn(Int) -> Int, x: Int) -> Int {
+  f(f(x))
+}
+
+// rank 1: 型引数は呼ぶ側が決める。
+fn use_twice[T](f: fn(T) -> T, x: T) -> T {
+  f(f(x))
+}
+
+// 関数を返す。
+fn pick(first: Bool) -> fn(Int) -> Int {
+  if first {
+    add_one
+  } else {
+    double
+  }
+}
+
+fn ignore(x: Int) {}
+
+// 戻り値の無い関数型。
+fn call_void(f: fn(Int), x: Int) {
+  f(x)
+}
+
+// 関数型のメンバ。
+struct Op {
+  name: Int,
+  run: fn(Int) -> Int,
+}
+
+impl Op {
+  fn new(run: fn(Int) -> Int) -> Self {
+    Op { name = 0, run = run }
+  }
+
+  // メンバ `run` (関数型) の値を呼ぶ。メソッドではない。
+  fn exec(self, x: Int) -> Int {
+    self.run(x)
+  }
+}
+
+// ジェネリックな struct の関数型のメンバ。
+struct Mapper[T] {
+  f: fn(T) -> T,
+}
+
+impl[T] Mapper[T] {
+  fn map(self, x: T) -> T {
+    self.f(x)
+  }
+
+  // impl ブロックのジェネリック引数 `T` を使う無名関数。
+  fn map_via_lambda(self, x: T) -> T {
+    let id = fn(y: T) { y };
+    self.f(id(x))
+  }
+}
+
+// ステップ 4: メソッドは「第一引数が self の関連関数」。
+// trait のメソッドもパスで呼べる (`T::twice(x)`)。
+trait Twice {
+  fn twice(self) -> Int;
+}
+
+impl Holder: Twice {
+  fn twice(self) -> Int {
+    self.value * 2
+  }
+}
+
+fn via_trait[T: Twice](x: T) -> Int {
+  T::twice(x) + x.twice()
+}
+
+struct Holder {
+  value: Int,
+}
+
+impl Holder {
+  fn make(x: Int) -> Holder {
+    Holder { value = x }
+  }
+}
+
+// 型引数が引数にも戻り値にも現れない関連関数。
+// 型エイリアス越し (`IntTagged::zero`) に値にすると、エイリアスが書いた型引数で決まる。
+struct Tagged[T] {
+  n: Int,
+}
+
+impl[T] Tagged[T] {
+  fn zero() -> Self {
+    Tagged { n = 0 }
+  }
+}
+
+type IntTagged = Tagged[Int];
+
+// 比較の時点では型変数で、後から `Int` に決まる値の `==` は通る
+// (演算子の型の検査は推論の最後に決まった型でやり直す)。
+enum Slot[T] {
+  Empty,
+  Full(T),
+}
+
+fn takes_int_slot(s: Slot[Int]) {}
+
+fn compare_later() -> Bool {
+  let s = Slot::Empty;
+  let same = match s {
+    Slot::Full(x) => x == x,
+    Slot::Empty => TRUE,
+  };
+  takes_int_slot(s);
+  same
+}
+
+// ステップ 6: 関数型を enum のペイロード・ジェネリックな型の引数・型エイリアスに使う。
+type IntFn = fn(Int) -> Int;
+type Endo[T] = fn(T) -> T;
+
+enum Action {
+  Run(IntFn),
+  Nop,
+}
+
+fn run_action(a: Action, x: Int) -> Int {
+  match a {
+    Action::Run(f) => f(x),
+    Action::Nop => x,
+  }
+}
+
+struct Boxed[T] {
+  v: T,
+}
+
+fn endo_twice[T](f: Endo[T], x: T) -> T {
+  f(f(x))
+}
+
+fn step6() -> Int {
+  let r = run_action(Action::Run(double), 5);       // 10
+  let n = run_action(Action::Nop, 1);               // 1
+  let b = Boxed { v = add_one };                    // Boxed[fn(Int) -> Int]
+  let c = b.v(2);                                   // 3
+  let o = Option::Some(double);                     // Option[fn(Int) -> Int]
+  let d = match o {
+    Option::Some(f) => f(4),                        // 8
+    Option::None => 0,
+  };
+  let e: Endo[Int] = add_one;
+  endo_twice(e, 0) + r + n + c + d                  // 2 + 10 + 1 + 3 + 8 = 24
+}
+
+// ステップ 7: 無名関数。
+fn pick_lambda(first: Bool) -> fn(Int) -> Int {
+  if first {
+    fn(x) { x }
+  } else {
+    fn(x) { x + 10 }
+  }
+}
+
+// 関数のジェネリック引数 `T` を使う無名関数 (持ち上げた関数も `T` について多相になる)。
+fn generic_lambda[T](x: T) -> T {
+  let id = fn(y: T) { y };
+  id(x)
+}
+
+fn step7() -> Int {
+  let inc = fn(x) { x + 1 };                     // 型は本体から決まる
+  let a = inc(1);                                // 2
+  let b = apply_twice(fn(x) { x * 3 }, 1);       // 9 (型は渡した先から決まる)
+  let typed: fn(Int) -> Int = fn(x) { x };       // 型は let の注釈から決まる
+  let c = typed(4);                              // 4
+  let d = fn(x: Int, y: Int) -> Int {            // 6 (文と return を持つ本体、その場で呼ぶ)
+    let s = x + y;
+    return s * 2;
+  }(1, 2);
+  let e = use_twice(fn(v) { v + v }, 1);         // 4
+  let f = pick_lambda(FALSE)(5);                 // 15 (関数から無名関数を返す)
+  let g = generic_lambda(7);                     // 7
+  let h = fn(x) { fn(y) { y + 1 }(x) }(1);       // 2 (入れ子)
+  let i = fn(x) { add_one(x) }(1);               // 2 (グローバルな関数は参照できる)
+  let op = Op::new(fn(x) { x - 1 });
+  let j = op.exec(5);                            // 4 (struct のメンバに入れる)
+  let k = run_action(Action::Run(fn(x) { x * x }), 3);   // 9 (enum のペイロードに入れる)
+  let m = Mapper { f = add_one };
+  let l = m.map_via_lambda(1);                   // 2
+  a + b + c + d + e + f + g + h + i + j + k + l  // 66
+}
+
+// 期待値は 168 (各行のコメントの合計)。テストがホストから呼んで確かめられるよう export する。
+[[host_export="fn_value_compute"]]
+fn compute() -> Int {
+  let f: fn(Int) -> Int = add_one;
+  let a = f(1);                          // 2
+  let b = apply_twice(add_one, 3);       // 5
+  let c = apply_twice(id, 7);            // 7
+  let d = use_twice(double, 3);          // 12
+  let e = use_twice(id, TRUE);
+  let g = pick(FALSE)(4);                // 8
+  let op = Op::new(double);
+  let h = op.exec(5);                    // 10
+  let m = Mapper { f = add_one };
+  let i = m.f(9);                        // 10
+  let make = Holder::make;
+  let j = (make)(4).value;               // 4
+  let k = Op::new(add_one).run(1);       // 2 (一時的な値のメンバを呼ぶ)
+  let zero = IntTagged::zero;
+  let l = zero().n;                      // 0
+  // ステップ 4: メソッドをパスで呼ぶ・値にする。
+  let n = Op::exec(op, 1);               // 2
+  let exec = Op::exec;
+  let o = exec(Op::new(add_one), 1);     // 2
+  let map = Mapper::map;
+  let p = map(m, 1);                     // 2 (`T` は受け手から決まる)
+  let q = via_trait(Holder::make(3));    // 12
+  let s6 = step6();                      // 24
+  let s7 = step7();                      // 66
+  call_void(ignore, 1);
+  if e {
+    if compare_later() {
+      a + b + c + d + g + h + i + j + k + l + n + o + p + q + s6 + s7
+    } else {
+      0
+    }
+  } else {
+    0
+  }
+}
+
+scene main(g: MyGame) -> MyGame {{
+  #let f: fn(Int) -> Int = add_one
+  #let n = f(compute())
+  #let p = pick(TRUE)(n)
+  #let lf = fn(x) { x * 2 }
+  #let lv = lf(p)
+  Hello.
+
+  #endscene g
+}}

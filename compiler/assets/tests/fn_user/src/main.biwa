@@ -1,0 +1,65 @@
+// 依存パッケージ (`fn_lib`) の関数型を使う (ステップ 6)。
+//
+// - 依存の関数に自パッケージの関数を値として渡す / 依存の関数を値として使う
+// - 依存の struct の関数型のメンバ・enum のペイロード・関数型の型エイリアス
+// - 依存のジェネリックな関数・struct を関数型で実体化する
+
+import std::game::Game;
+import std::game::config::Config;
+import std::game::window::GameWindow;
+import std::game::window::Window;
+import fn_lib::Action;
+import fn_lib::Endo;
+import fn_lib::IntFn;
+import fn_lib::Op;
+import fn_lib::Slot;
+
+struct MyGameState {}
+
+struct MyGameCharacters {}
+
+type MyGame = Game[MyGameCharacters, MyGameState];
+
+fn app() -> Window {
+  Window::new()
+}
+
+fn on_new_game(window: GameWindow) -> MyGame {
+  Game::new(window, "fn_user", MyGameCharacters {}, MyGameState {}, Config::default())
+}
+
+fn double(x: Int) -> Int {
+  x * 2
+}
+
+// 期待値は 6+2+4+10+12+5+14+8+1+0 + 5+101 = 168。
+// テストがホストから呼んで確かめられるよう export する。
+[[host_export="fn_user_compute"]]
+fn compute() -> Int {
+  let a = fn_lib::apply(double, 3);                 // 6 (自パッケージの関数を渡す)
+  let inc: IntFn = fn_lib::inc;                     // 依存の関数を値にする
+  let b = inc(1);                                   // 2
+  let c = fn_lib::twice(double, 1);                 // 4 (依存のジェネリックな関数)
+  let d = fn_lib::pick_inc()(9);                    // 10
+  let op = Op::new(double);
+  let e = op.exec(5) + op.run(1);                   // 10 + 2 (依存の struct の関数型のメンバ)
+  let f = fn_lib::run_action(Action::Run(fn_lib::inc), 4);   // 5
+  let g = match Action::Run(double) {
+    Action::Run(h) => h(7),                         // 14
+    Action::Nop => 0,
+  };
+  let slot = Slot { f = double };                   // Slot[Int] (依存のジェネリックな struct)
+  let h = slot.call(3) + slot.f(1);                 // 6 + 2
+  let endo: Endo[Int] = fn_lib::inc;
+  let exec = Op::exec;                              // 依存のメソッドを値にする (exec(op, 0) = 0)
+  let i = fn_lib::twice_via_lambda(5);              // 5 (依存の無名関数を実体化する)
+  let j = fn_lib::adder()(1);                       // 101 (依存の無名関数を呼ぶ)
+  a + b + c + d + e + f + g + h + endo(0) + exec(op, 0) + i + j
+}
+
+scene main(g: MyGame) -> MyGame {{
+  #let n = compute()
+  Hello.
+
+  #endscene g
+}}

@@ -26,7 +26,7 @@ use crate::error::LowerError;
 /// segments が空のまま (`Path{header: Some(SelfTyp), segments: []}`) が
 /// 正しい形なので、ここでは弾かない。一方 `Path::span()` は
 /// `segments.last().unwrap()` を呼ぶため、式の値として使う経路
-/// (`Variable::Path`/`FnCall`) でこの形が渡るとパニックしうる。
+/// (`Variable::Path`、呼び出しの呼び先も含む) でこの形が渡るとパニックしうる。
 /// そちらは呼び出し側 (`lower_ident_path_as_variable` 等) で
 /// `segments.is_empty()` を追加でチェックして弾いている。
 pub(crate) fn lower_ident_path(
@@ -82,7 +82,7 @@ pub(crate) fn lower_ident_path(
     Some(Path::new(abs_header, segments))
 }
 
-/// 式の値として使う位置 (`Variable::Path`/`FnCall`) で `path` を使ってよいか。
+/// 式の値として使う位置 (`Variable::Path`。呼び出しの呼び先も含む) で `path` を使ってよいか。
 ///
 /// `segments` が空なのに `abs_header` だけある形 (`package` 単独や、
 /// `Self::` が入力途中で途切れた形) は `Path::span()` の
@@ -185,6 +185,31 @@ pub(crate) fn lower_type_repr(
                 None
             };
             Some(TypRepr::new_def_typ(path, genargs))
+        }
+        // 関数型 `fn(A, B) -> C`。戻り値を省略したら Void (`rty: None`)。
+        Some(SyntaxKind::KwFn) => {
+            children.next_elem();
+            children.eat_token(SyntaxKind::LParen);
+            let mut args = Vec::new();
+            while let Some(arg_node) = children.eat_node(SyntaxKind::TypeRepr) {
+                args.push(lower_type_repr(mod_id, interner, &arg_node, errors)?);
+                if children.eat_token(SyntaxKind::Comma).is_none() {
+                    break;
+                }
+            }
+            children.eat_token(SyntaxKind::RParen);
+            let rty = if children.eat_token(SyntaxKind::Arrow).is_some() {
+                let rty_node = children.eat_node(SyntaxKind::TypeRepr)?;
+                Some(Box::new(lower_type_repr(
+                    mod_id, interner, &rty_node, errors,
+                )?))
+            } else {
+                None
+            };
+            Some(TypRepr {
+                val: TypReprVal::Fn(biwac_ast::FnTyp { args, rty }),
+                span,
+            })
         }
         _ => {
             errors.push(LowerError::new("expected a type", span));

@@ -600,9 +600,20 @@ fn load_analyze_and_codegen_single_package(
     let well_known_scenes = biwac_scene::check(&hir, &lang_items, pkg_kind, root_mod_id, interner)
         .map_err(|errs| print_errors(&errs, interner, &srcs, metadata))?;
 
+    let hir =
+        biwac_type_inferrer::TyCtx::new(hir, lang_items.clone(), ext_pkgs_for_ty.clone(), interner)
+            .infer()
+            .map_err(|e| {
+                print_errors(std::slice::from_ref(e.as_ref()), interner, &srcs, metadata)
+            })?;
+
     // Persist self package's symbol metadata to disk for dependents.
     // lang item テーブルと host export のフラグも書き出すので、
     // 依存側はこれを読んで復元する。
+    //
+    // 型推論の後に書く。無名関数を持ち上げた関数は型推論の後でできるが、
+    // 依存元の単相化が `.biwamir` 越しに参照するのでシンボルが要る
+    // (型推論はシグニチャを変えないので、それ以外の中身は推論の前と同じである)。
     let (svh, symbol_index) = persist_dep_metadata(
         &hir,
         &lang_items,
@@ -614,13 +625,6 @@ fn load_analyze_and_codegen_single_package(
         options.target,
         metadata,
     )?;
-
-    let hir =
-        biwac_type_inferrer::TyCtx::new(hir, lang_items.clone(), ext_pkgs_for_ty.clone(), interner)
-            .infer()
-            .map_err(|e| {
-                print_errors(std::slice::from_ref(e.as_ref()), interner, &srcs, metadata)
-            })?;
 
     // MIR は `.biwameta` と対で毎ビルド書き出す。
     // 単相化するターゲットは依存パッケージの本体を必要とするので、
@@ -1201,6 +1205,17 @@ mod tests {
             "old_on_new_game" => &["std"],
             "missing_app" => &["std"],
             "uninferable" => &["std"],
+            "fn_value"
+            | "fn_value_rank1"
+            | "fn_value_method"
+            | "fn_value_member_conflict"
+            | "fn_value_not_callable"
+            | "fn_value_trait_item"
+            | "fn_value_eq"
+            | "fn_value_not_a_method"
+            | "fn_lib"
+            | "fn_value_capture" => &["std"],
+            "fn_user" | "fn_user_scene" => &["std", "fn_lib"],
             _ => &[],
         };
         if deps.is_empty() {
@@ -1775,6 +1790,254 @@ mod tests {
         assert!(
             result.is_err(),
             "an expression whose type cannot be inferred must be rejected"
+        );
+    }
+
+    /// 名前付きの関数を値として渡し、関数型の値を呼べること
+    /// (`docs/function-as-the-first-class-type-impl-status.md` のステップ 1)。
+    ///
+    /// wasm では関数型を型付き関数参照にし、`ref.func` で作って `call_ref` で呼ぶ。
+    /// 検証を通らない wasm は compile がエラーにする。
+    #[test]
+    fn fn_value_wasm_output() {
+        ensure_fixture_deps("fn_value");
+        let root = Path::new("../../assets/tests/fn_value");
+        with_build_lock(|_| {
+            compile(
+                root.to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: false,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+            .expect("wasm build of fn_value failed");
+        });
+
+        let dir = root
+            .join(biwac_base::BIWA_BUILD_DIRECTORY_NAME)
+            .join(biwac_base::Target::Wasm.build_subdir());
+        let wat = std::fs::read_to_string(dir.join("fn_value.wat")).expect(".wat was not written");
+        assert!(wat.contains("ref.func"), "{wat}");
+        assert!(wat.contains("call_ref"), "{wat}");
+        // `ref.func` で参照する関数は宣言されていなければならない。
+        assert!(wat.contains("(elem declare func"), "{wat}");
+        // 関数型のメンバは型付き関数参照のフィールドになる。
+        assert!(wat.contains("(field $run (mut (ref null $__fn."), "{wat}");
+    }
+
+    /// 関数型がパッケージをまたげること (ステップ 6)。
+    ///
+    /// 依存 (`fn_lib`) の関数型の引数・戻り値・struct のメンバ・enum のペイロード・
+    /// 関数型の型エイリアスを、`.biwameta` / `.biwamir` 越しに使う。
+    #[test]
+    fn fn_types_across_packages() {
+        ensure_fixture_deps("fn_lib");
+        ensure_fixture_deps("fn_user");
+        let root = Path::new("../../assets/tests/fn_user");
+        with_build_lock(|_| {
+            compile(
+                root.to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: false,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+            .expect("wasm build of fn_user failed");
+        });
+
+        let dir = root
+            .join(biwac_base::BIWA_BUILD_DIRECTORY_NAME)
+            .join(biwac_base::Target::Wasm.build_subdir());
+        let wat = std::fs::read_to_string(dir.join("fn_user.wat")).expect(".wat was not written");
+        assert!(wat.contains("ref.func"), "{wat}");
+        assert!(wat.contains("call_ref"), "{wat}");
+    }
+
+    /// 依存パッケージの scene を値にするのは型エラーであること
+    /// (scene かどうかは `.biwameta` から分かる)。
+    #[test]
+    fn scene_of_a_dependency_as_value_is_an_error() {
+        ensure_fixture_deps("fn_lib");
+        ensure_fixture_deps("fn_user_scene");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_user_scene").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "a scene of a dependency used as a value must be rejected"
+        );
+    }
+
+    /// 無名関数が外側の局所変数 (引数・`let`・`self`) を参照するとエラーになること。
+    #[test]
+    fn anonymous_function_capture_is_an_error() {
+        ensure_fixture_deps("fn_value_capture");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_capture").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "an anonymous function capturing a local variable must be rejected"
+        );
+    }
+
+    /// 関数型の値は量化子を持たない (rank 1)。
+    /// ジェネリック引数の関数型 `fn(T) -> T` の値を具体の型で呼ぶのは型エラーであること。
+    #[test]
+    fn fn_value_is_rank1() {
+        ensure_fixture_deps("fn_value_rank1");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_rank1").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "calling `f: fn(T) -> T` with `Int` must be rejected"
+        );
+    }
+
+    /// 受け手付きのメソッド (`c.get`) は値にできないこと (`Counter::get` ならできる)。
+    #[test]
+    fn bound_method_as_value_is_an_error() {
+        ensure_fixture_deps("fn_value_method");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_method").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "a method bound to its receiver used as a value must be rejected"
+        );
+    }
+
+    /// `self` を取らない関連関数を `x.make(..)` の形で呼ぶのは型エラーであること。
+    #[test]
+    fn calling_an_associated_function_as_a_method_is_an_error() {
+        ensure_fixture_deps("fn_value_not_a_method");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_not_a_method").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "an associated function without `self` called as a method must be rejected"
+        );
+    }
+
+    /// struct のメンバ名と関連アイテムの衝突が名前解決のエラーになること。
+    ///
+    /// 1 つの名前空間で一意にしておかないと、`x.bar(..)` がメンバ (関数型) の値の
+    /// 呼び出しかメソッドかが決まらない。
+    #[test]
+    fn struct_member_named_like_assoc_item_is_an_error() {
+        ensure_fixture_deps("fn_value_member_conflict");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_member_conflict").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "a struct member named like a method must be rejected"
+        );
+    }
+
+    /// 関数型でないメンバを `x.n(..)` で呼ぶのは型エラーであること。
+    #[test]
+    fn calling_a_non_function_is_an_error() {
+        ensure_fixture_deps("fn_value_not_callable");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_not_callable").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(result.is_err(), "calling an `Int` member must be rejected");
+    }
+
+    /// trait 越しの項目 (`T::make`) を値として使うのは型エラーであること。呼び出しは通る。
+    #[test]
+    fn trait_item_as_value_is_an_error() {
+        ensure_fixture_deps("fn_value_trait_item");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_trait_item").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "`T::make` used as a value must be rejected"
+        );
+    }
+
+    /// 関数型の値どうしの `==` は型エラーであること。
+    ///
+    /// 比較の時点では型変数で、後から関数型に決まる場合もすり抜けない
+    /// (演算子の型の検査を推論の最後に回している)。
+    #[test]
+    fn comparing_function_values_is_an_error() {
+        ensure_fixture_deps("fn_value_eq");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_eq").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "comparing function values must be rejected"
         );
     }
 

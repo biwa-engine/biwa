@@ -117,6 +117,20 @@ impl<'t> ModuleResolveCtx<'t> {
         self
     }
 
+    /// 型が `name` という関連アイテムを持つか。
+    ///
+    /// 固有の impl の項目 (名前ツリー) と、自パッケージの trait impl の項目を見る。
+    /// struct のメンバ名との衝突の検査に使う。
+    pub(crate) fn ty_has_assoc_item(&self, ty: TyDefId, name: InternedIdent) -> bool {
+        self.ty_index
+            .get(&ty)
+            .is_some_and(|t| t.children.borrow().contains_key(&name))
+            || self
+                .trait_impls
+                .and_then(|m| m.get(&ty))
+                .is_some_and(|imps| imps.iter().any(|i| i.vals.contains_key(&name)))
+    }
+
     /// import をすべて解決し、このモジュールで使える trait を集める。
     ///
     /// import は名前で引かれたときに初めて解決されるので、

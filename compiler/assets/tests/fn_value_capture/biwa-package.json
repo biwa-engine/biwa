@@ -1,0 +1,14 @@
+{
+  "name": "fn_value_capture",
+  "version": "0.1.0",
+  "description": "rejects anonymous functions capturing local variables",
+  "dependencies": [
+    {
+      "name": "std",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

@@ -84,6 +84,16 @@ pub struct Hir {
     // 外部パッケージのシンボルで、
     // 使用されていることを確認したシンボル
     pub deps_recorder: RefCell<DepsRecorder>,
+
+    /// まだ使われていない自パッケージの `PackageLocalDefId` の先頭。
+    ///
+    /// 名前解決が振り終えた後に新しい定義を作るとき (無名関数の持ち上げ) に使う。
+    pub next_def_id: u32,
+
+    /// 無名関数を持ち上げて作った関数。
+    ///
+    /// 名前で引けてはならないので、`.biwameta` ではモジュールの子に載せない。
+    pub lambdas: HashSet<ValDefId>,
 }
 
 #[derive(Debug, Clone)]
@@ -243,6 +253,8 @@ impl Hir {
             trait_scopes,
             assoc_val_map,
             module_global_natives: native_codes,
+            next_def_id: 0,
+            lambdas: HashSet::new(),
         }
     }
 }

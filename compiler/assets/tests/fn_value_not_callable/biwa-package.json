@@ -1,0 +1,14 @@
+{
+  "name": "fn_value_not_callable",
+  "version": "0.1.0",
+  "description": "rejects calling a value that is not a function",
+  "dependencies": [
+    {
+      "name": "std",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

@@ -69,6 +69,35 @@ pub enum TyError {
         rty: Box<Ty>, // 関数が要求する戻り値
     },
 
+    /// 関数型でない値を呼ぼうとした。`ty` の span は呼び先の位置。
+    NotCallable {
+        ty: Box<Ty>,
+    },
+
+    /// 受け手付きのメソッド (`x.bar`) を値として使った。
+    ///
+    /// 受け手を含んだ値は実質クロージャなので作れない。`Foo::bar` なら値にできる。
+    BoundMethodAsValue {
+        ty: Box<Ty>,
+        method: Box<Ident>,
+    },
+
+    /// `self` を取らない関連関数を `x.bar(..)` の形で呼んだ。
+    NotAMethod {
+        ty: Box<Ty>,
+        method: Box<Ident>,
+    },
+
+    /// scene を値として使った。まだ値にできない。
+    SceneAsValue {
+        span: Span,
+    },
+
+    /// trait 越しの項目 (`T::guee`) を値として使った。まだ値にできない。
+    TraitItemAsValue {
+        span: Span,
+    },
+
     MethodNotFound {
         ty: Box<Ty>,
         method: Box<Ident>,
@@ -333,11 +362,17 @@ impl BiwacError for TyErrorReport {
             }
 
             TyError::InvalidBinaryOperationForType { ty, op, expr } => {
+                let is_fn = matches!(ty.kind, TyKind::Fn(_));
                 let ty = names.render(&ty.kind);
 
-                ctx.diagnostic(format!("`{op}` cannot be applied to `{ty}`."))
-                    .label(at(&expr.span()), format!("this is `{ty}`"))
-                    .print();
+                let diag = ctx
+                    .diagnostic(format!("`{op}` cannot be applied to `{ty}`."))
+                    .label(at(&expr.span()), format!("this is `{ty}`"));
+                if is_fn && matches!(op, BinOperator::Eq | BinOperator::Ne) {
+                    diag.note("function values cannot be compared").print();
+                } else {
+                    diag.print();
+                }
             }
 
             TyError::InvalidUnaryOperationForType { ty, op, expr } => {
@@ -430,6 +465,62 @@ impl BiwacError for TyErrorReport {
                      (e.g. a variant without payload) needs them determined by how it is used",
                 )
                 .print();
+            }
+
+            TyError::NotCallable { ty } => {
+                let rendered = names.render(&ty.kind);
+
+                ctx.diagnostic(format!(
+                    "`{rendered}` is not a function and cannot be called."
+                ))
+                .label(at(&ty.span), format!("this is `{rendered}`"))
+                .print();
+            }
+
+            TyError::BoundMethodAsValue { ty, method } => {
+                let name = ident_str(&method.id);
+                let ty = names.render(&ty.kind);
+
+                ctx.diagnostic(format!(
+                    "The method `{name}` cannot be used as a value together with its receiver."
+                ))
+                .label(at(&method.span), format!("`{name}` is a method of `{ty}`"))
+                .note(format!(
+                    "a value bound to its receiver would be a closure; \
+                     use the associated function `{ty}::{name}` (it takes the receiver as its first argument)"
+                ))
+                .print();
+            }
+
+            TyError::NotAMethod { ty, method } => {
+                let name = ident_str(&method.id);
+                let ty = names.render(&ty.kind);
+
+                ctx.diagnostic(format!("`{name}` is not a method of `{ty}`."))
+                    .label(
+                        at(&method.span),
+                        "this associated function does not take `self`",
+                    )
+                    .note(format!("call it as `{ty}::{name}(..)`"))
+                    .print();
+            }
+
+            TyError::TraitItemAsValue { span } => {
+                ctx.diagnostic(
+                    "A trait item reached through a generic type cannot be used as a value yet.",
+                )
+                .label(
+                    at(span),
+                    "its implementation is decided at monomorphization",
+                )
+                .note("it can be called directly: `T::item(..)`")
+                .print();
+            }
+
+            TyError::SceneAsValue { span } => {
+                ctx.diagnostic("A scene cannot be used as a value yet.")
+                    .label(at(span), "this is a scene")
+                    .print();
             }
 
             TyError::ReturnTypeRequired { rty } => {
@@ -584,6 +675,8 @@ pub(crate) fn error_tys(error: &TyError) -> Vec<&Ty> {
         | TyError::MethodNotInScope { ty, .. }
         | TyError::AmbiguousMethod { ty, .. }
         | TyError::TraitBoundNotSatisfied { ty, .. }
+        | TyError::BoundMethodAsValue { ty, .. }
+        | TyError::NotAMethod { ty, .. }
         | TyError::OccursCheckFailed { ty, .. } => vec![ty],
 
         TyError::TypeConfliced { t1, t2 } => vec![t1, t2],
@@ -610,9 +703,11 @@ pub(crate) fn error_tys(error: &TyError) -> Vec<&Ty> {
         | TyError::StructNotHasMember { .. }
         | TyError::InvalidAssignOperation { .. }
         | TyError::InsufficientContext
+        | TyError::SceneAsValue { .. }
+        | TyError::TraitItemAsValue { .. }
         | TyError::MissingLangItem { .. } => Vec::new(),
 
-        TyError::TypeNotInferable { ty } => vec![ty.as_ref()],
+        TyError::TypeNotInferable { ty } | TyError::NotCallable { ty } => vec![ty.as_ref()],
     }
 }
 

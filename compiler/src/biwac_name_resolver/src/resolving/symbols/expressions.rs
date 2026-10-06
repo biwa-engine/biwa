@@ -15,12 +15,67 @@ impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::Primary {
                     ctx.resolve_self_var(span).map(|_| ()).map_err(|e| vec![e])
                 }
             },
-            biwac_ast::Primary::FnCall(fn_call) => fn_call.resolve(ctx),
             biwac_ast::Primary::MemberAccess(member_access) => member_access.resolve(ctx),
-            biwac_ast::Primary::MethodCall(method_call) => method_call.resolve(ctx),
             biwac_ast::Primary::IfExpr(if_expr) => if_expr.resolve(ctx),
             biwac_ast::Primary::Match(m) => m.resolve(ctx),
             biwac_ast::Primary::Block(block) => block.resolve(ctx),
+            biwac_ast::Primary::Call(call) => call.resolve(ctx),
+            biwac_ast::Primary::FnLiteral(f) => f.resolve(ctx),
+        }
+    }
+}
+
+impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::FnLiteral {
+    fn resolve(&self, ctx: &mut C) -> Result<(), Vec<crate::ResolveError>> {
+        // 本体からは外側の局所変数が見えない (見えたら捕捉としてエラー) ように、境界を張る。
+        ctx.lambda_scope(|ctx| {
+            let mut errors = Vec::new();
+
+            for arg in &self.args {
+                if let Some(typ) = &arg.typ {
+                    ctx.resolve_typ(typ).handle(&mut errors);
+                }
+                match ctx.declare_variable(&arg.id) {
+                    Ok(var_id) => {
+                        arg.var_id.set(var_id).unwrap();
+                    }
+                    Err(e) => errors.push(e),
+                }
+            }
+            if let Some(rtype) = &self.rtype {
+                ctx.resolve_typ(rtype).handle(&mut errors);
+            }
+
+            for stmt in &self.stmts {
+                stmt.resolve(ctx).handle(&mut errors);
+            }
+            if let Some(expr) = &self.expr {
+                expr.resolve(ctx).handle(&mut errors);
+            }
+
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors)
+            }
+        })
+    }
+}
+
+impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::CallExpr {
+    fn resolve(&self, ctx: &mut C) -> Result<(), Vec<crate::ResolveError>> {
+        let mut errors = Vec::new();
+
+        self.callee.resolve(ctx).handle(&mut errors);
+
+        for arg in &self.args {
+            arg.resolve(ctx).handle(&mut errors);
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
         }
     }
 }
@@ -89,45 +144,9 @@ impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::BlockExpr {
     }
 }
 
-impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::FnCall {
-    fn resolve(&self, ctx: &mut C) -> Result<(), Vec<crate::ResolveError>> {
-        let mut errors = Vec::new();
-
-        ctx.resolve_path(&self.path).handle(&mut errors);
-
-        for arg in &self.args {
-            arg.resolve(ctx).handle(&mut errors);
-        }
-
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
-    }
-}
-
 impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::MemberAccess {
     fn resolve(&self, ctx: &mut C) -> Result<(), Vec<crate::ResolveError>> {
         self.left.resolve(ctx)
-    }
-}
-
-impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::MethodCall {
-    fn resolve(&self, ctx: &mut C) -> Result<(), Vec<crate::ResolveError>> {
-        let mut errors = Vec::new();
-
-        self.left.resolve(ctx).handle(&mut errors);
-
-        for arg in &self.args {
-            arg.resolve(ctx).handle(&mut errors);
-        }
-
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
     }
 }
 

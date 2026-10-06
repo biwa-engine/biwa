@@ -203,6 +203,26 @@ fn lowers_type_alias_with_generics_and_genarg_type() {
 }
 
 #[test]
+fn lowers_fn_type() {
+    let (ast, errors) = lower("struct S { f: fn(Int, Bool) -> Int, g: fn(Int), }");
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::TypeDef(TypeDef::Struct(s)) = &ast.globals[0] else {
+        panic!("expected struct def, got {:?}", ast.globals[0]);
+    };
+    let fn_typ = |i: usize| match &s.members[i].1.val {
+        biwac_ast::TypReprVal::Fn(f) => f.clone(),
+        other => panic!("expected a fn type, got {other:?}"),
+    };
+    let f = fn_typ(0);
+    assert_eq!(f.args.len(), 2);
+    assert!(f.rty.is_some());
+    // 戻り値を省略した関数型は Void を返す。
+    let g = fn_typ(1);
+    assert_eq!(g.args.len(), 1);
+    assert!(g.rty.is_none());
+}
+
+#[test]
 fn omitted_arrow_lowers_to_void_return_type() {
     let (ast, errors) = lower("fn nothing() {}");
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
@@ -241,15 +261,71 @@ fn f() -> Int {
     let Globals::FnDef(f) = &ast.globals[0] else {
         panic!("expected fn def");
     };
-    let Some(Exprs::Primary(Primary::MethodCall(outer))) = &f.expr else {
-        panic!("expected a method call tail, got {:?}", f.expr);
+    // `x.m(..)` は「メンバアクセス `x.m` の呼び出し」になる。
+    fn method_call(e: &Exprs) -> (&Exprs, usize) {
+        let Exprs::Primary(Primary::Call(call)) = e else {
+            panic!("expected a call, got {e:?}");
+        };
+        let Exprs::Primary(Primary::MemberAccess(m)) = &*call.callee else {
+            panic!("expected a call on a member access, got {:?}", call.callee);
+        };
+        (&m.left, call.args.len())
+    }
+    let (outer_left, outer_argc) = method_call(f.expr.as_ref().unwrap());
+    assert_eq!(outer_argc, 0);
+    let (inner_left, inner_argc) = method_call(outer_left);
+    assert_eq!(inner_argc, 1);
+    let Exprs::Primary(Primary::Call(make)) = inner_left else {
+        panic!("expected `make()`, got {inner_left:?}");
     };
-    assert_eq!(outer.args.len(), 0);
-    let Exprs::Primary(Primary::MethodCall(inner)) = &*outer.left else {
-        panic!("expected a nested method call");
+    assert!(matches!(*make.callee, Exprs::Primary(Primary::Variable(_))));
+}
+
+#[test]
+fn lowers_call_on_any_expression() {
+    // 呼び先がパスでない呼び出し (`make()(1)`) は `Primary::Call` になる。
+    let (ast, errors) = lower(
+        r#"
+fn f() -> Int {
+  make()(1)
+}
+"#,
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::FnDef(f) = &ast.globals[0] else {
+        panic!("expected fn def");
     };
-    assert_eq!(inner.args.len(), 1);
-    assert!(matches!(*inner.left, Exprs::Primary(Primary::FnCall(_))));
+    let Some(Exprs::Primary(Primary::Call(call))) = &f.expr else {
+        panic!("expected a call tail, got {:?}", f.expr);
+    };
+    assert_eq!(call.args.len(), 1);
+    assert!(matches!(*call.callee, Exprs::Primary(Primary::Call(_))));
+}
+
+#[test]
+fn lowers_fn_literal() {
+    let (ast, errors) = lower(
+        r#"
+fn f() -> Int {
+  fn(x, y: Int) -> Int { x + y }(1, 2)
+}
+"#,
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::FnDef(f) = &ast.globals[0] else {
+        panic!("expected fn def");
+    };
+    let Some(Exprs::Primary(Primary::Call(call))) = &f.expr else {
+        panic!("expected a call tail, got {:?}", f.expr);
+    };
+    let Exprs::Primary(Primary::FnLiteral(lit)) = &*call.callee else {
+        panic!("expected a fn literal callee, got {:?}", call.callee);
+    };
+    assert_eq!(lit.args.len(), 2);
+    assert!(lit.args[0].typ.is_none());
+    assert!(lit.args[1].typ.is_some());
+    assert!(lit.rtype.is_some());
+    assert!(lit.expr.is_some());
 }
 
 #[test]
@@ -438,14 +514,17 @@ impl Foo {
     let Globals::ImplBlock(imp) = &ast.globals[0] else {
         panic!("expected impl block, got {:?}", ast.globals[0]);
     };
-    let Some(Exprs::Primary(Primary::FnCall(call))) = &imp.assoc_fns[0].expr else {
+    let Some(Exprs::Primary(Primary::Call(call))) = &imp.assoc_fns[0].expr else {
         panic!("expected a call tail, got {:?}", imp.assoc_fns[0].expr);
     };
+    let Exprs::Primary(Primary::Variable(biwac_ast::Variable::Path(path))) = &*call.callee else {
+        panic!("expected a path callee, got {:?}", call.callee);
+    };
     assert!(matches!(
-        call.path.abs_header,
+        path.abs_header,
         Some(biwac_ast::AbsolutePathHeader::SelfTyp(_))
     ));
-    assert_eq!(call.path.segments.len(), 1);
+    assert_eq!(path.segments.len(), 1);
 }
 
 #[test]

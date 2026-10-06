@@ -22,8 +22,8 @@ use super::{
 /// `self_ty` は `Self` を型として解決するために使う。
 /// impl block の中であれば関連関数にもメソッドにも必要になる。
 ///
-/// 一方 `has_self` はレシーバを取るか (メソッドか) を表し、
-/// `FnSignature::self_ty` に反映される。
+/// 一方 `self_span` はレシーバを取るか (メソッドか) を表し、メソッドなら `self` の位置である。
+/// メソッドのシグニチャは**第一引数に `self`** を持つ (`FnSignature::args`)。
 /// この 2 つを混同すると関連関数にもレシーバがあることになり、
 /// codegen が余分な第一引数を出力してしまう。
 #[allow(clippy::too_many_arguments)]
@@ -31,24 +31,36 @@ pub(super) fn build_fn_signature(
     args: &ArgDeclList,
     rtype: &RetTypRepr,
     self_ty: Option<TyKind>,
-    has_self: bool,
+    self_span: Option<Span>,
     genargs_decl: &Option<biwac_ast::symbols::globals::GenArgsDecl<LocalGenDefId>>,
     impl_genargs: Vec<GenArgDef>,
     span: Span,
 ) -> FnSignature {
     let self_ty_opt_kind = self_ty.clone();
-    let hir_args: Vec<FnArgDecl> = args
-        .args
-        .iter()
-        .map(|arg| {
-            let ty = ty_from_typ_repr(&arg.typ, self_ty_opt_kind.as_ref());
-            FnArgDecl {
-                id: Ident::from(arg.id.clone()),
-                ty,
-                var_id: *arg.var_id.get().unwrap(),
-            }
+
+    // メソッドなら `self` を第一引数に置く。型は impl の対象型 (`Self`)。
+    let self_arg = self_span.and_then(|self_span| {
+        let kind = self_ty.clone()?;
+        Some(FnArgDecl {
+            id: Ident {
+                id: InternedIdent::SELF,
+                span: self_span.clone(),
+            },
+            ty: Ty::new(kind, self_span),
+            var_id: VarId::SELF_VARIABLE,
         })
-        .collect();
+    });
+    let has_self = self_arg.is_some();
+
+    let explicit_args = args.args.iter().map(|arg| {
+        let ty = ty_from_typ_repr(&arg.typ, self_ty_opt_kind.as_ref());
+        FnArgDecl {
+            id: Ident::from(arg.id.clone()),
+            ty,
+            var_id: *arg.var_id.get().unwrap(),
+        }
+    });
+    let hir_args: Vec<FnArgDecl> = self_arg.into_iter().chain(explicit_args).collect();
 
     let rty = match rtype {
         RetTypRepr::Typ(typ) => ty_from_typ_repr(typ, self_ty_opt_kind.as_ref()),
@@ -57,16 +69,12 @@ pub(super) fn build_fn_signature(
 
     let genargs = lower_genargs(genargs_decl);
 
-    // impl ブロックの対象型は関連関数でも要るので、
-    // レシーバの有無で絞る前に控えておく。
-    let impl_self_ty_hir = self_ty.clone().map(|k| Ty::new(k, span.clone()));
-    let self_ty_hir = self_ty
-        .filter(|_| has_self)
-        .map(|k| Ty::new(k, span.clone()));
+    // impl ブロックの対象型は関連関数でも要る。
+    let impl_self_ty_hir = self_ty.map(|k| Ty::new(k, span.clone()));
 
     FnSignature {
         args: hir_args,
-        self_ty: self_ty_hir,
+        has_self,
         impl_self_ty: impl_self_ty_hir,
         rty,
         genargs,
@@ -79,32 +87,26 @@ fn build_fn_body(
     args: &ArgDeclList,
     stmts: &[biwac_ast::Stmt],
     expr: Option<&biwac_ast::Exprs>,
-    has_self: bool,
-    self_ty: Option<&TyKind>,
     signature: &FnSignature,
     errors: &mut Vec<ResolveError>,
 ) -> FnBody {
-    let self_var_id = has_self.then_some(VarId::SELF_VARIABLE);
+    let self_var_id = signature.has_self.then_some(VarId::SELF_VARIABLE);
 
-    let mut ctx = ExprLowerCtx::new();
+    let mut ctx = ExprLowerCtx::new(signature.impl_self_ty.as_ref().map(|t| t.kind.clone()));
 
     // self
-    if let (Some(svid), Some(sty)) = (self_var_id, self_ty) {
-        let self_span = signature.self_ty.as_ref().unwrap().span.clone();
+    if let (Some(svid), Some(self_arg)) = (self_var_id, signature.args.first()) {
         ctx.declare_var(
             svid,
             biwac_hir::DecledVar {
-                id: Ident {
-                    id: InternedIdent::SELF,
-                    span: self_span.clone(),
-                },
-                ty: Ty::new(sty.clone(), self_span),
+                id: self_arg.id.clone(),
+                ty: self_arg.ty.clone(),
             },
         );
     }
 
     // explicit args
-    for (arg, sarg) in args.args.iter().zip(signature.args.iter()) {
+    for (arg, sarg) in args.args.iter().zip(signature.explicit_args().iter()) {
         let ty = sarg.ty.clone();
         ctx.declare_var(
             *arg.var_id.get().unwrap(),
@@ -219,7 +221,7 @@ pub(super) fn lower_fn_def(
         &fn_def.args,
         &fn_def.rtype,
         None,
-        false,
+        None,
         &fn_def.genargs,
         impl_genargs.clone(),
         fn_def.span.clone(),
@@ -229,8 +231,6 @@ pub(super) fn lower_fn_def(
         &fn_def.args,
         &fn_def.stmts,
         fn_def.expr.as_ref(),
-        false,
-        None,
         &signature,
         errors,
     );
@@ -259,7 +259,7 @@ pub(super) fn lower_native_fn_def(
         &fn_def.args,
         &fn_def.rtype,
         None,
-        false,
+        None,
         &fn_def.genargs,
         impl_genargs.clone(),
         fn_def.span.clone(),
@@ -579,7 +579,7 @@ pub(super) fn lower_impl_block(
             &fn_def.args,
             &fn_def.rtype,
             Some(self_ty_kind.clone()),
-            false,
+            None,
             &fn_def.genargs,
             impl_genargs.clone(),
             fn_def.span.clone(),
@@ -588,8 +588,6 @@ pub(super) fn lower_impl_block(
             &fn_def.args,
             &fn_def.stmts,
             fn_def.expr.as_ref(),
-            false,
-            Some(&self_ty_kind),
             &signature,
             errors,
         );
@@ -615,7 +613,7 @@ pub(super) fn lower_impl_block(
             &args_list,
             &method_def.rtype,
             Some(self_ty_kind.clone()),
-            true,
+            Some(method_def.args.self_span.clone()),
             &method_def.genargs,
             impl_genargs.clone(),
             method_def.span.clone(),
@@ -624,8 +622,6 @@ pub(super) fn lower_impl_block(
             &args_list,
             &method_def.stmts,
             method_def.expr.as_ref(),
-            true,
-            Some(&self_ty_kind),
             &signature,
             errors,
         );
@@ -647,7 +643,7 @@ pub(super) fn lower_impl_block(
             &fn_def.args,
             &fn_def.rtype,
             Some(self_ty_kind.clone()),
-            false,
+            None,
             &fn_def.genargs,
             impl_genargs.clone(),
             fn_def.span.clone(),
@@ -680,7 +676,7 @@ pub(super) fn lower_impl_block(
             &args_list,
             &method_def.rtype,
             Some(self_ty_kind.clone()),
-            true,
+            Some(method_def.args.self_span.clone()),
             &method_def.genargs,
             impl_genargs.clone(),
             method_def.span.clone(),
@@ -805,14 +801,14 @@ pub(crate) fn lower_trait_def(trait_def: &biwac_ast::TraitDef) -> (TraitDefId, T
         .items
         .iter()
         .map(|item| {
-            let (args, is_method) = match &item.args {
-                biwac_ast::TraitItemArgs::Assoc(a) => (a, false),
+            let (args, self_span) = match &item.args {
+                biwac_ast::TraitItemArgs::Assoc(a) => (a, None),
                 biwac_ast::TraitItemArgs::Method(a) => (
                     &ArgDeclList {
                         args: a.args.clone(),
                         span: a.span.clone(),
                     },
-                    true,
+                    Some(a.self_span.clone()),
                 ),
             };
 
@@ -820,7 +816,7 @@ pub(crate) fn lower_trait_def(trait_def: &biwac_ast::TraitDef) -> (TraitDefId, T
                 args,
                 &item.rtype,
                 Some(self_ty_kind.clone()),
-                is_method,
+                self_span,
                 &item.genargs,
                 Vec::new(),
                 item.span.clone(),
@@ -981,7 +977,7 @@ fn substitute_signature(sig: &FnSignature, assigns: &HashMap<GenDefId, TyKind>) 
                 var_id: a.var_id,
             })
             .collect(),
-        self_ty: sig.self_ty.clone().map(|t| t.embody_by_gen_ty_id(assigns)),
+        has_self: sig.has_self,
         impl_self_ty: sig
             .impl_self_ty
             .clone()
@@ -995,23 +991,26 @@ fn substitute_signature(sig: &FnSignature, assigns: &HashMap<GenDefId, TyKind>) 
 
 /// 食い違っていれば、その説明を返す。
 fn signature_mismatch(expected: &FnSignature, actual: &FnSignature) -> Option<String> {
-    if expected.self_ty.is_some() != actual.self_ty.is_some() {
-        return Some(if expected.self_ty.is_some() {
+    if expected.has_self != actual.has_self {
+        return Some(if expected.has_self {
             "the trait declares this as a method taking `self`".to_string()
         } else {
             "the trait declares this as an associated function without `self`".to_string()
         });
     }
 
-    if expected.args.len() != actual.args.len() {
+    // `self` の型は比べない。宣言の `Self` は実装の対象型そのものであり、
+    // 型エイリアスへの impl などでは表記が食い違いうるだけで意味は同じだからである。
+    let (expected_args, actual_args) = (expected.explicit_args(), actual.explicit_args());
+    if expected_args.len() != actual_args.len() {
         return Some(format!(
             "expected {} argument(s), found {}",
-            expected.args.len(),
-            actual.args.len()
+            expected_args.len(),
+            actual_args.len()
         ));
     }
 
-    for (i, (e, a)) in expected.args.iter().zip(&actual.args).enumerate() {
+    for (i, (e, a)) in expected_args.iter().zip(actual_args).enumerate() {
         if e.ty.kind != a.ty.kind {
             return Some(format!("argument {} has a different type", i + 1));
         }

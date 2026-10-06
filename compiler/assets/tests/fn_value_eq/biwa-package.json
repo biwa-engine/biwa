@@ -1,0 +1,14 @@
+{
+  "name": "fn_value_eq",
+  "version": "0.1.0",
+  "description": "rejects comparing function values even when the type is decided later",
+  "dependencies": [
+    {
+      "name": "std",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

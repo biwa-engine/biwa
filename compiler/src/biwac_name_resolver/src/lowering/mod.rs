@@ -88,7 +88,14 @@ pub(crate) fn lower(
     // 名前解決は alias をその場で canonical な TyDefId に潰さない
     // (潰すと `type MyGame = Game[A, B]` の [A, B] が失われるため)。
     // 代わりにここで、すべての型・値を lower し終えたあとに一括で展開する。
-    alias_expansion::expand_aliases(&mut hir, &mut errors);
+    //
+    // 依存パッケージの型エイリアス (`fn_lib::IntFn`) も同じく展開する。
+    // `.biwameta` に書かれた右辺は展開済みである。
+    let ext_aliases: HashMap<TyDefId, TypeAliasDef> = ext_pkgs
+        .iter()
+        .flat_map(|p| p.meta.ext_type_aliases(p.pkg_id, interner))
+        .collect();
+    alias_expansion::expand_aliases(&mut hir, &ext_aliases, &mut errors);
 
     if errors.is_empty() {
         Ok(hir)
@@ -218,6 +225,23 @@ pub(crate) fn ty_kind_from_typ_repr(typ: &TypRepr, self_typ: Option<&TyKind>) ->
         TypReprVal::SelfTyp => self_typ
             .unwrap_or_else(|| panic!("compiler bug: SelfTyp outside impl context: {typ:?}"))
             .clone(),
+        TypReprVal::Fn(fn_typ) => TyKind::Fn(biwac_hir::FnTy {
+            args: fn_typ
+                .args
+                .iter()
+                .map(|t| ty_from_typ_repr(t, self_typ))
+                .collect(),
+            rty: Box::new(match &fn_typ.rty {
+                Some(rty) => ty_from_typ_repr(rty, self_typ),
+                // 戻り値の無い関数型。位置は型表現の末尾に置く。
+                None => Ty::new(
+                    TyKind::Void,
+                    biwac_span::Span::new(typ.span.module(), typ.span.end(), typ.span.end()),
+                ),
+            }),
+            // 型の中に量化子は持てないので、関数型の値は常に単相である。
+            genargs: Vec::new(),
+        }),
     }
 }
 

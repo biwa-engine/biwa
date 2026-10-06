@@ -1,7 +1,7 @@
 use std::cell::Cell;
 
 use biwac_ast::{BinOperator, UnOperator};
-use biwac_hir::{BlockExpr, Callee, Expr, ExprVal, Literal, Primary, VarIdKind};
+use biwac_hir::{BlockExpr, CallTarget, Expr, ExprVal, Literal, MethodTarget, Primary, VarIdKind};
 use biwac_span::VarId;
 use oxc_allocator::FromIn;
 
@@ -10,7 +10,16 @@ use crate::arch::typescript::{AsOxcLocal, Mangled, span, yield_expr};
 impl Mangled for VarIdKind {
     fn mangled(&self, ctx: &super::AstBuildCtx) -> String {
         match self {
-            VarIdKind::Global(def_id) => ctx.get_value_mangled(def_id),
+            // 呼び先は関数そのものなので、self 型は名前に出ない。
+            VarIdKind::Fn(def_id) | VarIdKind::Assoc { def_id, .. } => {
+                ctx.get_value_mangled(def_id)
+            }
+            // 実装が単相化まで決まらない項目は TypeScript では出せない。
+            // 呼び出しは driver がこの手前で弾き、値にするのは型推論が弾いている。
+            VarIdKind::TraitAssoc { .. } => panic!(
+                "compiler bug: a trait-bound item reached the TypeScript backend; \
+                 the driver must reject it first"
+            ),
             VarIdKind::Local(var_id) => var_id.mangled(ctx),
         }
     }
@@ -19,31 +28,6 @@ impl Mangled for VarIdKind {
 impl Mangled for VarId {
     fn mangled(&self, _ctx: &super::AstBuildCtx) -> String {
         format!("__lv{}", self.value())
-    }
-}
-
-impl<'a> AsOxcLocal<'a, oxc_span::Ident<'a>> for Callee {
-    fn as_oxc_local(
-        &'a self,
-        ctx: &'a super::AstBuildCtx<'a>,
-        _fctx: &mut super::FnAstBuildCtx<'a>,
-    ) -> oxc_span::Ident<'a> {
-        match self {
-            Self::Var(var_id) => {
-                oxc_span::Ident::new_const(ctx.allocator.alloc_str(&var_id.mangled(ctx)))
-            }
-            // 呼び先は関数そのものなので、self 型は名前に出ない。
-            // 型引数は単相化で解決済みである。
-            // 実装が単相化まで決まらない呼び出しは TypeScript では出せない。
-            // driver がこの手前で弾いているので、ここには来ない。
-            Self::TraitAssoc { .. } => panic!(
-                "compiler bug: a trait-bound call reached the TypeScript backend; \
-                 the driver must reject it first"
-            ),
-            Self::Fn(def_id) | Self::AssocFn { def_id, .. } => {
-                oxc_span::Ident::new_const(ctx.allocator.alloc_str(&def_id.mangled(ctx)))
-            }
-        }
     }
 }
 
@@ -196,6 +180,23 @@ impl<'a> AsOxcLocal<'a, oxc_ast::ast::Expression<'a>> for Expr {
                         ))
                     }
                 },
+                // 無名関数は持ち上げた関数への参照である (関数は hir.vals の側から出力される)。
+                Primary::Lambda(l) => {
+                    let def_id = l
+                        .lifted
+                        .get()
+                        .expect("compiler bug: a lambda is not lifted after inference");
+                    oxc_ast::ast::Expression::Identifier(oxc_allocator::Box::new_in(
+                        oxc_ast::ast::IdentifierReference {
+                            span: span(),
+                            name: oxc_span::Ident::new_const(
+                                ctx.allocator.alloc_str(&ctx.get_value_mangled(def_id)),
+                            ),
+                            reference_id: Cell::new(None),
+                        },
+                        ctx.allocator,
+                    ))
+                }
                 Primary::Variable(v) => {
                     oxc_ast::ast::Expression::Identifier(oxc_allocator::Box::new_in(
                         oxc_ast::ast::IdentifierReference {
@@ -208,31 +209,61 @@ impl<'a> AsOxcLocal<'a, oxc_ast::ast::Expression<'a>> for Expr {
                         ctx.allocator,
                     ))
                 }
-                Primary::FnCall(c) => {
+                Primary::Call(c) => {
+                    let target = *c
+                        .target
+                        .get()
+                        .expect("compiler bug: a call is not classified after inference");
+
+                    let arg = |e: &'a Expr, fctx: &mut super::FnAstBuildCtx<'a>| {
+                        oxc_ast::ast::Argument::from(e.as_oxc_local(ctx, fctx))
+                    };
+                    let (callee, args) = match target {
+                        // 関数・関連関数は名前、関数型の値は式そのものを呼ぶ。
+                        // 関数型のメンバ (`self.on_click(e)`) は、struct がオブジェクトなので
+                        // `left.member(args)` がそのままメンバの関数を呼ぶ。
+                        CallTarget::Static(_) | CallTarget::Value => {
+                            let callee = c.callee.as_oxc_local(ctx, fctx);
+                            let args: Vec<_> = c.args.iter().map(|a| arg(a, fctx)).collect();
+                            (callee, args)
+                        }
+                        // メソッドは関数として出力されている。self は第一引数として与える。
+                        CallTarget::Method(MethodTarget::Direct(def_id)) => {
+                            let ExprVal::Primary(Primary::MemberAccess(m)) = &c.callee.expr else {
+                                panic!("compiler bug: a method call without a member access callee")
+                            };
+                            let callee =
+                                oxc_ast::ast::Expression::Identifier(oxc_allocator::Box::new_in(
+                                    oxc_ast::ast::IdentifierReference {
+                                        span: span(),
+                                        name: oxc_span::Ident::new_const(
+                                            ctx.allocator
+                                                .alloc_str(&ctx.get_value_mangled(&def_id)),
+                                        ),
+                                        reference_id: Cell::new(None),
+                                    },
+                                    ctx.allocator,
+                                ));
+                            let mut args = vec![arg(&m.left, fctx)];
+                            args.extend(c.args.iter().map(|a| arg(a, fctx)));
+                            (callee, args)
+                        }
+                        // driver が手前で弾いているので、ここには来ない。
+                        CallTarget::Method(MethodTarget::Trait(_)) | CallTarget::TraitItem(_) => {
+                            panic!(
+                                "compiler bug: a trait-bound call reached the TypeScript backend; \
+                                 the driver must reject it first"
+                            )
+                        }
+                    };
+
                     let call =
                         oxc_ast::ast::Expression::CallExpression(oxc_allocator::Box::new_in(
                             oxc_ast::ast::CallExpression {
                                 span: span(),
-                                callee: oxc_ast::ast::Expression::Identifier(
-                                    oxc_allocator::Box::new_in(
-                                        oxc_ast::ast::IdentifierReference {
-                                            span: span(),
-                                            name: oxc_span::Ident::new_const(
-                                                ctx.allocator
-                                                    .alloc_str(&c.callee.as_oxc_local(ctx, fctx)),
-                                            ),
-                                            reference_id: Cell::new(None),
-                                        },
-                                        ctx.allocator,
-                                    ),
-                                ),
+                                callee,
                                 type_arguments: None,
-                                arguments: oxc_allocator::Vec::from_iter_in(
-                                    c.args.iter().map(|a| {
-                                        oxc_ast::ast::Argument::from(a.as_oxc_local(ctx, fctx))
-                                    }),
-                                    ctx.allocator,
-                                ),
+                                arguments: oxc_allocator::Vec::from_iter_in(args, ctx.allocator),
                                 optional: false,
                                 pure: false,
                             },
@@ -241,9 +272,8 @@ impl<'a> AsOxcLocal<'a, oxc_ast::ast::Expression<'a>> for Expr {
 
                     // scene は generator なので、呼ぶ側が委譲しなければならない。
                     // 呼び出し先が出した syscall はそのまま外側の kernel まで抜ける。
-                    match &c.callee {
-                        // scene は型の関連関数にはならないので Fn だけ見ればよい。
-                        Callee::Fn(def_id) if ctx.is_scene(def_id) => {
+                    match target {
+                        CallTarget::Static(def_id) if ctx.is_scene(&def_id) => {
                             yield_expr(call, true, ctx.allocator)
                         }
                         _ => call,
@@ -299,49 +329,6 @@ impl<'a> AsOxcLocal<'a, oxc_ast::ast::Expression<'a>> for Expr {
                     ))
                 }
                 Primary::Block(block) => block.as_oxc_local(ctx, fctx),
-                Primary::MethodCall(m) => {
-                    // driver が手前で弾いているので、ここに来るのは
-                    // 実装が確定しているメソッドだけである。
-                    let Some(biwac_hir::MethodTarget::Direct(def_id)) = m.target.get() else {
-                        panic!(
-                            "compiler bug: a trait-bound method call reached the TypeScript backend; \
-                             the driver must reject it first"
-                        )
-                    };
-                    let callee_mangled_name = ctx.get_value_mangled(def_id);
-
-                    // selfは第一引数として与える
-                    let mut args =
-                        vec![oxc_ast::ast::Argument::from(m.left.as_oxc_local(ctx, fctx))];
-                    args.extend(
-                        m.args
-                            .iter()
-                            .map(|a| oxc_ast::ast::Argument::from(a.as_oxc_local(ctx, fctx))),
-                    );
-
-                    oxc_ast::ast::Expression::CallExpression(oxc_allocator::Box::new_in(
-                        oxc_ast::ast::CallExpression {
-                            span: span(),
-                            callee: oxc_ast::ast::Expression::Identifier(
-                                oxc_allocator::Box::new_in(
-                                    oxc_ast::ast::IdentifierReference {
-                                        span: span(),
-                                        name: oxc_span::Ident::new_const(
-                                            ctx.allocator.alloc_str(&callee_mangled_name),
-                                        ),
-                                        reference_id: Cell::new(None),
-                                    },
-                                    ctx.allocator,
-                                ),
-                            ),
-                            type_arguments: None,
-                            arguments: oxc_allocator::Vec::from_iter_in(args, ctx.allocator),
-                            optional: false,
-                            pure: false,
-                        },
-                        ctx.allocator,
-                    ))
-                }
             },
             ExprVal::Unary(u) => {
                 oxc_ast::ast::Expression::UnaryExpression(oxc_allocator::Box::new_in(
