@@ -490,7 +490,13 @@ impl DepMetadata {
         }
 
         // top-level fn を所属モジュールに登録
-        for item in &top_fn_items {
+        //
+        // 無名関数を持ち上げた関数は名前で引けてはならないので載せない
+        // (シンボルとしては書き出す。依存元の単相化が `.biwamir` 越しに参照するため)。
+        for item in top_fn_items
+            .iter()
+            .filter(|item| !hir.lambdas.contains(&item.val_def_id))
+        {
             let mod_id = item.name.span.module();
             if let Some(ms) = source_holder.mods.get(&mod_id)
                 && let Some(&sym) = val_to_sym.get(&item.val_def_id)

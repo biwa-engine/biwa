@@ -305,6 +305,23 @@ fn expand_primary(primary: &mut Primary, aliases: &HashMap<TyDefId, TypeAliasDef
             }
         }
         Primary::Literal(_) => {}
+        // 引数と戻り値の注釈、本体。引数の型は外側の関数の変数表にも載っている (そちらは本体の展開で展開される)。
+        Primary::Lambda(l) => {
+            for arg in &mut l.args {
+                if let Some(ty) = &mut arg.ty {
+                    *ty = expand_ty(ty.clone(), aliases);
+                }
+            }
+            if let Some(rty) = &mut l.rty {
+                *rty = expand_ty(rty.clone(), aliases);
+            }
+            for stmt in &mut l.stmts {
+                expand_stmt(stmt, aliases);
+            }
+            if let Some(expr) = &mut l.expr {
+                expand_expr(expr, aliases);
+            }
+        }
     }
 }
 

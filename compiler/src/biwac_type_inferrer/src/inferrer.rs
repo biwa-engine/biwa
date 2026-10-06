@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, hash_map::Entry};
 
 pub(crate) mod context;
+mod lambda;
 
 use biwac_ast::{BinOperator, UnOperator};
 use biwac_base::InternedIdent;
@@ -1504,6 +1505,7 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                 }
             }
             Primary::Call(c) => self.infer_call(expr_id, c, primary.span()),
+            Primary::Lambda(l) => self.infer_lambda(l),
             Primary::MemberAccess(m) => {
                 let left = self.infer_expr(&m.left)?;
 
@@ -1869,6 +1871,64 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
         Ok(rty)
     }
 
+    /// 無名関数を型付けする。
+    ///
+    /// 外側の関数と同じ文脈で推論するので、注釈の無い引数・戻り値の型は、
+    /// 本体の使い方と、無名関数を渡した先などの文脈から決まる。
+    /// 本体の `return` は無名関数から返るので、推論の間だけ戻り値の型を差し替える。
+    fn infer_lambda(&mut self, l: &biwac_hir::Lambda) -> TyResult<Ty> {
+        let mut arg_tys = Vec::with_capacity(l.args.len());
+        for arg in &l.args {
+            let ty = match &arg.ty {
+                Some(ty) => ty.clone(),
+                None => Ty::new(self.fresh(), arg.id.span.clone()),
+            };
+            self.vars.insert(arg.var_id, ty.clone());
+            arg_tys.push(ty);
+        }
+
+        let rty = match &l.rty {
+            Some(ty) => ty.clone(),
+            None => Ty::new(self.fresh(), l.span.clone()),
+        };
+        let outer_rty = std::mem::replace(&mut self.rty, rty.clone());
+        let res = self.infer_lambda_body(l);
+        self.rty = outer_rty;
+        res?;
+
+        Ok(Ty::new(
+            TyKind::Fn(FnTy {
+                args: arg_tys,
+                rty: Box::new(rty),
+                genargs: vec![],
+            }),
+            l.span.clone(),
+        ))
+    }
+
+    /// 無名関数の本体。関数の本体の検査 (`infer_fn_body`) と同じ規則で戻り値の型と突き合わせる。
+    fn infer_lambda_body(&mut self, l: &biwac_hir::Lambda) -> TyResult<()> {
+        let mut stmt_last_ty = None;
+        for stmt in &l.stmts {
+            stmt_last_ty = self.infer_stmt(stmt)?;
+        }
+
+        if let Some(expr) = &l.expr {
+            let ty = self.infer_expr(expr)?;
+            self.unify(self.rty.clone(), ty)?;
+        } else if let Some(ty) = stmt_last_ty {
+            self.unify(self.rty.clone(), ty)?;
+        } else if l.rty.is_none() {
+            // 戻り値の型を書かず、値も返さない本体なら Void を返す。
+            self.unify(self.rty.clone(), Ty::new(TyKind::Void, l.span.clone()))?;
+        } else if self.apply_ty(self.rty.clone()).kind != TyKind::Void {
+            return Err(TyError::ReturnTypeRequired {
+                rty: Box::new(self.rty.clone()),
+            });
+        }
+        Ok(())
+    }
+
     /// 関数型の値の呼び出しを型付けする (`f(x)`、`make()(x)`、`self.on_click(e)`)。
     ///
     /// `callee_ty` は呼び先の値の型で、span は呼び先の位置にしておく
@@ -2014,7 +2074,15 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
         match stmt {
             Stmt::VarDecl(v) => {
                 let ty = self.infer_expr(&v.init)?;
-                let ty = self.apply_ty(ty);
+                // 型が書かれていれば、初期化式の型と突き合わせる。
+                // 無名関数の引数の型のように、初期化式だけでは決まらないものが注釈から決まる。
+                let ty = match self.annotations.get(&v.id).cloned() {
+                    Some(annotated) => {
+                        self.unify(annotated.clone(), ty)?;
+                        self.apply_ty(annotated)
+                    }
+                    None => self.apply_ty(ty),
+                };
 
                 // 変数に付いた型は、ターゲットによっては依存に含まれる
                 self.tctx.hir.deps_recorder.borrow_mut().depends_on_ty(&ty);
@@ -2268,6 +2336,14 @@ impl<'a> TyCtx<'a> {
             deps.depends_on_ty(&fn_signature.rty);
         }
 
+        // `let x: T` の型注釈 (書かれていないものは `Infer` で、突き合わせない)。
+        fctx.annotations = fn_body
+            .vars
+            .iter()
+            .filter(|(_, v)| !matches!(v.ty.kind, TyKind::Infer(_)))
+            .map(|(id, v)| (*id, v.ty.clone()))
+            .collect();
+
         // 引数を決定済みの型として文脈に記録
         // メソッドなら第一引数が `self` (`VarId::SELF_VARIABLE`) である
         for arg in &fn_signature.args {
@@ -2489,6 +2565,9 @@ impl<'a> TyCtx<'a> {
                 }
             }
         }
+
+        // 無名関数を、決まった型でトップレベルの関数に持ち上げる。
+        self.lift_lambdas();
 
         Ok(())
     }

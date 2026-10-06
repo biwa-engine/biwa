@@ -8,7 +8,6 @@ use crate::ResolveError;
 use super::{
     expressions::{ExprLowerCtx, lower_expr, lower_primary},
     patterns::lower_pattern,
-    ty_from_typ_repr,
 };
 
 pub(crate) fn lower_stmt(
@@ -88,7 +87,7 @@ pub(crate) fn lower_stmt(
                 None => return None,
             };
             let init = lower_expr(ctx, &var_decl.init, errors)?;
-            let ty = lower_var_decl_ty(&var_decl.typ, &var_decl.id.span);
+            let ty = lower_var_decl_ty(ctx, &var_decl.typ, &var_decl.id.span);
             ctx.declare_var(
                 var_id,
                 DecledVar {
@@ -127,11 +126,16 @@ pub(crate) fn lower_block_stmt(
     }
 }
 
-fn lower_var_decl_ty(typ: &biwac_ast::TypDecl, var_span: &biwac_span::Span) -> Ty {
+fn lower_var_decl_ty(
+    ctx: &ExprLowerCtx,
+    typ: &biwac_ast::TypDecl,
+    var_span: &biwac_span::Span,
+) -> Ty {
     match typ {
         biwac_ast::TypDecl::Any => {
             Ty::new(TyKind::Infer(biwac_hir::InferTy::Unknown), var_span.clone())
         }
-        biwac_ast::TypDecl::Typ(typ_repr) => ty_from_typ_repr(typ_repr, None),
+        // `Self` は impl の対象型になる (impl の外なら名前解決が弾いている)。
+        biwac_ast::TypDecl::Typ(typ_repr) => ctx.lower_ty(typ_repr),
     }
 }

@@ -275,3 +275,18 @@ fn text_after_an_embedded_call_is_not_an_argument_list() {
         shape("$name()(ことのは びわ)\n")
     );
 }
+
+#[test]
+fn a_fn_literal_in_code_line() {
+    use biwac_ast::{Exprs, Primary};
+
+    let stmts = parse("#let f = fn(x) { x * 2 }\n").expect("should parse");
+    let found = stmts.iter().any(|s| {
+        matches!(
+            s,
+            NovelStmt::VarDecl(v)
+                if matches!(&v.init, Exprs::Primary(Primary::FnLiteral(_)))
+        )
+    });
+    assert!(found, "expected a fn literal: {stmts:#?}");
+}

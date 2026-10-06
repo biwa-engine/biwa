@@ -66,6 +66,14 @@ pub enum ResolveError {
         span: Span,
     },
 
+    /// 無名関数の中から外側の局所変数 (引数・`let`・`self` など) を参照した。
+    ///
+    /// 捕捉はクロージャになるが、クロージャは未対応である
+    /// (`docs/function-as-the-first-class-type.md`)。
+    CaptureUnsupported {
+        ident: biwac_ast::Ident,
+    },
+
     IdentNotFound {
         ident: biwac_ast::Ident,
     },
@@ -400,6 +408,24 @@ impl BiwacError for ResolveError {
                 ctx.diagnostic("`self` is not usable here.")
                     .label(at(span), "`self` is only available in a method")
                     .print();
+            }
+
+            Self::CaptureUnsupported { ident } => {
+                let name = if ident.id == InternedIdent::SELF {
+                    "self"
+                } else {
+                    ident_str(ctx, &ident.id)
+                };
+
+                ctx.diagnostic(format!(
+                    "`{name}` is a local variable outside this anonymous function; closures are not supported yet."
+                ))
+                .label(at(&ident.span), "captured here")
+                .note(
+                    "an anonymous function can only refer to its own arguments and variables, \
+                     and to global items such as functions",
+                )
+                .print();
             }
 
             Self::IdentNotFound { ident } => {

@@ -600,9 +600,20 @@ fn load_analyze_and_codegen_single_package(
     let well_known_scenes = biwac_scene::check(&hir, &lang_items, pkg_kind, root_mod_id, interner)
         .map_err(|errs| print_errors(&errs, interner, &srcs, metadata))?;
 
+    let hir =
+        biwac_type_inferrer::TyCtx::new(hir, lang_items.clone(), ext_pkgs_for_ty.clone(), interner)
+            .infer()
+            .map_err(|e| {
+                print_errors(std::slice::from_ref(e.as_ref()), interner, &srcs, metadata)
+            })?;
+
     // Persist self package's symbol metadata to disk for dependents.
     // lang item テーブルと host export のフラグも書き出すので、
     // 依存側はこれを読んで復元する。
+    //
+    // 型推論の後に書く。無名関数を持ち上げた関数は型推論の後でできるが、
+    // 依存元の単相化が `.biwamir` 越しに参照するのでシンボルが要る
+    // (型推論はシグニチャを変えないので、それ以外の中身は推論の前と同じである)。
     let (svh, symbol_index) = persist_dep_metadata(
         &hir,
         &lang_items,
@@ -614,13 +625,6 @@ fn load_analyze_and_codegen_single_package(
         options.target,
         metadata,
     )?;
-
-    let hir =
-        biwac_type_inferrer::TyCtx::new(hir, lang_items.clone(), ext_pkgs_for_ty.clone(), interner)
-            .infer()
-            .map_err(|e| {
-                print_errors(std::slice::from_ref(e.as_ref()), interner, &srcs, metadata)
-            })?;
 
     // MIR は `.biwameta` と対で毎ビルド書き出す。
     // 単相化するターゲットは依存パッケージの本体を必要とするので、
@@ -1209,7 +1213,8 @@ mod tests {
             | "fn_value_trait_item"
             | "fn_value_eq"
             | "fn_value_not_a_method"
-            | "fn_lib" => &["std"],
+            | "fn_lib"
+            | "fn_value_capture" => &["std"],
             "fn_user" | "fn_user_scene" => &["std", "fn_lib"],
             _ => &[],
         };
@@ -1869,6 +1874,26 @@ mod tests {
         assert!(
             result.is_err(),
             "a scene of a dependency used as a value must be rejected"
+        );
+    }
+
+    /// 無名関数が外側の局所変数 (引数・`let`・`self`) を参照するとエラーになること。
+    #[test]
+    fn anonymous_function_capture_is_an_error() {
+        ensure_fixture_deps("fn_value_capture");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/fn_value_capture").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "an anonymous function capturing a local variable must be rejected"
         );
     }
 

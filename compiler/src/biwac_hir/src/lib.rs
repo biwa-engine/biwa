@@ -11,9 +11,9 @@ pub use crate::hir::{
         Ident,
         expressions::{
             BinaryExpr, BlockExpr, Call, CallTarget, Expr, ExprId, ExprVal, FieldBinding, IfExpr,
-            Literal, MatchExpr, MatchExprArm, MemberAccess, MethodTarget, Pattern, PatternFields,
-            Primary, ResolvedVariant, StructLiteral, UnaryExpr, VarIdKind, Variable, VariantCtor,
-            VariantCtorFields, VariantPattern,
+            Lambda, LambdaArg, Literal, MatchExpr, MatchExprArm, MemberAccess, MethodTarget,
+            Pattern, PatternFields, Primary, ResolvedVariant, StructLiteral, UnaryExpr, VarIdKind,
+            Variable, VariantCtor, VariantCtorFields, VariantPattern,
         },
         globals::{
             AssocValDefKind, DecledArg, EnumDef, FnArgDecl, FnBody, FnDef, FnSignature, GenArgDef,

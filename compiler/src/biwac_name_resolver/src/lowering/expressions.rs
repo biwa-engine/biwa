@@ -5,8 +5,8 @@ use biwac_span::{DefIdKind, VarId};
 
 use biwac_hir::{
     BinaryExpr, BlockExpr, Call, DecledVar, DefinedTy, Expr, ExprId, ExprVal, Ident, IfExpr,
-    Literal, MatchExpr, MatchExprArm, MemberAccess, Primary, Stmt, StructLiteral, Ty, TyKind,
-    UnaryExpr, VarIdKind, Variable, VariantCtor, VariantCtorFields,
+    Lambda, LambdaArg, Literal, MatchExpr, MatchExprArm, MemberAccess, Primary, Stmt,
+    StructLiteral, Ty, TyKind, UnaryExpr, VarIdKind, Variable, VariantCtor, VariantCtorFields,
 };
 
 use crate::ResolveError;
@@ -16,19 +16,26 @@ use super::{
 };
 
 pub(crate) struct ExprLowerCtx {
-    // self_ty: Option<TyKind>,
+    /// 本体の中の型注釈に書かれた `Self` の型 (impl ブロックの中なら impl の対象型)。
+    self_ty: Option<TyKind>,
     next_expr_id: usize,
     vars: HashMap<VarId, DecledVar>,
     self_var_id: Option<VarId>,
 }
 
 impl ExprLowerCtx {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(self_ty: Option<TyKind>) -> Self {
         Self {
+            self_ty,
             next_expr_id: 0,
             vars: HashMap::new(),
             self_var_id: None,
         }
+    }
+
+    /// 本体の中の型注釈を下ろす。
+    pub(crate) fn lower_ty(&self, typ: &biwac_ast::TypRepr) -> Ty {
+        super::ty_from_typ_repr(typ, self.self_ty.as_ref())
     }
 
     pub(crate) fn alloc_expr_id(&mut self) -> ExprId {
@@ -247,7 +254,62 @@ pub(crate) fn lower_primary(
         }
 
         biwac_ast::Primary::Call(call) => lower_call(ctx, call, errors),
+        biwac_ast::Primary::FnLiteral(f) => lower_fn_literal(ctx, f, errors),
     }
+}
+
+/// 無名関数を下ろす。
+///
+/// 引数と本体の変数は外側の関数の変数表に載せる (`VarId` は外側と通しで振られている)。
+/// 型推論が外側と同じ文脈で推論し、その後でトップレベルの関数に持ち上げる。
+fn lower_fn_literal(
+    ctx: &mut ExprLowerCtx,
+    f: &biwac_ast::FnLiteral,
+    errors: &mut Vec<ResolveError>,
+) -> Option<Primary> {
+    let mut args = Vec::with_capacity(f.args.len());
+    for arg in &f.args {
+        let var_id = *arg.var_id.get()?;
+        let ty = arg.typ.as_ref().map(|t| ctx.lower_ty(t));
+        ctx.declare_var(
+            var_id,
+            DecledVar {
+                id: Ident::from(arg.id.clone()),
+                ty: ty.clone().unwrap_or_else(|| {
+                    Ty::new(
+                        TyKind::Infer(biwac_hir::InferTy::Unknown),
+                        arg.id.span.clone(),
+                    )
+                }),
+            },
+        );
+        args.push(LambdaArg {
+            id: Ident::from(arg.id.clone()),
+            ty,
+            var_id,
+        });
+    }
+    let rty = f.rtype.as_ref().map(|t| ctx.lower_ty(t));
+
+    use super::statements::lower_stmt;
+    let stmts = f
+        .stmts
+        .iter()
+        .filter_map(|s| lower_stmt(ctx, s, errors))
+        .collect();
+    let expr = match &f.expr {
+        Some(e) => Some(Box::new(lower_expr(ctx, e, errors)?)),
+        None => None,
+    };
+
+    Some(Primary::Lambda(Lambda {
+        args,
+        rty,
+        stmts,
+        expr,
+        span: f.span.clone(),
+        lifted: OnceCell::new(),
+    }))
 }
 
 /// 呼び出し `<式> ( <引数列> )` を下ろす。

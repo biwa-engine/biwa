@@ -180,6 +180,23 @@ impl<'a> AsOxcLocal<'a, oxc_ast::ast::Expression<'a>> for Expr {
                         ))
                     }
                 },
+                // 無名関数は持ち上げた関数への参照である (関数は hir.vals の側から出力される)。
+                Primary::Lambda(l) => {
+                    let def_id = l
+                        .lifted
+                        .get()
+                        .expect("compiler bug: a lambda is not lifted after inference");
+                    oxc_ast::ast::Expression::Identifier(oxc_allocator::Box::new_in(
+                        oxc_ast::ast::IdentifierReference {
+                            span: span(),
+                            name: oxc_span::Ident::new_const(
+                                ctx.allocator.alloc_str(&ctx.get_value_mangled(def_id)),
+                            ),
+                            reference_id: Cell::new(None),
+                        },
+                        ctx.allocator,
+                    ))
+                }
                 Primary::Variable(v) => {
                     oxc_ast::ast::Expression::Identifier(oxc_allocator::Box::new_in(
                         oxc_ast::ast::IdentifierReference {

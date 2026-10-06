@@ -172,4 +172,9 @@ pub(crate) trait LocalResolveCtx: ResolveCtx {
         f: F,
     ) -> Result<(), Vec<ResolveError>>;
     fn resolve_self_var(&self, span: &Span) -> Result<VarId, ResolveError>;
+    /// 無名関数の本体を解決する。中から外側の局所変数を参照するとエラーになる。
+    fn lambda_scope<F: FnOnce(&mut Self) -> Result<(), Vec<ResolveError>>>(
+        &mut self,
+        f: F,
+    ) -> Result<(), Vec<ResolveError>>;
 }

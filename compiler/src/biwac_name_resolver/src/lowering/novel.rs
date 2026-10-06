@@ -61,7 +61,7 @@ fn build_novel_body(
     lang_items: &LangItemTable,
     errors: &mut Vec<ResolveError>,
 ) -> FnBody {
-    let mut ctx = ExprLowerCtx::new();
+    let mut ctx = ExprLowerCtx::new(None);
 
     // novel statement の展開先は game を第 1 引数に取る。
     //

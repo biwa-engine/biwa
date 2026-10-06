@@ -32,7 +32,7 @@ fn double(x: Int) -> Int {
   x * 2
 }
 
-// 期待値は 6+2+4+10+12+5+14+8+1+0 = 62。
+// 期待値は 6+2+4+10+12+5+14+8+1+0 + 5+101 = 168。
 // テストがホストから呼んで確かめられるよう export する。
 [[host_export="fn_user_compute"]]
 fn compute() -> Int {
@@ -52,7 +52,9 @@ fn compute() -> Int {
   let h = slot.call(3) + slot.f(1);                 // 6 + 2
   let endo: Endo[Int] = fn_lib::inc;
   let exec = Op::exec;                              // 依存のメソッドを値にする (exec(op, 0) = 0)
-  a + b + c + d + e + f + g + h + endo(0) + exec(op, 0)
+  let i = fn_lib::twice_via_lambda(5);              // 5 (依存の無名関数を実体化する)
+  let j = fn_lib::adder()(1);                       // 101 (依存の無名関数を呼ぶ)
+  a + b + c + d + e + f + g + h + endo(0) + exec(op, 0) + i + j
 }
 
 scene main(g: MyGame) -> MyGame {{

@@ -1,0 +1,23 @@
+// 無名関数は外側の局所変数を捕捉できない (クロージャは未対応)。
+// 名前解決のエラー (`CaptureUnsupported`) にならなければならない。
+// 引数・`let` の変数・`self` のどれも外側の局所変数である。
+
+struct Counter {
+  n: Int,
+}
+
+impl Counter {
+  fn adder(self) -> fn(Int) -> Int {
+    fn(x) { x + self.n }
+  }
+}
+
+fn capture_arg(n: Int) -> fn(Int) -> Int {
+  fn(x) { x + n }
+}
+
+fn capture_let() -> Int {
+  let n = 1;
+  let f = fn(x) { x + n };
+  f(1)
+}

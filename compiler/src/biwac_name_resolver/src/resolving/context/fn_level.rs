@@ -65,6 +65,11 @@ pub struct FnResolveCtx<'ctx, C: ResolveCtx> {
     scopes: Vec<VariableScope>,
     next_var_id: u32,
     self_var: Option<VarId>,
+    /// 無名関数の境界。中身は「その無名関数の本体が始まるスコープの添字」。
+    ///
+    /// 最も内側の境界より外のスコープの変数は、無名関数から見て外側の局所変数である。
+    /// 参照すると捕捉 (クロージャ) になるのでエラーにする。
+    lambda_barriers: Vec<usize>,
 }
 
 impl<'ctx, C: ResolveCtx> ResolveCtx for FnResolveCtx<'ctx, C> {
@@ -72,8 +77,18 @@ impl<'ctx, C: ResolveCtx> ResolveCtx for FnResolveCtx<'ctx, C> {
         if path.abs_header.is_none() && path.segments.len() == 1 {
             let interned_ident = &path.segments[0].ident.id;
 
-            for scope in self.scopes.iter().rev() {
+            for (index, scope) in self.scopes.iter().enumerate().rev() {
                 if let Some((var_id, _)) = scope.vars.get(interned_ident) {
+                    // 無名関数の外側の局所変数は捕捉になる。クロージャは未対応。
+                    if self.lambda_barriers.last().is_some_and(|b| index < *b) {
+                        path.segments[0]
+                            .resolved_id
+                            .set(biwac_ast::PathSegmentResolution::Err)
+                            .unwrap();
+                        return Err(ResolveError::CaptureUnsupported {
+                            ident: path.segments[0].ident.clone(),
+                        });
+                    }
                     let def_id_kind = DefIdKind::Var(*var_id);
                     path.segments[0]
                         .resolved_id
@@ -169,6 +184,7 @@ impl<'ctx, C: ResolveCtx> FnResolveCtx<'ctx, C> {
             scopes: vec![VariableScope::new()],
             next_var_id: 1,
             self_var: None,
+            lambda_barriers: Vec::new(),
         };
         if let Err(errs) = prectx.resolve_genarg_bounds(genargs_decl) {
             errors.extend(errs);
@@ -212,6 +228,7 @@ impl<'ctx, C: ResolveCtx> FnResolveCtx<'ctx, C> {
                 next_var_id,
                 scopes: vec![base_scope],
                 self_var,
+                lambda_barriers: Vec::new(),
             })
         } else {
             Err(errors)
@@ -247,7 +264,33 @@ impl<'ctx, C: ResolveCtx> LocalResolveCtx for FnResolveCtx<'ctx, C> {
         res
     }
 
+    fn lambda_scope<F: FnOnce(&mut Self) -> Result<(), Vec<ResolveError>>>(
+        &mut self,
+        f: F,
+    ) -> Result<(), Vec<ResolveError>> {
+        // 変数の番号は外側の関数と通し。無名関数は推論の後で外側から持ち上げるので、
+        // 外側と番号がぶつからないようにしておく。
+        self.lambda_barriers.push(self.scopes.len());
+        self.scopes.push(VariableScope::new());
+
+        let res = f(self);
+
+        self.scopes.pop().unwrap();
+        self.lambda_barriers.pop().unwrap();
+
+        res
+    }
+
     fn resolve_self_var(&self, span: &Span) -> Result<biwac_span::VarId, ResolveError> {
+        // `self` も外側の局所変数である。無名関数の中からは参照できない。
+        if self.self_var.is_some() && !self.lambda_barriers.is_empty() {
+            return Err(ResolveError::CaptureUnsupported {
+                ident: biwac_ast::Ident {
+                    id: biwac_base::InternedIdent::SELF,
+                    span: span.clone(),
+                },
+            });
+        }
         self.self_var
             .ok_or(ResolveError::UnexpectedSelfVariable { span: span.clone() })
     }

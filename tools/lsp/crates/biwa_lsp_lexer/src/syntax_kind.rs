@@ -136,6 +136,10 @@ pub enum SyntaxKind {
     TypeRepr,
     BlockStmt,
     BlockExpr,
+    /// 無名関数 `fn(x, y: Int) -> Int { .. }`。
+    FnLiteral,
+    /// 無名関数の引数 1 つ (`x` / `x: Int`)。
+    FnLiteralArg,
     ExprStmt,
     VarDefStmt,
     AssignStmt,

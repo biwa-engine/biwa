@@ -92,7 +92,7 @@ fn build_fn_body(
 ) -> FnBody {
     let self_var_id = signature.has_self.then_some(VarId::SELF_VARIABLE);
 
-    let mut ctx = ExprLowerCtx::new();
+    let mut ctx = ExprLowerCtx::new(signature.impl_self_ty.as_ref().map(|t| t.kind.clone()));
 
     // self
     if let (Some(svid), Some(self_arg)) = (self_var_id, signature.args.first()) {

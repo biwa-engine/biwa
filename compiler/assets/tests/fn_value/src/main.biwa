@@ -93,6 +93,12 @@ impl[T] Mapper[T] {
   fn map(self, x: T) -> T {
     self.f(x)
   }
+
+  // impl ブロックのジェネリック引数 `T` を使う無名関数。
+  fn map_via_lambda(self, x: T) -> T {
+    let id = fn(y: T) { y };
+    self.f(id(x))
+  }
 }
 
 // ステップ 4: メソッドは「第一引数が self の関連関数」。
@@ -192,7 +198,45 @@ fn step6() -> Int {
   endo_twice(e, 0) + r + n + c + d                  // 2 + 10 + 1 + 3 + 8 = 24
 }
 
-// 期待値は 102 (各行のコメントの合計)。テストがホストから呼んで確かめられるよう export する。
+// ステップ 7: 無名関数。
+fn pick_lambda(first: Bool) -> fn(Int) -> Int {
+  if first {
+    fn(x) { x }
+  } else {
+    fn(x) { x + 10 }
+  }
+}
+
+// 関数のジェネリック引数 `T` を使う無名関数 (持ち上げた関数も `T` について多相になる)。
+fn generic_lambda[T](x: T) -> T {
+  let id = fn(y: T) { y };
+  id(x)
+}
+
+fn step7() -> Int {
+  let inc = fn(x) { x + 1 };                     // 型は本体から決まる
+  let a = inc(1);                                // 2
+  let b = apply_twice(fn(x) { x * 3 }, 1);       // 9 (型は渡した先から決まる)
+  let typed: fn(Int) -> Int = fn(x) { x };       // 型は let の注釈から決まる
+  let c = typed(4);                              // 4
+  let d = fn(x: Int, y: Int) -> Int {            // 6 (文と return を持つ本体、その場で呼ぶ)
+    let s = x + y;
+    return s * 2;
+  }(1, 2);
+  let e = use_twice(fn(v) { v + v }, 1);         // 4
+  let f = pick_lambda(FALSE)(5);                 // 15 (関数から無名関数を返す)
+  let g = generic_lambda(7);                     // 7
+  let h = fn(x) { fn(y) { y + 1 }(x) }(1);       // 2 (入れ子)
+  let i = fn(x) { add_one(x) }(1);               // 2 (グローバルな関数は参照できる)
+  let op = Op::new(fn(x) { x - 1 });
+  let j = op.exec(5);                            // 4 (struct のメンバに入れる)
+  let k = run_action(Action::Run(fn(x) { x * x }), 3);   // 9 (enum のペイロードに入れる)
+  let m = Mapper { f = add_one };
+  let l = m.map_via_lambda(1);                   // 2
+  a + b + c + d + e + f + g + h + i + j + k + l  // 66
+}
+
+// 期待値は 168 (各行のコメントの合計)。テストがホストから呼んで確かめられるよう export する。
 [[host_export="fn_value_compute"]]
 fn compute() -> Int {
   let f: fn(Int) -> Int = add_one;
@@ -219,10 +263,11 @@ fn compute() -> Int {
   let p = map(m, 1);                     // 2 (`T` は受け手から決まる)
   let q = via_trait(Holder::make(3));    // 12
   let s6 = step6();                      // 24
+  let s7 = step7();                      // 66
   call_void(ignore, 1);
   if e {
     if compare_later() {
-      a + b + c + d + g + h + i + j + k + l + n + o + p + q + s6
+      a + b + c + d + g + h + i + j + k + l + n + o + p + q + s6 + s7
     } else {
       0
     }
@@ -235,6 +280,8 @@ scene main(g: MyGame) -> MyGame {{
   #let f: fn(Int) -> Int = add_one
   #let n = f(compute())
   #let p = pick(TRUE)(n)
+  #let lf = fn(x) { x * 2 }
+  #let lv = lf(p)
   Hello.
 
   #endscene g

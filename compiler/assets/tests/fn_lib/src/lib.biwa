@@ -64,6 +64,17 @@ fn run_action(a: Action, x: Int) -> Int {
   }
 }
 
+// ジェネリックな関数の中の無名関数。依存元が実体化するとき、持ち上げた関数も一緒に実体化される。
+fn twice_via_lambda[T](x: T) -> T {
+  let id = fn(y: T) { y };
+  twice(id, x)
+}
+
+// 無名関数を返す。
+fn adder() -> fn(Int) -> Int {
+  fn(x) { x + 100 }
+}
+
 struct LibCharacters {}
 
 struct LibState {}

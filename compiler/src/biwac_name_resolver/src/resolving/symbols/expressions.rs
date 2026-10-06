@@ -20,7 +20,45 @@ impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::Primary {
             biwac_ast::Primary::Match(m) => m.resolve(ctx),
             biwac_ast::Primary::Block(block) => block.resolve(ctx),
             biwac_ast::Primary::Call(call) => call.resolve(ctx),
+            biwac_ast::Primary::FnLiteral(f) => f.resolve(ctx),
         }
+    }
+}
+
+impl<C: LocalResolveCtx> LocalNameResolve<C> for biwac_ast::FnLiteral {
+    fn resolve(&self, ctx: &mut C) -> Result<(), Vec<crate::ResolveError>> {
+        // 本体からは外側の局所変数が見えない (見えたら捕捉としてエラー) ように、境界を張る。
+        ctx.lambda_scope(|ctx| {
+            let mut errors = Vec::new();
+
+            for arg in &self.args {
+                if let Some(typ) = &arg.typ {
+                    ctx.resolve_typ(typ).handle(&mut errors);
+                }
+                match ctx.declare_variable(&arg.id) {
+                    Ok(var_id) => {
+                        arg.var_id.set(var_id).unwrap();
+                    }
+                    Err(e) => errors.push(e),
+                }
+            }
+            if let Some(rtype) = &self.rtype {
+                ctx.resolve_typ(rtype).handle(&mut errors);
+            }
+
+            for stmt in &self.stmts {
+                stmt.resolve(ctx).handle(&mut errors);
+            }
+            if let Some(expr) = &self.expr {
+                expr.resolve(ctx).handle(&mut errors);
+            }
+
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors)
+            }
+        })
     }
 }
 

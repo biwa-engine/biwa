@@ -21,6 +21,8 @@ pub enum Primary {
     /// - `x.bar(a)` — 呼び先はメンバアクセス `x.bar`。メソッドかメンバ (関数型) の値かは型推論が決める
     /// - `make()(x)` — 呼び先は任意の式
     Call(CallExpr),
+    /// 無名関数 `fn(x, y: Int) -> Int { x + y }`。外側の局所変数は捕捉できない。
+    FnLiteral(FnLiteral),
 }
 
 impl Primary {
@@ -33,6 +35,7 @@ impl Primary {
             Self::Match(m) => m.span.clone(),
             Self::Block(b) => b.span.clone(),
             Self::Call(c) => c.span.clone(),
+            Self::FnLiteral(f) => f.span.clone(),
         }
     }
 }
@@ -50,6 +53,34 @@ impl Variable {
             Self::SelfVar(span) => span.clone(),
         }
     }
+}
+
+/// 無名関数 (関数リテラル)。
+///
+/// ```biwa
+/// fn(x, y) { x + y }                     // 引数・戻り値の型は推論する
+/// fn(x: Int, y: Foo) -> Bar { y.bar(x) } // 注釈も書ける
+/// ```
+///
+/// 型引数は持たない (ジェネリックな無名関数は当面考えない)。
+/// 本体から参照できるのは引数と本体の中の変数、それにグローバルな静的なもの (関数など) だけで、
+/// 外側の局所変数を参照するとエラーになる (クロージャは未対応)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FnLiteral {
+    pub args: Vec<FnLiteralArg>,
+    /// `-> T` と書かれた戻り値の型。省略したら推論する (関数型 `fn(A)` の省略は Void だが、こちらは推論)。
+    pub rtype: Option<crate::TypRepr>,
+    pub stmts: Vec<Stmt>,
+    pub expr: Option<Box<Exprs>>,
+    pub span: Span,
+}
+
+/// 無名関数の引数。型は省略できる。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FnLiteralArg {
+    pub id: Ident,
+    pub typ: Option<crate::TypRepr>,
+    pub var_id: OnceCell<VarId>,
 }
 
 /// 呼び出し。

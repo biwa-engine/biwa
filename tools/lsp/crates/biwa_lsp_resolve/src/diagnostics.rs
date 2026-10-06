@@ -169,6 +169,20 @@ fn to_diagnostic(err: &ResolveError, interner: &IdentInterner) -> Option<RawDiag
             span.clone(),
             "`Self` is not usable here; write the type name instead.".to_string(),
         ),
+        E::CaptureUnsupported { ident } => {
+            let n = if ident.id == biwac_base::InternedIdent::SELF {
+                "self".to_string()
+            } else {
+                name(interner, &ident.id).to_string()
+            };
+            raw(
+                ident.span.clone(),
+                format!(
+                    "`{n}` is a local variable outside this anonymous function; closures are not supported yet."
+                ),
+            )
+        }
+
         E::UnexpectedSelfVariable { span } => raw(
             span.clone(),
             "`self` is only available in a method.".to_string(),

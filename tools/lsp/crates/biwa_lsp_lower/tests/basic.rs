@@ -303,6 +303,32 @@ fn f() -> Int {
 }
 
 #[test]
+fn lowers_fn_literal() {
+    let (ast, errors) = lower(
+        r#"
+fn f() -> Int {
+  fn(x, y: Int) -> Int { x + y }(1, 2)
+}
+"#,
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::FnDef(f) = &ast.globals[0] else {
+        panic!("expected fn def");
+    };
+    let Some(Exprs::Primary(Primary::Call(call))) = &f.expr else {
+        panic!("expected a call tail, got {:?}", f.expr);
+    };
+    let Exprs::Primary(Primary::FnLiteral(lit)) = &*call.callee else {
+        panic!("expected a fn literal callee, got {:?}", call.callee);
+    };
+    assert_eq!(lit.args.len(), 2);
+    assert!(lit.args[0].typ.is_none());
+    assert!(lit.args[1].typ.is_some());
+    assert!(lit.rtype.is_some());
+    assert!(lit.expr.is_some());
+}
+
+#[test]
 fn lowers_enum_def() {
     let (ast, errors) = lower(
         r#"

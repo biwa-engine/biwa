@@ -473,6 +473,27 @@ mod first_class_fn {
         ));
     }
 
+    /// 無名関数。引数の型と戻り値の型は省略できる。
+    #[test]
+    fn fn_literal() {
+        let f = parse_fn("fn foo() -> Int { fn(x, y: Int) -> Int { x + y }(1, 2) }");
+        let Some(Exprs::Primary(Primary::Call(call))) = &f.expr else {
+            panic!("not a call: {:#?}", f.expr);
+        };
+        let Exprs::Primary(Primary::FnLiteral(lit)) = call.callee.as_ref() else {
+            panic!("not a fn literal: {:#?}", call.callee);
+        };
+        assert_eq!(lit.args.len(), 2);
+        assert!(lit.args[0].typ.is_none());
+        assert!(lit.args[1].typ.is_some());
+        assert!(lit.rtype.is_some());
+        assert!(lit.expr.is_some());
+
+        // 本体に文を並べられる。値を返さない本体もある。
+        let f = parse_fn("fn foo() { apply(fn(x) { let y = x; print(y); }) }");
+        assert!(f.expr.is_some());
+    }
+
     /// `Self::new` はパスの値で、`(..)` が続けば呼び出しになる。
     #[test]
     fn self_path_is_a_value() {

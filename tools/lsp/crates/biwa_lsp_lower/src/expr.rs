@@ -1,8 +1,8 @@
 use biwa_lsp_lexer::SyntaxKind;
 use biwac_ast::{
-    BinOperator, BinaryExpr, BoolLiteral, CallExpr, Exprs, FloatLiteral, IntegerLiteral, Literal,
-    MatchExpr, MatchExprArm, MemberAccess, Primary, StringLiteral, StructLiteral, UnOperator,
-    UnaryExpr, Variable,
+    BinOperator, BinaryExpr, BoolLiteral, CallExpr, Exprs, FloatLiteral, FnLiteral, FnLiteralArg,
+    IntegerLiteral, Literal, MatchExpr, MatchExprArm, MemberAccess, Primary, StringLiteral,
+    StructLiteral, UnOperator, UnaryExpr, Variable,
 };
 use biwac_base::{IdentInterner, ModId};
 use biwac_span::Span;
@@ -11,9 +11,10 @@ use crate::cursor::{
     Children, SyntaxElement, SyntaxNode, intern_ident_token, node_span, token_span,
 };
 use crate::error::LowerError;
+use crate::path_ty::lower_type_repr;
 use crate::path_ty::{lower_ident_path, path_is_usable_as_value};
 use crate::pattern::lower_pattern;
-use crate::stmt::lower_block_expr_mandatory;
+use crate::stmt::{lower_block_expr_mandatory, lower_fn_body};
 
 /// `0x..`/`0b..` の基数つき整数と、末尾 `u` を許す biwa-lsp-lexer の
 /// `IntLiteral` 正規表現を読む。基数の対応が `0o` を欠くなど
@@ -486,6 +487,57 @@ fn lower_match_expr(
 /// (実際には一度も生成されない予約 kind)。後置演算子が 1 つも
 /// 付かない式は `parse_primary` が直接作った kind (`Literal`, `IdentPath`,
 /// `StructLiteral`, `ParenExpr`, `BlockExpr`, ...) のまま子として現れる。
+/// `FnLiteral` ノード (`fn ( <引数> ,* ) ( -> <型> )? <ブロック>`) を無名関数にする。
+fn lower_fn_literal(
+    mod_id: ModId,
+    interner: &mut IdentInterner,
+    node: &SyntaxNode,
+    errors: &mut Vec<LowerError>,
+) -> Option<FnLiteral> {
+    let span = node_span(mod_id, node);
+    let mut children = Children::of(node);
+    children.eat_token(SyntaxKind::KwFn);
+    children.eat_token(SyntaxKind::LParen);
+
+    let mut args = Vec::new();
+    while let Some(arg_node) = children.eat_node(SyntaxKind::FnLiteralArg) {
+        let mut arg_children = Children::of(&arg_node);
+        let id_tok = arg_children.eat_token(SyntaxKind::Ident)?;
+        let id = intern_ident_token(mod_id, interner, &id_tok);
+        let typ = if arg_children.eat_token(SyntaxKind::Colon).is_some() {
+            let ty_node = arg_children.eat_node(SyntaxKind::TypeRepr)?;
+            Some(lower_type_repr(mod_id, interner, &ty_node, errors)?)
+        } else {
+            None
+        };
+        args.push(FnLiteralArg {
+            id,
+            typ,
+            var_id: std::cell::OnceCell::new(),
+        });
+        children.eat_token(SyntaxKind::Comma);
+    }
+    children.eat_token(SyntaxKind::RParen);
+
+    let rtype = if children.eat_token(SyntaxKind::Arrow).is_some() {
+        let ty_node = children.eat_node(SyntaxKind::TypeRepr)?;
+        Some(lower_type_repr(mod_id, interner, &ty_node, errors)?)
+    } else {
+        None
+    };
+
+    let body_node = children.eat_node(SyntaxKind::BlockStmt)?;
+    let (stmts, expr, _) = lower_fn_body(mod_id, interner, &body_node, errors);
+
+    Some(FnLiteral {
+        args,
+        rtype,
+        stmts,
+        expr: expr.map(Box::new),
+        span,
+    })
+}
+
 pub(crate) fn lower_expr(
     mod_id: ModId,
     interner: &mut IdentInterner,
@@ -514,6 +566,8 @@ pub(crate) fn lower_expr(
         SyntaxKind::IdentPath => lower_ident_path_as_variable(mod_id, interner, node, errors),
         SyntaxKind::StructLiteral => lower_struct_literal(mod_id, interner, node, errors)
             .map(|s| Exprs::Primary(Primary::Literal(Literal::Struct(s)))),
+        SyntaxKind::FnLiteral => lower_fn_literal(mod_id, interner, node, errors)
+            .map(|f| Exprs::Primary(Primary::FnLiteral(f))),
         SyntaxKind::Error => {
             errors.push(LowerError::new(
                 "cannot lower a syntax error into an expression",

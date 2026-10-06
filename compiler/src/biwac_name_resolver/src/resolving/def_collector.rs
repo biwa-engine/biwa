@@ -67,6 +67,11 @@ impl DefCollector {
         }
     }
 
+    /// 次に振る `PackageLocalDefId` の番号。
+    pub(crate) fn next_def_id(&self) -> u32 {
+        self.next_pkg_local_def_id
+    }
+
     pub(crate) fn alloc_def_id(&mut self) -> DefId {
         let pkg_local_def_id = PackageLocalDefId::new(self.next_pkg_local_def_id);
         self.next_pkg_local_def_id += 1;

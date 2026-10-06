@@ -443,6 +443,21 @@ fn classify_primary(p: &Primary, param_ids: &HashSet<VarId>, out: &mut Vec<Class
         }
         Primary::Literal(_) => {}
         Primary::Variable(Variable::Path(path)) => classify_path(path, param_ids, out),
+        // 無名関数の引数も「引数」として色を付ける。
+        Primary::FnLiteral(f) => {
+            for arg in &f.args {
+                if let Some(typ) = &arg.typ {
+                    classify_typ_repr(typ, out);
+                }
+            }
+            if let Some(rtype) = &f.rtype {
+                classify_typ_repr(rtype, out);
+            }
+            let mut inner = param_ids.clone();
+            inner.extend(f.args.iter().filter_map(|a| a.var_id.get().copied()));
+            let expr = f.expr.as_deref().cloned();
+            classify_body(&f.stmts, &expr, &inner, out);
+        }
         Primary::Variable(Variable::SelfVar(span)) => {
             push(out, span.clone(), ResolvedKind::Parameter);
         }
@@ -616,6 +631,14 @@ fn walk_hir_primary(p: &biwac_hir::Primary, doc_mod_id: ModId, out: &mut Vec<Cla
         P::Literal(_) => {}
         P::Variable(_) => {}
         P::MemberAccess(m) => walk_hir_expr(&m.left, doc_mod_id, out),
+        P::Lambda(l) => {
+            for s in &l.stmts {
+                walk_hir_stmt(s, doc_mod_id, out);
+            }
+            if let Some(e) = &l.expr {
+                walk_hir_expr(e, doc_mod_id, out);
+            }
+        }
         P::Call(c) => {
             walk_hir_expr(&c.callee, doc_mod_id, out);
             for a in &c.args {

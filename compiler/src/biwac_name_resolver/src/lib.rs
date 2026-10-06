@@ -152,7 +152,7 @@ impl<'p> NameResolver<'p> {
         // symbol signature
 
         // lowering to HIR
-        let hir = lowering::lower(
+        let mut hir = lowering::lower(
             self.pkg_package_name,
             &self.pkg,
             pkg_names,
@@ -162,6 +162,8 @@ impl<'p> NameResolver<'p> {
             interner,
             &lang_items,
         )?;
+        // 型推論の後で無名関数を持ち上げるときに、ここから番号を振る。
+        hir.next_def_id = def_collector.next_def_id();
 
         Ok(ResolveOutput {
             hir,

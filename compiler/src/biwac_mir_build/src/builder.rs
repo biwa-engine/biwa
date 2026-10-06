@@ -92,6 +92,10 @@ struct BodyBuilder<'a> {
     /// HIR の変数と MIR の local の対応。
     /// 引数も宣言された変数も同じ表に入る。
     var_map: HashMap<VarId, Local>,
+
+    /// この関数のジェネリック引数。無名関数を持ち上げた関数はこれを引き継いでいるので、
+    /// 無名関数への参照はこれをそのまま (恒等の割り当てで) 渡す。
+    own_genargs: Vec<biwac_span::LocalGenDefId>,
 }
 
 impl<'a> BodyBuilder<'a> {
@@ -111,6 +115,7 @@ impl<'a> BodyBuilder<'a> {
             locals: Vec::new(),
             blocks: Vec::new(),
             var_map: HashMap::new(),
+            own_genargs: Vec::new(),
         }
     }
 
@@ -121,6 +126,8 @@ impl<'a> BodyBuilder<'a> {
         body: &FnBody,
         genargs: Vec<biwac_span::LocalGenDefId>,
     ) -> Body {
+        self.own_genargs = genargs.clone();
+
         // _0 は戻り値スロット。
         self.new_local(signature.rty.clone(), signature.rty.span.clone());
 
@@ -527,6 +534,7 @@ impl<'a> BodyBuilder<'a> {
                         )
                     }
                 },
+                Primary::Lambda(l) => return (bb, Operand::Const(self.lambda_const(l))),
                 _ => {}
             }
         }
@@ -551,6 +559,24 @@ impl<'a> BodyBuilder<'a> {
             out.push(operand);
         }
         (bb, out)
+    }
+
+    /// 無名関数の、持ち上げた関数への参照。
+    ///
+    /// 持ち上げた関数は外側 (この関数) のジェネリック引数を引き継いでいるので、
+    /// 型引数は恒等の割り当て (`T := T`) である。単相化が外側の実体の型に置き換える。
+    fn lambda_const(&self, l: &biwac_hir::Lambda) -> Const {
+        let def_id = *l
+            .lifted
+            .get()
+            .expect("compiler bug: a lambda is not lifted after inference");
+        let mut genargs: GenArgs = self
+            .own_genargs
+            .iter()
+            .map(|g| (*g, Ty::new(TyKind::LocGen(*g), l.span.clone())))
+            .collect();
+        genargs.sort_by_key(|(g, _)| g.value());
+        Const::FnDef(def_id, genargs)
     }
 
     /// 関数名を値として使ったときの、関数への参照。
@@ -639,6 +665,13 @@ impl<'a> BodyBuilder<'a> {
                 ..
             }) => {
                 let c = self.fn_def_const(*def_id, expr.id);
+                self.push_assign(bb, dest, Rvalue::Use(Operand::Const(c)), span);
+                bb
+            }
+
+            // 無名関数は持ち上げた関数への参照である。本体はその関数の側で組み立てる。
+            Primary::Lambda(l) => {
+                let c = self.lambda_const(l);
                 self.push_assign(bb, dest, Rvalue::Use(Operand::Const(c)), span);
                 bb
             }

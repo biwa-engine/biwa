@@ -624,6 +624,8 @@ pub struct FnTyCtx<'tctx, 'a> {
     pub(super) substitutions: HashMap<TyVar, Ty>,
     pub(super) vars: HashMap<VarId, Ty>,
     pub(super) exprs: HashMap<ExprId, Ty>,
+    /// `let x: T = ..` に書かれた型。初期化式の型と突き合わせる。
+    pub(super) annotations: HashMap<VarId, Ty>,
 
     /// 呼び出し式ごとの、呼び先のジェネリック型への割り当て。
     /// [`biwac_hir::FnDef::call_genargs`] にそのまま渡る。
@@ -682,6 +684,7 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
             substitutions: HashMap::new(),
             vars: HashMap::new(),
             exprs: HashMap::new(),
+            annotations: HashMap::new(),
             call_genargs: HashMap::new(),
             rty,
         }

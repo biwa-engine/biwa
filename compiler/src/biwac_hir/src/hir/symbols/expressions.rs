@@ -56,6 +56,9 @@ pub enum Primary {
     /// 型推論が呼び先の式の形と型から決め、[`Call::target`] に書く
     /// (`docs/function-as-the-first-class-type-impl-status.md` §7)。
     Call(Call),
+    /// 無名関数。型推論は外側の関数と同じ文脈で行い、その後でトップレベルの関数に持ち上げる
+    /// ([`Lambda::lifted`])。持ち上げた後は、その関数への参照 (値) として扱う。
+    Lambda(Lambda),
     /// enum のバリアントの構築。
     ///
     /// 構文の上では関数呼び出し・構造体リテラル・変数参照のいずれかだが、
@@ -254,6 +257,7 @@ impl Primary {
             Self::VariantCtor(v) => v.span.clone(),
             Self::Block(b) => b.span.clone(),
             Self::Call(c) => c.span.clone(),
+            Self::Lambda(l) => l.span.clone(),
         }
     }
 }
@@ -284,6 +288,33 @@ pub struct StructLiteral {
     pub tid: TyDefId,
     pub members: Vec<(Ident, Expr)>,
     pub span: Span,
+}
+
+/// 無名関数 `fn(x, y: Int) -> Int { .. }`。
+///
+/// 本体から外側の局所変数は参照できない (名前解決が弾いている)。
+/// 引数と本体の変数の `VarId` は外側の関数と通しで振られている。
+#[derive(Debug, Clone)]
+pub struct Lambda {
+    pub args: Vec<LambdaArg>,
+    /// `-> T` と書かれた戻り値の型。`None` なら推論する。
+    pub rty: Option<Ty>,
+    pub stmts: Vec<Stmt>,
+    pub expr: Option<Box<Expr>>,
+    pub span: Span,
+    /// 型推論の後で持ち上げた先のトップレベルの関数。
+    ///
+    /// 持ち上げた関数は外側の定義のジェネリック引数 (と制限) をそのまま引き継ぐ。
+    pub lifted: OnceCell<ValDefId>,
+}
+
+/// 無名関数の引数。
+#[derive(Debug, Clone)]
+pub struct LambdaArg {
+    pub id: Ident,
+    /// 書かれた型。`None` なら推論する。
+    pub ty: Option<Ty>,
+    pub var_id: VarId,
 }
 
 /// 呼び出し `<式> ( <引数列> )`。
