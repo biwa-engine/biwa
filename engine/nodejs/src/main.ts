@@ -1,4 +1,5 @@
 import { setEngineContext } from "./engine/api/context";
+import { releaseHandlers } from "./engine/api/handler";
 import { CanvasObjects } from "./engine/canvas/CanvasObjects";
 import { CanvasSurfaces } from "./engine/canvas/CanvasSurfaces";
 import type { BiwaBackend } from "./engine/game";
@@ -81,6 +82,8 @@ async function runGame(
 ): Promise<void> {
   switch (backend.kind) {
     case "typescript": {
+      // ゲームコードもこのスレッドで走るので、預けた関数はこのスレッドの表にある。
+      ui.setHandlerReleaser(releaseHandlers);
       backend.windowShow(backend.app());
       const { canvasId, messageAreaId } = await scenePage;
 

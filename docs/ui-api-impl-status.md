@@ -1426,7 +1426,7 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
   - `~/test1`: scene main の冒頭で `fv_run_scene(fv_sub_scene, g)` (scene の値を通して別の scene を実行) し、
     その scene のテキスト「(scene の値から呼んだ scene)」が出ることを Playwright で確認。既存の確認 (Link・単位・Layers・演出) も通る。
 
-#### R3. ホストとの関数の受け渡しの規定と土台
+#### R3. ホストとの関数の受け渡しの規定と土台 — **実装済み**
 
 ホストとの間で関数を受け渡す規定を `docs/` に書き、エンジンと std の土台を作る。
 
@@ -1449,6 +1449,40 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
 - **TypeScript**: 関数はそのまま JS の関数。scene (generator) を呼ぶときは kernel で回す。後回し可。
 - 要確認 (試作で確かめる): WasmGC の JS API で、`(ref null $F)` を `funcref` の import の引数に渡せること、
   JS からその関数を GC 参照の引数付きで呼べること。
+
+##### R3 実装結果 (完了)
+
+- 規定: `docs/host-function-values.md` に書いた (Biwa → ホスト、ハンドラの表、寿命、ホスト → Biwa と呼んでよいとき、
+  ハンドラの種類、syscall)。
+- std (本物のみ。フィクスチャの std には UI が無い): `base_engine.biwa` に
+  `(import "biwa:engine" "sys_ui_set_handler" (func $sys_ui_set_handler (param i32 i32 funcref)))` と、
+  ジェネリックな native `sys_ui_set_handler[A, R](ui_id, kind, f: fn(A) -> R)` (wasm / TypeScript)。
+  wasm 版は単相化ごとに `(ref null $__fn.fN)` の引数をそのまま `funcref` の import に渡す。
+  型付きの API (`Window[S].main_scene` など) はまだ無い (R4 / R6)。
+- エンジン:
+  - `vm/handlerTable.ts`: ハンドラの表 (番号 → 関数。番号は 1 から、0 は「無し」)。
+  - `vm/wasm/contract.ts`: syscall の区分 `retain` を足した (関数の引数を Worker の表に預けて番号に替え、`cast` する)。
+    `sys_ui_set_handler` はこの区分。
+  - `vm/wasm/worker.ts`: 表を持ち、メインスレッドからの `{ kind: "release", handles }` で項目を外す。
+    呼ぶ側 (ホスト → Biwa) はまだ無い (R6)。
+  - `api/ui.ts`: `HandlerKind` (`WindowMainScene` = 0、`SceneStartButtonOnClick` = 1) と付けられる Element の表、
+    `setUiHandler`。`api/handler.ts`: TypeScript ターゲットのメインスレッドの表 (`retainHandler` など)。
+  - `UIObjects`: Element ごとに「種類 → 番号」を持つ (`setHandler` / `handlerOf`)。
+    置き換え・設定の失敗・Element の `destroy` で番号を手放す。手放す先は走らせる側が差し込む
+    (`setHandlerReleaser`。wasm は Worker へ `release` を送る、TypeScript は `api/handler.ts`)。
+  - `README.md` の区分の表を更新した。
+- 確認:
+  - 試作 (Node): `sys_ui_set_handler` に `fn(Int) -> Int`・`on_new_game` (`fn(GameWindow) -> Game[S]`)・
+    scene の値 (`Scene[S]`)・無名関数を渡し、import の側で受け取った関数を JS から呼んだ。
+    `twice(21) = 42`、`on_new_game(__biwa_std_game_window_new(0, 0))` の `states.n` が 1、
+    それを scene に通すと 11、無名関数 `fn(x) { x + 100 }` に 1 で 101。
+    形の合わない値 (数) を GC 参照の引数に渡すと境界で `TypeError`、`null` は Biwa 側で trap。
+  - 一時的な確認 (確認後に元に戻した): `~/test1` の `on_new_game` で Window (ui_id 1) に設定・置き換え・
+    付けられない種類・無い Element を試し、Worker の表に預けた番号が置き換えと失敗のぶん手放されることを
+    ブラウザで確認 (`retain` 4 件 → `release` 1, 3, 4、残り 1 件)。
+  - `npx tsc --noEmit`、compiler (113 件)・LSP (94 件) の全テスト、`~/test1` の強制再ビルドと Playwright
+    (fv・Link・単位・Layers・演出、エラー無し)。
+  - TypeScript ターゲットの native は std が TypeScript にビルドできないため確かめていない (R2 と同じ)。
 
 #### R4. UI の木をジェネリックにする (`Window[S]`・`UiElement[S]` …)
 

@@ -15,6 +15,7 @@ import {
   FLUSH_AFTER_CAST,
   RUNTIME_NAMESPACE,
 } from "./contract";
+import { HandlerTable } from "../handlerTable";
 
 /** メインスレッドから来る起動指示。 */
 export interface StartMessage {
@@ -37,7 +38,18 @@ export interface SceneMessage {
   messageAreaId: number;
 }
 
-type HostMessage = StartMessage | SceneMessage;
+/**
+ * ハンドラを手放してよいという知らせ。
+ *
+ * 持ち主の Element が消えたときにメインスレッドが送る (`UIObjects` の `destroy`)。
+ * Worker はその番号の関数を表から外す (`docs/host-function-values.md`)。
+ */
+export interface ReleaseMessage {
+  kind: "release";
+  handles: number[];
+}
+
+type HostMessage = StartMessage | SceneMessage | ReleaseMessage;
 
 /** DOM の型と衝突させずに Worker のグローバルを触るための最小の窓口。 */
 interface WorkerScope {
@@ -92,6 +104,11 @@ scope.addEventListener("message", (event) => {
       } else {
         sceneMessage = message;
       }
+      return;
+    case "release":
+      // 呼び出し中 (scene の実行中) はイベントループに帰らないので、ここに来るのは
+      // Worker が Biwa のコードを実行していないときだけである。
+      handlers.release(message.handles);
       return;
   }
 });
@@ -311,6 +328,16 @@ const LOCAL_SYSCALLS: Record<string, (...args: never[]) => unknown> = {
 let nextObjectId = 1;
 
 /**
+ * Biwa から預かった関数 (ハンドラ) の表 (`contract.ts` の `retain`)。
+ *
+ * 関数はスレッドを越えられないので、ここに置いてメインスレッドには番号だけを送る。
+ * ホストが関数を呼ぶ (ホスト → Biwa) のもこの Worker の中からで、
+ * 呼んでよいのは Worker が Biwa のコードを実行していないときだけである
+ * (`docs/host-function-values.md`)。呼ぶ契機はまだ無い (`docs/ui-api-impl-status.md` §19 の R6)。
+ */
+const handlers = new HandlerTable();
+
+/**
  * `biwa:engine` の import 1 つを、その区分に応じた関数にする。
  *
  * wasm 側から見ればどれも同じ同期呼び出しで、
@@ -346,6 +373,18 @@ function syscall(
       const id = nextObjectId++;
       channel.cast(name, [id, ...args]);
       return id;
+    }) as WebAssembly.ImportValue;
+  }
+
+  if (kind === "retain") {
+    // 関数は表に預けて番号に替える。
+    return ((...args: unknown[]): void => {
+      const sent = args.map((arg) =>
+        typeof arg === "function"
+          ? handlers.retain(arg as (...a: unknown[]) => unknown)
+          : arg,
+      );
+      channel.cast(name, sent);
     }) as WebAssembly.ImportValue;
   }
 

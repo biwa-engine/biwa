@@ -23,9 +23,11 @@ import {
 import {
   createUiElement,
   pushUiChild,
+  setUiHandler,
   setUiProperty,
   setUiPropertyString,
 } from "../../api/ui";
+import { engine } from "../../api/context";
 import {
   completeCall,
   createChannelBuffer,
@@ -33,7 +35,7 @@ import {
   type WorkerMessage,
 } from "./bridge";
 import type { ScenePageEntry } from "../../ui/UIObjects";
-import type { SceneMessage, StartMessage } from "./worker";
+import type { ReleaseMessage, SceneMessage, StartMessage } from "./worker";
 
 /**
  * syscall の実装。
@@ -142,6 +144,10 @@ function createHandlers(): Record<string, SyscallHandler> {
 
     sys_ui_push_child: (parent: number, child: number) =>
       pushUiChild(parent, child),
+
+    // `handle` は Worker が関数を預かって振った番号 (`contract.ts` の `retain`)。
+    sys_ui_set_handler: (id: number, kind: number, handle: number) =>
+      setUiHandler(id, kind, handle),
   };
 }
 
@@ -178,9 +184,16 @@ export function runWasm(
 
   return new Promise<void>((resolve, reject) => {
     const finish = (done: () => void): void => {
+      engine().ui.setHandlerReleaser(() => {});
       worker.terminate();
       done();
     };
+
+    // Element が消えたら、預けた関数を Worker に手放させる。
+    engine().ui.setHandlerReleaser((handles) => {
+      const release: ReleaseMessage = { kind: "release", handles };
+      worker.postMessage(release);
+    });
 
     worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
       const message = event.data;

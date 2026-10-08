@@ -54,6 +54,15 @@ export type SyscallKind =
    */
   | "alloc"
   /**
+   * `cast` と同じく積んで返るが、関数の引数は Worker のハンドラの表に預け、
+   * その番号 (handle) に替えてから投げる。
+   *
+   * 関数 (wasm の関数のラッパー) は `postMessage` できないので、
+   * メインスレッドには番号しか届かない。関数は Worker に残り、
+   * ホストが後で Worker の中から呼ぶ (`docs/host-function-values.md`)。
+   */
+  | "retain"
+  /**
    * メインスレッドへ投げて、完了するまで Worker を止める。
    *
    * クリック待ちのように完了までブロックする API。
@@ -121,6 +130,8 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   sys_ui_set_property_with_string: "cast",
   /** 子 Element を親に積む。 */
   sys_ui_push_child: "cast",
+  /** Element にハンドラ (ホストが後で呼ぶ関数) を設定する。 */
+  sys_ui_set_handler: "retain",
 };
 
 /**

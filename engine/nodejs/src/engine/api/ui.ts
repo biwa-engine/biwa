@@ -155,6 +155,44 @@ export function isKnownStringProperty(kind: number): boolean {
 }
 
 /**
+ * ハンドラ (Biwa から預かってホストが後で呼ぶ関数) の種類。
+ *
+ * `sys_ui_set_handler` で Element に設定する。ホストは種類ごとに決まった形
+ * (引数と戻り値) で呼ぶ。形が合っていることは std の型付きの API が保証し、
+ * ホストは引数・戻り値の中身を見ない (`docs/host-function-values.md`)。
+ *
+ * 呼ぶ側 (どの契機でどの関数を呼ぶか) はまだ無い。
+ * `docs/ui-api-impl-status.md` §19 の R4 / R6 で足す。
+ */
+export const HandlerKind = {
+  /**
+   * Window の `main_scene` (R4)。`Scene[S]` = `fn(Game[S]) -> Game[S]`。
+   * Window 以外には付けられない。
+   */
+  WindowMainScene: 0,
+  /**
+   * SceneStartButton の `on_click` (R6)。`fn(GameWindow) -> Game[S]`。
+   * Element の kind がまだ無いので、今はどの Element にも付けられない。
+   */
+  SceneStartButtonOnClick: 1,
+} as const;
+
+/** ハンドラの種類 → それを付けられる Element の kind (まだ付けられる先が無ければ `null`)。 */
+const HANDLER_TARGETS = new Map<number, number | null>([
+  [HandlerKind.WindowMainScene, ElementKind.Window],
+  [HandlerKind.SceneStartButtonOnClick, null],
+]);
+
+export function isKnownHandlerKind(kind: number): boolean {
+  return HANDLER_TARGETS.has(kind);
+}
+
+/** その種類のハンドラを付けられる Element の kind。付けられる先が無ければ `null`。 */
+export function handlerTarget(kind: number): number | null {
+  return HANDLER_TARGETS.get(kind) ?? null;
+}
+
+/**
  * `width` / `margin` などが取れる単位。
  *
  * Message Window の `Size` (`docs/content-api.md`) が vw/vh の 2 つしか
@@ -227,4 +265,14 @@ export function setUiPropertyString(
  */
 export function pushUiChild(parent: number, child: number): void {
   engine().ui.pushChild(parent, child);
+}
+
+/**
+ * Element にハンドラを設定する。`handle` は預けた関数の番号である
+ * (wasm は Worker の表、TypeScript は `api/handler.ts` の表)。
+ *
+ * 同じ Element・同じ種類に設定し直すと置き換わり、古い関数は手放される。
+ */
+export function setUiHandler(id: number, kind: number, handle: number): void {
+  engine().ui.setHandler(id, kind, handle);
 }

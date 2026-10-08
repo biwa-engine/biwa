@@ -12,7 +12,9 @@ import { TextBox } from "../../components/TextBox";
 import { resolveAssetUrl } from "../api/assets";
 import {
   ElementKind,
+  handlerTarget,
   isKnownElementKind,
+  isKnownHandlerKind,
   isKnownNumericProperty,
   isKnownStringProperty,
   PropertyKind,
@@ -61,6 +63,13 @@ interface UiNode {
    * (canvas の描画先も Canvas Element の DOM の中にあるので、同じ重なりに従う)。
    */
   z: number;
+  /**
+   * 設定されたハンドラ。ハンドラの種類 (`HandlerKind`) → 預けた関数の番号。
+   *
+   * 関数そのものは持たない (wasm では Worker にあり、ここには番号しか届かない)。
+   * Element が消えるときに、ここにある番号を手放す (`destroy`)。
+   */
+  handlers: Map<number, number>;
 }
 
 /**
@@ -126,9 +135,21 @@ export class UIObjects {
   private readonly scenePageListeners: Array<(entry: ScenePageEntry) => void> =
     [];
   private nextId = 1;
+  /**
+   * 要らなくなったハンドラの番号を、関数を預かっている側に返す。
+   *
+   * 預かっている場所はターゲットで違う (wasm は Worker、TypeScript は `api/handler.ts`)
+   * ので、走らせる側が `setHandlerReleaser` で差し込む。差し込まれるまでは何もしない。
+   */
+  private releaseHandlers: (handles: number[]) => void = () => {};
 
   constructor(root: HTMLElement) {
     this.root = root;
+  }
+
+  /** ハンドラの番号を手放す先を決める (`releaseHandlers` を参照)。 */
+  setHandlerReleaser(release: (handles: number[]) => void): void {
+    this.releaseHandlers = release;
   }
 
   /**
@@ -258,6 +279,7 @@ export class UIObjects {
       textBox,
       textEl: null,
       z: 0,
+      handlers: new Map(),
     };
     this.nodes.set(id, node);
     if (textBox !== null) {
@@ -324,6 +346,48 @@ export class UIObjects {
     }
 
     this.applyStringProperty(node, kind, valU, valI, valF, valS);
+  }
+
+  /**
+   * ハンドラ (預けた関数の番号) を設定する。
+   *
+   * 同じ種類のハンドラが既にあれば置き換え、古い番号は手放す。
+   * 設定できなかった番号も手放す (誰も呼ばないのに関数を握り続けないため)。
+   */
+  setHandler(id: number, kind: number, handle: number): void {
+    const node = this.nodes.get(id);
+    if (node === undefined) {
+      console.error(`[biwa] no such ui element: ${id}`);
+      this.releaseHandlers([handle]);
+      return;
+    }
+    if (!isKnownHandlerKind(kind)) {
+      console.error(`[biwa] unknown ui handler kind: ${kind}`);
+      this.releaseHandlers([handle]);
+      return;
+    }
+    if (handlerTarget(kind) !== node.kind) {
+      console.error(
+        `[biwa] ui handler kind ${kind} cannot be set on ui element ${id} (kind ${node.kind})`,
+      );
+      this.releaseHandlers([handle]);
+      return;
+    }
+
+    const previous = node.handlers.get(kind);
+    node.handlers.set(kind, handle);
+    if (previous !== undefined) {
+      this.releaseHandlers([previous]);
+    }
+  }
+
+  /**
+   * Element に設定されたハンドラの番号を引く。無ければ `undefined`。
+   *
+   * 呼ぶのは関数を預かっている側 (wasm では Worker) で、ここは番号を渡すだけである。
+   */
+  handlerOf(id: number, kind: number): number | undefined {
+    return this.nodes.get(id)?.handlers.get(kind);
   }
 
   /**
@@ -427,6 +491,10 @@ export class UIObjects {
     }
     this.messageAreas.delete(node);
     this.nodes.delete(node.id);
+    if (node.handlers.size > 0) {
+      this.releaseHandlers([...node.handlers.values()]);
+      node.handlers.clear();
+    }
   }
 
   private applyStringProperty(
