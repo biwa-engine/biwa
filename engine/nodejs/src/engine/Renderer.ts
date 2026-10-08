@@ -23,7 +23,7 @@ export class Renderer {
    * host の大きさを決め、時計を動かす。
    *
    * `width` / `height` は px。省略すると画面全体 (`100vw` / `100vh`) になり、
-   * Biwa Language 側 (`fn app() -> Window`) が制御する UI の範囲が画面全体になる。
+   * Biwa Language 側 (`fn app()` が `show()` する `Window`) が制御する UI の範囲が画面全体になる。
    */
   init(width?: number, height?: number): void {
     // host は拡大縮小しない。Canvas Element の中の座標は CSS の px と 1:1 で対応する。

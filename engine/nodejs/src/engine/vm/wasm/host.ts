@@ -34,7 +34,7 @@ import {
   failCall,
   type WorkerMessage,
 } from "./bridge";
-import type { ScenePageEntry } from "../../ui/UIObjects";
+import { type ScenePageEntry, UiContractError } from "../../ui/UIObjects";
 import type { ReleaseMessage, SceneMessage, StartMessage } from "./worker";
 
 /**
@@ -203,7 +203,11 @@ export function runWasm(
           // 止まらない syscall のまとまり。1 通で来るので、
           // この間にフレームが挟まることはない。
           for (const call of message.calls) {
-            dispatch(handlers, call.name, call.args);
+            const fatal = dispatch(handlers, call.name, call.args);
+            if (fatal !== null) {
+              finish(() => reject(fatal));
+              return;
+            }
           }
           return;
         case "syscall":
@@ -242,23 +246,29 @@ export function runWasm(
  * 止まらない syscall を 1 つ処理する。
  *
  * 呼び出し元は既に返っているので、失敗しても伝える先が無い。ログに出す。
+ * ただし続けてもゲームとして成り立たない誤り (`UiContractError`) は返し、
+ * 呼んだ側が実行を失敗させる。
  */
 function dispatch(
   handlers: Record<string, SyscallHandler>,
   name: string,
   args: unknown[],
-): void {
+): Error | null {
   const handler = handlers[name];
   if (handler === undefined) {
     console.error(`[biwa] unknown syscall: ${name}`);
-    return;
+    return null;
   }
 
   try {
     (handler as (...a: unknown[]) => unknown)(...args);
   } catch (e) {
+    if (e instanceof UiContractError) {
+      return e;
+    }
     console.error(`[biwa] syscall \`${name}\` failed:`, e);
   }
+  return null;
 }
 
 /**

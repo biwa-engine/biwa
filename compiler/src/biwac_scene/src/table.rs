@@ -25,7 +25,7 @@ pub enum WellKnownKind {
     Fn,
 }
 
-/// ランタイムとの規約に現れる型。すべて lang item である。
+/// ランタイムとの規約に現れる型。`Void` (戻り値なし) 以外は lang item である。
 ///
 /// ジェネリック引数に何が入るかは問わない (`Game[..]` の中身は開発者が決める)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,16 +34,17 @@ pub enum ContractTy {
     Game,
     /// lang item `game_window`。
     GameWindow,
-    /// lang item `ui_window` (UI の root Element `Window`)。
-    Window,
+    /// 戻り値なし。
+    Void,
 }
 
 impl ContractTy {
-    pub fn lang_item(&self) -> biwac_lang_item::LangItem {
+    /// 対応する lang item。`Void` には無い。
+    pub fn lang_item(&self) -> Option<biwac_lang_item::LangItem> {
         match self {
-            Self::Game => biwac_lang_item::LangItem::Game,
-            Self::GameWindow => biwac_lang_item::LangItem::GameWindow,
-            Self::Window => biwac_lang_item::LangItem::UiWindow,
+            Self::Game => Some(biwac_lang_item::LangItem::Game),
+            Self::GameWindow => Some(biwac_lang_item::LangItem::GameWindow),
+            Self::Void => None,
         }
     }
 
@@ -51,7 +52,7 @@ impl ContractTy {
         match self {
             Self::Game => "`Game`",
             Self::GameWindow => "`GameWindow`",
-            Self::Window => "`Window`",
+            Self::Void => "nothing",
         }
     }
 }
@@ -154,12 +155,14 @@ well_known_symbol_table!(
         &[ContractTy::GameWindow], ContractTy::Game,
         SceneRequirement::RequiredInPlayable;
 
-    // UI の root を組み立てる。ランタイムは起動時にまずこれを呼び、返った `Window` を
-    // 表示する (std の host export `__biwa_std_window_show`)。UI はすべてゲーム側が決める。
+    // UI を出す。ランタイムは起動時にまずこれを呼ぶ。中で `Window[S]` を組み立てて
+    // `show()` するのはゲーム側で、UI はすべてゲーム側が決める。
+    // 戻り値を持たないのは、`Window[S]` の `S` (ゲームの状態の型) をホストに見せないためである
+    // (ホストは単相化された型を名指しできない)。
     // Window の `scene_page_id` の Page に遷移すると `on_new_game` → `main` が始まる。
     //
     // `main` より後ろに置くこと。wasm の単相化は表の先頭 (`main`) をエントリとして扱う。
-    App, "app", WellKnownKind::Fn, &[], ContractTy::Window,
+    App, "app", WellKnownKind::Fn, &[], ContractTy::Void,
         SceneRequirement::RequiredInPlayable;
 
     // 将来ここにイベントハンドラ的なものが増える想定:

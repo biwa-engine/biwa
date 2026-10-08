@@ -66,6 +66,9 @@ impl SceneError {
                         index + 1,
                         expected.describe()
                     ),
+                    SignatureProblem::ReturnType {
+                        expected: ContractTy::Void,
+                    } => "it returns a value".to_string(),
                     SignatureProblem::ReturnType { expected } => {
                         format!("it does not return a {}", expected.describe())
                     }
@@ -78,7 +81,11 @@ impl SceneError {
                     let list: Vec<&str> = expected_args.iter().map(|a| a.describe()).collect();
                     format!("exactly ({})", list.join(", "))
                 };
-                let expected = format!("take {args} and return a {}", expected_ret.describe());
+                let ret = match expected_ret {
+                    ContractTy::Void => "return nothing".to_string(),
+                    _ => format!("return a {}", expected_ret.describe()),
+                };
+                let expected = format!("take {args} and {ret}");
 
                 format!("`{scene}` must {expected}, but {detail}")
             }

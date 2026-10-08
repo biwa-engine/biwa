@@ -12,6 +12,7 @@ import { TextBox } from "../../components/TextBox";
 import { resolveAssetUrl } from "../api/assets";
 import {
   ElementKind,
+  HandlerKind,
   handlerTarget,
   isKnownElementKind,
   isKnownHandlerKind,
@@ -86,6 +87,20 @@ export interface ScenePageEntry {
   pageId: string;
   canvasId: number;
   messageAreaId: number;
+}
+
+/**
+ * UI の木の組み立て方がエンジンとの取り決めに反している。
+ *
+ * 他の誤り (知らない kind など) はログに出して続けるが、これは続けても
+ * ゲームとして成り立たない誤りなので、ゲームを止める
+ * (wasm では `vm/wasm/host.ts` が実行を失敗させる。TypeScript ではゲームコードまで投げる)。
+ */
+export class UiContractError extends Error {
+  constructor(message: string) {
+    super(`[biwa] ${message}`);
+    this.name = "UiContractError";
+  }
 }
 
 /** 親が子をいくつ持てるか。`docs/ui-api.md` の push_child の規則そのもの。 */
@@ -410,6 +425,10 @@ export class UIObjects {
       return;
     }
 
+    if (parent.kind === ElementKind.Window) {
+      this.requireSceneSettings(parent);
+    }
+
     switch (childCapacity(parent.kind)) {
       case "none":
         this.destroy(child);
@@ -427,6 +446,26 @@ export class UIObjects {
   }
 
   // --- 内部 -----------------------------------------------------------------
+
+  /**
+   * Window がノベルゲームとして scene を始められることを確かめる。
+   *
+   * scene を映す Page の page_id (`scene_page_id`) と scene 本体 (`main_scene` のハンドラ) は
+   * どちらも欠かせない。最初の Page が積まれた時点で表示が始まり、その Page が scene の
+   * Page でもありうるので、Page を積む前に揃っていなければならない。
+   * std は `Window::new` の引数で必ず受け取り、Page より先に設定している。
+   */
+  private requireSceneSettings(window: UiNode): void {
+    const missing: string[] = [];
+    if (window.scenePageId === null) missing.push("`scene_page_id`");
+    if (!window.handlers.has(HandlerKind.WindowMainScene)) missing.push("`main_scene`");
+    if (missing.length > 0) {
+      throw new UiContractError(
+        `ui element ${window.id} (Window) must have ${missing.join(" and ")} ` +
+        "set before its pages are pushed",
+      );
+    }
+  }
 
   private attach(parent: UiNode, child: UiNode): void {
     if (child.parent !== null) {

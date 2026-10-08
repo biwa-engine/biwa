@@ -6,7 +6,6 @@ import type {
   BiwaEntrypoint,
   BiwaGameWindowNew,
   BiwaOnNewGame,
-  BiwaWindowShow,
 } from "../engine/game";
 
 // UI は何も出さない。scene を映す Page も無いので、entrypoint まで進むことは無い。
@@ -14,10 +13,7 @@ const app: BiwaApp = () => {
   console.warn(
     "[biwa] no game is loaded: run `biwa dev` in a Biwa package to generate src/game/entry.ts",
   );
-  return null;
 };
-
-const windowShow: BiwaWindowShow = () => 0;
 
 const entrypoint: BiwaEntrypoint = function*(game) {
   return game;
@@ -42,7 +38,6 @@ const backend: BiwaBackend = {
   onNewGame,
   gameWindowNew,
   app,
-  windowShow,
 };
 
 export default backend;

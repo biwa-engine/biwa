@@ -14,7 +14,7 @@ pub use table::{
 // - すべての scene は lang item `game` のみを引数に取り `game` を返す。
 //   scene はストーリーの一区切りであり、ゲームの状態を受け取って返すためである。
 // - ランタイムが名前を知っていて直接呼ぶシンボルの一覧。
-//   いまは `scene main`・`fn on_new_game(window: GameWindow)`・`fn app() -> Window` の
+//   いまは `scene main`・`fn on_new_game(window: GameWindow)`・`fn app()` の
 //   3 つで、playable package はすべて定義しなければならない。
 //
 // どのターゲット言語でどんなシンボル名として公開されるかは

@@ -84,7 +84,7 @@ async function runGame(
     case "typescript": {
       // ゲームコードもこのスレッドで走るので、預けた関数はこのスレッドの表にある。
       ui.setHandlerReleaser(releaseHandlers);
-      backend.windowShow(backend.app());
+      backend.app();
       const { canvasId, messageAreaId } = await scenePage;
 
       // scene は generator なので、呼んだだけでは何も起きない。

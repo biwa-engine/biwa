@@ -28,7 +28,11 @@ pub fn check(
     // 規約に現れる型の lang item が無いパッケージ (std をビルドする前など) では
     // シグネチャを照合しようがないので検査を諦める (`check_signature` 参照)。
     // lang item の欠落自体は名前解決のパスが報告している。
-    let contract_ty = |ty: ContractTy| lang_items.get(&ty.lang_item()).map(TyDefId::new);
+    let contract_ty = |ty: ContractTy| {
+        ty.lang_item()
+            .and_then(|item| lang_items.get(&item))
+            .map(TyDefId::new)
+    };
 
     for (def_id, val) in &hir.vals {
         if !def_id.pkg().is_self() {
@@ -191,6 +195,9 @@ fn is_contract_ty(
     expected: ContractTy,
     contract_ty: &impl Fn(ContractTy) -> Option<TyDefId>,
 ) -> Option<bool> {
+    if expected == ContractTy::Void {
+        return Some(matches!(ty.kind, TyKind::Void));
+    }
     let def_id = contract_ty(expected)?;
     Some(matches!(&ty.kind, TyKind::Defined(dt) if dt.def_id == def_id))
 }

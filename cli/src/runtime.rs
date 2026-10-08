@@ -46,12 +46,8 @@ const NEW_GAME_NAME: &str = "__biwa_on_new_game";
 /// エントリポイントと同じくパッケージのモジュールから import できる。
 const GAME_WINDOW_NEW_NAME: &str = "__biwa_std_game_window_new";
 
-/// UI の root を組み立てる関数の固定名。中身はゲーム側の `fn app() -> Window`。
+/// UI を出す関数の固定名。中身はゲーム側の `fn app()` (中で `Window` を `show()` する)。
 const APP_NAME: &str = "__biwa_app";
-
-/// std が `Window` を表示する入口として host export している名前
-/// (`[[host_export="__biwa_std_window_show"]]`)。
-const WINDOW_SHOW_NAME: &str = "__biwa_std_window_show";
 
 /// 依存パッケージとして `std` を用意する。
 ///
@@ -364,7 +360,6 @@ import {{
   {new_game},
   {game_window_new},
   {app},
-  {window_show},
 }} from "./{pkg}.ts";
 import type {{
   BiwaApp,
@@ -372,7 +367,6 @@ import type {{
   BiwaEntrypoint,
   BiwaGameWindowNew,
   BiwaOnNewGame,
-  BiwaWindowShow,
 }} from "../engine/game";
 
 const backend: BiwaBackend = {{
@@ -383,7 +377,6 @@ const backend: BiwaBackend = {{
   onNewGame: {new_game} as unknown as BiwaOnNewGame,
   gameWindowNew: {game_window_new} as unknown as BiwaGameWindowNew,
   app: {app} as unknown as BiwaApp,
-  windowShow: {window_show} as unknown as BiwaWindowShow,
 }};
 
 export default backend;
@@ -392,7 +385,6 @@ export default backend;
         new_game = NEW_GAME_NAME,
         game_window_new = GAME_WINDOW_NEW_NAME,
         app = APP_NAME,
-        window_show = WINDOW_SHOW_NAME,
         pkg = project.name,
     );
 

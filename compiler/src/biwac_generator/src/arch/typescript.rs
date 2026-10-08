@@ -27,8 +27,8 @@ const ENTRYPOINT_NAME: &str = "__biwa_entrypoint";
 // エントリポイントに渡す (`docs/content-api.md` を参照)。
 const NEW_GAME_NAME: &str = "__biwa_on_new_game";
 
-// UI の root `Window` を組み立てる関数 (`fn app()`)。ランタイムが起動時に最初に呼び、
-// std の host export `__biwa_std_window_show` で表示する。
+// UI を出す関数 (`fn app()`)。ランタイムが起動時に最初に呼ぶ。
+// `Window` の組み立てと表示 (`show()`) はゲーム側がこの中で行う。
 const APP_NAME: &str = "__biwa_app";
 
 pub fn generate(

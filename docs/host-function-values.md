@@ -118,6 +118,10 @@ scene (generator function) を預けた場合、呼ぶ側が kernel で回す必
 | 0    | `WindowMainScene`         | `Window`                      | `Scene[S]` = `fn(Game[S]) -> Game[S]` | R4       |
 | 1    | `SceneStartButtonOnClick` | `SceneStartButton` (まだ無い) | `fn(GameWindow) -> Game[S]`           | R6       |
 
+- `WindowMainScene` は**必須**である。std は `Window::new(main_scene, ..)` で必ず受け取り、`show()` で
+  Page より先に設定する。エンジンは、これ (と `scene_page_id`) が無いまま Window に Page を積まれたら
+  ゲームを止める (`UiContractError`)。ホストがこれを呼ぶ契機はまだ無い (R6)。
+
 種類を足すときは、`HandlerKind` と付けられる Element (`HANDLER_TARGETS`)、
 それを設定する std の型付きの API、ホストの呼ぶ側を対で変更する。
 今の native は引数 1 つの関数だけを扱う。他の個数が要れば個数ごとに native を足す (import は `funcref` のままでよい)。

@@ -1,4 +1,4 @@
-// `fn app() -> Window` を持たない playable package。
+// `fn app()` を持たない playable package。
 //
 // ランタイムは起動時にまず `app()` を呼んで UI を表示するので、
 // playable package は `app` を定義しなければならない (biwac_scene が検査する)。

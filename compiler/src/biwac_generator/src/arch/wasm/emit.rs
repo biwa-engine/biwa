@@ -65,7 +65,7 @@ const ENTRYPOINT_NAME: &str = "__biwa_entrypoint";
 /// 最初の `Game` を組み立てる関数。TypeScript と同じ規約である。
 const NEW_GAME_NAME: &str = "__biwa_on_new_game";
 
-/// UI の root `Window` を組み立てる関数 (`fn app()`)。ランタイムが起動時に最初に呼ぶ。
+/// UI を出す関数 (`fn app()`)。ランタイムが起動時に最初に呼ぶ。
 /// TypeScript と同じ規約である。
 const APP_NAME: &str = "__biwa_app";
 

@@ -1,0 +1,14 @@
+{
+  "name": "old_app",
+  "version": "0.1.0",
+  "description": "rejects the old `fn app() -> Window` signature",
+  "dependencies": [
+    {
+      "name": "std",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

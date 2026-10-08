@@ -1484,22 +1484,68 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
     (fv・Link・単位・Layers・演出、エラー無し)。
   - TypeScript ターゲットの native は std が TypeScript にビルドできないため確かめていない (R2 と同じ)。
 
-#### R4. UI の木をジェネリックにする (`Window[S]`・`UiElement[S]` …)
+#### R4. UI の木をジェネリックにする (`Window[S]`・`UiElement[S]` …) — **実装済み**
 
 - std: `UiElement[S]`・`Window[S]`・`Page[S]`・各 Element (`Box[S]` など) に型引数 `S` を足す。
   `impl[S] Box[S]: Into[UiElement[S]]` の形に (19.4 で動くことを確認済み)。
 - `Window[S]` に `main_scene: Option[Scene[S]]` とビルダー `.main_scene(scene)` を足す。
   `show` のときに R3 の syscall で `main_scene` をホストに渡す。
+  (→ 実装では `Option` にせず `Window::new` の引数にした。実装結果を参照)
 - `Window[S]::show(self)` は戻り値なしにする (`main` の中で呼ぶ)。
   ホスト向けのラッパー `__biwa_std_window_show` (host export) は R7 で消す。
+  (→ ジェネリックな `Window[S]` には単相なラッパーを書けないので R4 で消した。実装結果を参照)
 - lang item `ui_window` のジェネリクスを 1 個にする。
 - `~/test1` の `UiElement` の注釈などを書き換える (19.4 の「気を付けること」)。
+
+##### R4 実装結果 (完了)
+
+- 方針の追加 (指示による): ノベルゲームとして scene を始められることを保証する Window の property は `Option` にせず、
+  **`Window::new` の引数で必ず受け取る**。エンジンも、それらが無ければエラーにする。
+- std (本物): `UiElement[S]` と全 Element (`Box[S]`・`Link[S]`・`Horizontal[S]`・`Vertical[S]`・`HorizontalGrid[S]`・
+  `UiImage[S]`・`Canvas[S]`・`MessageArea[S]`・`Layers[S]`・`Page[S]`) に型引数を足し、
+  `impl[S] X[S]: Into[UiElement[S]]`・`push_children[S]` の形にした。`S` を使わない Element も型引数を持つ (19.4 の形)。
+  - `Window[S] { pages, id, main_scene: Scene[S], scene_page_id: String }`。
+    **`Window::new(main_scene, scene_page_id, pages)`** で必ず受け取り、ビルダー `.scene_page_id(..)` は無くした。
+  - `Window[S]::show(self)` は戻り値なし。`scene_page_id` の property と `main_scene` のハンドラ
+    (R3 の `sys_ui_set_handler`、`HandlerKind::WindowMainScene` = 0) を Page より先に設定する。
+  - **`__biwa_std_window_show` (host export) を消した。** R4 の計画では R7 で消す予定だったが、
+    `Window[S]` がジェネリックになると std はホスト向けの単相なラッパーを書けない (`S` はゲームが決める)。
+    そこで R7 の一部を前倒しし、**`fn app()` は戻り値を持たず、中で `Window` を `show()` する**形にした
+    (19.1 の `fn main()` の形。名前を `main` にするのは R7 のまま)。
+- コンパイラ:
+  - `biwac_scene`: `app` の契約を `() -> Window` から `() -> ()` に (`ContractTy::Window` を消し、戻り値なしを表す
+    `ContractTy::Void` を足した)。違反は「`app` must take no argument and return nothing, but it returns a value」。
+  - lang item `ui_window` のジェネリクスを `Exact(1)` に (今はコンパイラが使っていないが、Phase2 の構文のために残す)。
+  - 生成物の `__biwa_app` の export はそのまま (戻り値が無くなっただけ)。
+- エンジン:
+  - Worker・TypeScript の起動は `app()` を呼ぶだけに (`windowShow` を消した。`BiwaApp = () => void`、
+    `BiwaUiWindow` / `BiwaWindowShow` を削除。CLI の TypeScript のエントリスタブも)。
+  - `UIObjects`: Window に Page を積むとき、`scene_page_id` と `main_scene` のハンドラが揃っていなければ
+    `UiContractError` を投げる (他の誤りのようにログに出して続けることはしない)。wasm では `host.ts` の
+    `dispatch` がこれを受けて実行を失敗させ (`runWasm` が reject)、TypeScript ではゲームコードまで投げる。
+- フィクスチャ: フィクスチャの std の `Window[S] { main_scene }`・`Window::new(main_scene)`・`show(self)` (何もしない) に。
+  `fn_value` / `fn_user` / `old_on_new_game` は `fn app() { Window::new(main).show(); }`。
+  `test1` は TypeScript にもビルドするので、scene ではなく同じ型の普通の関数 (`fn start(g) -> MyGame`) を渡した。
+  新しい負例 `old_app` (`fn app() -> Window[..]` のまま) と、そのテスト `rejects_app_returning_window` を足した。
+  `wasm_output` のテストは `__biwa_std_window_show` が**無い**ことを確かめるようにした。
+- `~/test1`: `type MyUi = UiElement[MyGameState];` を置いて `let x: UiElement = ..` の注釈を `MyUi` に、
+  `fn app() { Window::new(main, "scene", Vec::of(main_page)).push(..).push(..).show(); }`。
+  19.4 の予想どおり、注釈を書き換えただけで推論は通った (それ以外の型エラーは出なかった)。
+- 確認:
+  - compiler (114 件、`old_app` を含む)・LSP (94 件) の全テスト、`npx tsc --noEmit`。
+  - `~/test1` を強制再ビルドして Playwright (fv・Link・単位・Layers・演出、エラー無し)。
+    今の scene は従来どおり `on_new_game` → `scene main` で始まる (`main_scene` を呼ぶのは R6)。
+  - 一時的な確認 (確認後に元に戻した): `~/test1` の `app` で生の syscall で Window を作り、設定なしで Page を積むと、
+    ページに `[biwa] ui element 1 (Window) must have `scene_page_id`and`main_scene` set before its pages are pushed`
+    が出てゲームが止まる (UI は出ない) ことを確認。
 
 #### R5. `ScenePage` Element
 
 - エンジン: Element の kind を足す。子に Canvas と MessageArea を 1 つずつ持つ (どちらも省略可)。
 - std: `ScenePage[S]` (`.canvas(Canvas[S])` / `.message_area(MessageArea[S])`)。`Window[S]` に `.scene_page(ScenePage[S])`
   (syscall では ScenePage の ui_id を Window に設定する)。
+- R4 と同じく、`ScenePage` は `Option` にせず `Window::new` の引数で必ず受け取る (`scene_page_id` を置き換える)。
+  エンジンも、ScenePage が設定されないまま Page を積まれたら止める (今の `scene_page_id` の検査を置き換える)。
 - 文字列 id で繋いでいた `Window.scene_page_id`・`Page.canvas` / `Page.message_area`・
   エンジンの `onScenePageEntered` / `resolveId` による scene の開始は、R7 で入口を切り替えるときに消す。
 
@@ -1517,9 +1563,9 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
 - コンパイラ (`biwac_scene`): 既知シンボル表から `scene main` (`Main`) と `on_new_game` を消し、`app` を `main` に改名
   (`fn()`、playable で必須)。`main` という名前の scene は認めない (関数の `main` と名前がぶつかる) か、普通の scene として扱うかを決める。
 - 単相化: 根を `main` (と host export) にする。今は表の先頭 (`scene main`) をエントリとしているので変える。
-  wasm の export は `__biwa_main` に。`__biwa_entrypoint` / `__biwa_on_new_game` / `__biwa_app` と
-  std の `__biwa_std_window_show` を消す。
-- エンジン: 起動は `__biwa_main` を呼んで (その中の `show` の syscall で UI が出る) イベントを待つ。
+  wasm の export は `__biwa_entrypoint` に。`__biwa_on_new_game` / `__biwa_app` を消す
+  (std の `__biwa_std_window_show` と `app` の戻り値は R4 で消した)。
+- エンジン: 起動は `__biwa_entrypoint` を呼んで (その中の `show` の syscall で UI が出る) イベントを待つ。
   `on_new_game` / `entrypoint` / `windowShow` の経路を消す。
 - フィクスチャ (`missing_app` は `missing_main` に、`old_on_new_game` は廃止など)、`~/test1` を改訂版の形に書き換え、
   `biwa dev` + Playwright で確認する。

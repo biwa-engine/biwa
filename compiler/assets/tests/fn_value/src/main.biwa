@@ -22,8 +22,8 @@ struct MyGameState {}
 
 type MyGame = Game[MyGameState];
 
-fn app() -> Window {
-  Window::new()
+fn app() {
+  Window::new(main).show();
 }
 
 fn on_new_game(window: GameWindow) -> MyGame {

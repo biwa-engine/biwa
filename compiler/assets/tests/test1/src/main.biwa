@@ -200,9 +200,16 @@ type MyGame = Game[MyGameState];
 // `Game` は開発者が決める値 (states / config) を含むので、
 // ランタイムには組み立てられない。
 // `window` (出力先の束) はランタイムが組み立てて渡すので、そのまま `Game::new` に渡す。
-// UI の root。ランタイムが起動時に最初に呼び、返った `Window` を表示する。
-fn app() -> Window {
-  Window::new()
+// UI を出す。ランタイムが起動時に最初に呼ぶ。`Window` を組み立てて `show()` する。
+fn app() {
+  Window::new(start).show();
+}
+
+// Window の scene 本体。このフィクスチャは TypeScript にもビルドするが、
+// TypeScript ターゲットでは scene を関数の値にできない (`SceneValueOnTypeScript`) ので、
+// `scene main` ではなく同じ型 (`Scene[MyGameState]`) の普通の関数を渡す。
+fn start(g: MyGame) -> MyGame {
+  g
 }
 
 fn on_new_game(window: GameWindow) -> MyGame {

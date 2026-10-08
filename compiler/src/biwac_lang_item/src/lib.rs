@@ -320,11 +320,12 @@ lang_item_table!(
     // (biwac_scene)。
     GameWindow, "game_window", LangItemKind::Ty, LangItemGenericRequirement::Exact(0);
 
-    // UI の root Element `Window` (`docs/ui-api.md`)。
-    // ランタイムは起動時に `fn app() -> Window` を呼んで表示するので、
-    // コンパイラは `app` のシグネチャ検査でこの型を知っている必要がある (biwac_scene)。
+    // UI の root Element `Window[S]` (`docs/ui-api.md`)。
+    // ジェネリック引数はゲームの状態 `S` の 1 つ (`main_scene: Scene[S]` と揃える)。
+    // 今はコンパイラが使っていない (`fn app()` は `Window` を返さず、中で `show()` する) が、
+    // UI 記述の構文 (Phase2) が root の型として使う見込みで残している。
     // std の `GameWindow` (出力先の束) とは別物である。
-    UiWindow, "ui_window", LangItemKind::Ty, LangItemGenericRequirement::Exact(0);
+    UiWindow, "ui_window", LangItemKind::Ty, LangItemGenericRequirement::Exact(1);
 
     // 文字列リテラルの型。
     // コンパイラは "..." を書かれた位置でこの型を割り当てる。

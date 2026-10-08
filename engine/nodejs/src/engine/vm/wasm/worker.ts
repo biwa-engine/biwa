@@ -68,7 +68,7 @@ const ENTRYPOINT = "__biwa_entrypoint";
 /** コンパイラが初期 `Game` の組み立てに付ける固定の名前。 */
 const NEW_GAME = "__biwa_on_new_game";
 
-/** コンパイラが UI の root の組み立て (`fn app()`) に付ける固定の名前。 */
+/** コンパイラが UI を出す関数 (`fn app()`) に付ける固定の名前。 */
 const APP = "__biwa_app";
 
 /**
@@ -76,12 +76,6 @@ const APP = "__biwa_app";
  * (`[[host_export="__biwa_std_game_window_new"]]`、`library/std/src/game/ui.biwa`)
  */
 const GAME_WINDOW_NEW = "__biwa_std_game_window_new";
-
-/**
- * std が `Window` を表示する入口として host export している名前。
- * (`[[host_export="__biwa_std_window_show"]]`、`library/std/src/game/ui/window.biwa`)
- */
-const WINDOW_SHOW = "__biwa_std_window_show";
 
 const decoder = new TextDecoder();
 
@@ -166,17 +160,15 @@ async function run(
 
   // 足りないものがあれば、何かを始める前に名前で叱る。
   const app = exported(instance, APP);
-  const windowShow = exported(instance, WINDOW_SHOW);
   const entrypoint = exported(instance, ENTRYPOINT);
   const newGame = exported(instance, NEW_GAME);
   const gameWindowNew = exported(instance, GAME_WINDOW_NEW);
 
   channel.report({ kind: "ready" });
 
-  // 1. UI を出す。UI はすべてゲーム側 (`fn app() -> Window`) が決める。
-  //    `Window` も WasmGC の struct なので、表示は std の host export に任せる。
+  // 1. UI を出す。UI はすべてゲーム側 (`fn app()`) が決め、その中で `Window` を `show()` する。
   //    UI の syscall は止まらない (まとめて流す) ので、ここで流し切っておく。
-  windowShow(app());
+  app();
   channel.flush();
 
   // 2. Window の `scene_page_id` の Page に遷移するまで待つ。
