@@ -689,6 +689,31 @@ fn load_analyze_and_codegen_single_package(
                 return Err(());
             }
 
+            // scene の値も TypeScript では扱えない。
+            // scene は generator function で、呼ぶ側が `yield*` で委譲しなければならないが、
+            // 関数の値を通した呼び出しでは、呼び先が scene かどうかが呼ぶ側で分からない。
+            let is_scene = |def_id: &biwac_span::ValDefId| {
+                if def_id.pkg().is_self() {
+                    matches!(
+                        hir.vals.get(def_id),
+                        Some(biwac_hir::ValDefKind::NovelScene(_))
+                    )
+                } else {
+                    ext_pkgs_for_ty
+                        .iter()
+                        .find(|(pkg_id, _)| *pkg_id == def_id.pkg())
+                        .is_some_and(|(_, meta)| meta.is_scene(def_id.local_idx()))
+                }
+            };
+            let unsupported: Vec<SceneValueOnTypeScript> = scene_values_in(&mir, is_scene)
+                .into_iter()
+                .map(|span| SceneValueOnTypeScript { span })
+                .collect();
+            if !unsupported.is_empty() {
+                print_errors(&unsupported, interner, &srcs, metadata);
+                return Err(());
+            }
+
             // codegen も lang item を使う。
             // novel statement を std の関数呼び出しに展開するため。
             // 外部パッケージのメタデータはシンボル名のマングリングに使う
@@ -1027,6 +1052,69 @@ impl biwac_base::BiwacError for TraitBoundOnTypeScript {
             )
             .print();
     }
+}
+
+/// TypeScript ターゲットが扱えない、scene の値。
+#[derive(Debug)]
+struct SceneValueOnTypeScript {
+    span: biwac_span::Span,
+}
+
+impl biwac_base::BiwacError for SceneValueOnTypeScript {
+    fn print_error_message(&self, ctx: &biwac_base::ErrorContext) {
+        ctx.diagnostic("The TypeScript target does not support scenes as values yet.")
+            .label(
+                biwac_base::DiagSpan::new(self.span.module(), self.span.begin(), self.span.end()),
+                "a scene is used as a value here",
+            )
+            .note(
+                "a scene is a generator function in TypeScript and must be delegated to with \
+                 `yield*`, but a call through a function value cannot tell whether it calls a scene; \
+                 build for the wasm target",
+            )
+            .print();
+    }
+}
+
+/// scene を値として使っている位置 (scene への関数参照) を集める。
+fn scene_values_in(
+    mir: &biwac_mir::Mir,
+    is_scene: impl Fn(&biwac_span::ValDefId) -> bool,
+) -> Vec<biwac_span::Span> {
+    use biwac_mir::{Const, Operand, Rvalue, StatementKind, TerminatorKind};
+
+    let refers_scene =
+        |op: &Operand| matches!(op, Operand::Const(Const::FnDef(def_id, _)) if is_scene(def_id));
+
+    let mut out = Vec::new();
+    for item in mir.items.values() {
+        let biwac_mir::MirItem::Body(body) = item else {
+            continue;
+        };
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                let StatementKind::Assign(_, rvalue) = &stmt.kind;
+                let found = match rvalue {
+                    Rvalue::Use(op) | Rvalue::UnaryOp(_, op) => refers_scene(op),
+                    Rvalue::BinaryOp(_, l, r) => refers_scene(l) || refers_scene(r),
+                    Rvalue::Aggregate(_, members) => members.iter().any(|(_, op)| refers_scene(op)),
+                    Rvalue::Discriminant(_) => false,
+                };
+                if found {
+                    out.push(stmt.span.clone());
+                }
+            }
+            if let TerminatorKind::Call { callee, args, .. } = &block.term.kind {
+                let callee_is_scene =
+                    matches!(callee, biwac_mir::Callee::Indirect(op) if refers_scene(op));
+                if callee_is_scene || args.iter().any(refers_scene) {
+                    out.push(block.term.span.clone());
+                }
+            }
+        }
+    }
+    out.sort_by_key(|s| s.begin());
+    out
 }
 
 /// 実装がまだ決まっていない呼び出しの位置を集める。
@@ -1855,10 +1943,9 @@ mod tests {
         assert!(wat.contains("call_ref"), "{wat}");
     }
 
-    /// 依存パッケージの scene を値にするのは型エラーであること
-    /// (scene かどうかは `.biwameta` から分かる)。
+    /// 依存パッケージの scene も値にできること (`Scene[S]`。`docs/ui-api-impl-status.md` §19 の R2)。
     #[test]
-    fn scene_of_a_dependency_as_value_is_an_error() {
+    fn scene_of_a_dependency_as_value() {
         ensure_fixture_deps("fn_lib");
         ensure_fixture_deps("fn_user_scene");
         let result = with_build_lock(|_| {
@@ -1872,8 +1959,8 @@ mod tests {
             )
         });
         assert!(
-            result.is_err(),
-            "a scene of a dependency used as a value must be rejected"
+            result.is_ok(),
+            "a scene of a dependency must be usable as a value"
         );
     }
 

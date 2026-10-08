@@ -1396,13 +1396,35 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
   (`app` が無い・`on_new_game` の引数・構文エラー) を確認。`~/test1` を強制再ビルドして Playwright で確認
   (テキスト・Link・単位・Layers・演出、エラー無し)。fn_value / fn_user の wasm を Node で実行して 168 / 168。
 
-#### R2. scene を関数型の値にする
+#### R2. scene を関数型の値にする — **実装済み**
 
 - `SceneAsValue` を外し、scene を `fn(Game[S]) -> Game[S]` の値として渡せるようにする
   (関数型の md のステップ 10)。wasm では scene は普通の関数なので、値にする経路はステップ 1 のまま使える。
 - std に `type Scene[S] = fn(Game[S]) -> Game[S];` を置く。
 - TypeScript: scene は generator なので、関数の値を通した呼び出しでは `yield*` が要るかどうかが呼ぶ側で分からない。
   当面 TypeScript では scene の値を型エラーのままにする (または値の呼び出しを常に generator として扱う) か決める。後回し可。
+
+##### R2 実装結果 (完了)
+
+- 型推論: `SceneAsValue` を削除し、scene を `fn(Game[S]) -> Game[S]` の値にできるようにした
+  (`infer_fn_value` の判定を外しただけ。値にする経路は関数と同じ)。自パッケージ・依存パッケージの scene のどちらも。
+- wasm: scene は普通の関数なので、`ref.func` / `call_ref` の経路 (関数型の md のステップ 1) をそのまま使う。
+- std (本物とフィクスチャの std): `type Scene[S] = fn(Game[S]) -> Game[S];` を `std::game` に置いた
+  (型エイリアスは `.biwameta` に載るので依存元から `std::game::Scene` で使える)。
+- TypeScript (tier 2): **scene の値は出力の手前で名指しのエラー**にした
+  (`The TypeScript target does not support scenes as values yet.`)。scene は generator で呼ぶ側が `yield*` で委譲する必要があるが、
+  関数の値を通した呼び出しでは呼び先が scene か分からないため。driver の TypeScript の経路で、MIR の中の scene への関数参照
+  (`Const::FnDef`、依存の scene は `.biwameta` の `is_scene` の印で判定) を探す。trait 越しの呼び出しを止めているのと同じ形。
+  なお std がもともと TypeScript にビルドできない (制限つきジェネリクス) ので、この経路はフィクスチャでは確認できていない。
+- 確認:
+  - fixture `fn_value`: `scene pass_through` を `Scene[MyGameState]` の値にして関数に渡し、関数の値として呼ぶ
+    (`let s: Scene[MyGameState] = pass_through; run_scene(s, g)`)、scene の中の `#let g2 = run_scene(pass_through, g)`。
+    wasm を Node / wasmtime で実行して期待値 169。
+  - fixture `fn_user_scene` (以前は「依存の scene を値にすると `SceneAsValue`」の負例) を、
+    依存の scene を `Scene[fn_lib::LibState]` として返す正例に変えた (`scene_of_a_dependency_as_value`)。
+  - compiler (113 件)・LSP (94 件) の全テスト。
+  - `~/test1`: scene main の冒頭で `fv_run_scene(fv_sub_scene, g)` (scene の値を通して別の scene を実行) し、
+    その scene のテキスト「(scene の値から呼んだ scene)」が出ることを Playwright で確認。既存の確認 (Link・単位・Layers・演出) も通る。
 
 #### R3. ホストとの関数の受け渡しの規定と土台
 

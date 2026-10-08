@@ -27,6 +27,13 @@ struct Game[S] {
   config: Config,
 }
 
+// scene の型。scene は `Game[S]` を受け取って (状態を進めた) `Game[S]` を返す関数である。
+//
+// `scene foo(g: MyGame) -> MyGame {{ .. }}` は `Scene[MyGameState]` の値として渡せる
+// (例えば UI の `Window` の `main_scene` に。`docs/ui-api.md` の改訂版)。
+// wasm では scene は普通の関数である。TypeScript では generator function なので、まだ値にできない。
+type Scene[S] = fn(Game[S]) -> Game[S];
+
 impl[S] Game[S] {
   // `window` はランタイムが組み立てて `on_new_game(window)` に渡したもの。
   fn new(window: GameWindow, name: String, states: S, config: Config) -> Self {

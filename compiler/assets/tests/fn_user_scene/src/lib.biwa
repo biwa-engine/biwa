@@ -1,8 +1,10 @@
-// 依存パッケージの scene もまだ値にできない。型エラー (`SceneAsValue`) にならなければならない。
+// 依存パッケージの scene も値にできる (`docs/ui-api-impl-status.md` §19 の R2)。
 //
-// scene かどうかは `.biwameta` に書かれている (自パッケージの scene と同じ扱いにするため)。
+// scene は `Scene[S]` (`fn(Game[S]) -> Game[S]`) の値で、依存の型エイリアス `Scene` も、
+// 依存の scene への関数参照もパッケージをまたいで運べる。
 
-fn take() -> Int {
-  let s = fn_lib::lib_scene;
-  0
+import std::game::Scene;
+
+fn take() -> Scene[fn_lib::LibState] {
+  fn_lib::lib_scene
 }

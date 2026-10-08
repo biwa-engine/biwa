@@ -197,15 +197,6 @@ impl<'a> TyCtx<'a> {
             .map(|(_, d)| d)
     }
 
-    /// その値が scene か。外部パッケージなら `.biwameta` の印を見る。
-    pub(super) fn is_scene(&self, def_id: &ValDefId) -> bool {
-        if def_id.pkg().is_self() {
-            return matches!(self.hir.vals.get(def_id), Some(ValDefKind::NovelScene(_)));
-        }
-        self.find_ext_dep(def_id.pkg())
-            .is_some_and(|dep| dep.is_scene(def_id.local_idx()))
-    }
-
     /// DefinedTyImpl を返す内部ヘルパー。外部パッケージは遅延ロードしてキャッシュする。
     /// 外部 struct をロードした際、assoc fn の ValDefId も assoc_val_map に登録する。
     /// 返す参照のライフタイムは &self と同じ。

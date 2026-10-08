@@ -857,11 +857,10 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
         call_site_self_ty: Option<&Ty>,
         span: Span,
     ) -> TyResult<Ty> {
-        // scene は TypeScript では generator function で、普通の関数と呼び方が違う。
-        // 関数型として扱うのは別のステップ (impl-status §4 の 9)。
-        if self.tctx.is_scene(&def_id) {
-            return Err(TyError::SceneAsValue { span });
-        }
+        // scene も値にできる (`type Scene[S] = fn(Game[S]) -> Game[S]`)。
+        // wasm では scene は普通の関数である。TypeScript では generator function で
+        // 呼び方が違うので、TypeScript の出力の手前で driver が止める
+        // (`docs/ui-api-impl-status.md` §19 の R2)。
 
         // メソッドも値にできる。シグニチャの第一引数が `self` なので、
         // `Foo::bar` は `fn(Foo, A) -> B` になる。
@@ -1645,7 +1644,7 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
     /// (`docs/function-as-the-first-class-type-impl-status.md` §7)。
     ///
     /// - パスの値 (`foo`、`Foo::new`): 静的な呼び出し。呼び先を値として推論しないので、
-    ///   scene も呼べる (値にするのは `SceneAsValue`)
+    ///   scene も呼べる
     /// - trait の項目のパス (`T::guee`): 実装は単相化で決まる
     /// - メンバアクセス (`x.bar`): `bar` が関数型のメンバならその値、そうでなければメソッド
     /// - それ以外: 関数型の値
