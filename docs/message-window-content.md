@@ -50,7 +50,7 @@ fn foo(g: MyGame) -> MyGame {
 
 ```biwa
 [[lang="content_push"]]
-fn content_push[C: Into[Content], T, U](game: Game[T, U], content: C) {
+fn content_push[C: Into[Content], S](game: Game[S], content: C) {
   let c: Content = content.into();
   // Window に画面操作の API が集約されており、
   // サードパーティもstdの抽象レイヤーも Window API を経由して操作を行うことになっている
@@ -59,7 +59,7 @@ fn content_push[C: Into[Content], T, U](game: Game[T, U], content: C) {
 }
 
 [[lang="content_flush_and_wait"]]
-fn content_flush_and_wait[T, U](game: Game[T, U]) {
+fn content_flush_and_wait[S](game: Game[S]) {
   // 個々で初めてpushされてきたContentがまとめて出力開始される
   game.window.message_window.flush();
   // 将来的に各種イベントを受け取る機構が検討されている

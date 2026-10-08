@@ -16,16 +16,14 @@ import fn_lib::Slot;
 
 struct MyGameState {}
 
-struct MyGameCharacters {}
-
-type MyGame = Game[MyGameCharacters, MyGameState];
+type MyGame = Game[MyGameState];
 
 fn app() -> Window {
   Window::new()
 }
 
 fn on_new_game(window: GameWindow) -> MyGame {
-  Game::new(window, "fn_user", MyGameCharacters {}, MyGameState {}, Config::default())
+  Game::new(window, "fn_user", MyGameState {}, Config::default())
 }
 
 fn double(x: Int) -> Int {

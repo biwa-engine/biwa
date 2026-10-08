@@ -122,7 +122,7 @@ impl Float: Into[Content] {
 // ゲーム開発者やサードパーティが直接呼ぶことは想定していない。
 
 [[lang="content_push"]]
-fn content_push[C: Into[Content], T, U](game: Game[T, U], content: C) {
+fn content_push[C: Into[Content], S](game: Game[S], content: C) {
   let c: Content = content.into();
   match c {
     Content::Text(text) => {
@@ -138,7 +138,7 @@ fn content_push[C: Into[Content], T, U](game: Game[T, U], content: C) {
 }
 
 [[lang="content_flush_and_wait"]]
-fn content_flush_and_wait[T, U](game: Game[T, U]) {
+fn content_flush_and_wait[S](game: Game[S]) {
   game.window.message_window.flush();
   // 将来的に各種イベントを受け取る機構が検討されている。
   // 共通のイベントハンドラをエンジン側が呼び、種類ごとに振り分ける形などが考えられる。

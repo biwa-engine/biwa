@@ -7,7 +7,7 @@ use biwac_span::{DefId, Span};
 // rustc と同じく、ライブラリ側が
 //  ```biwa
 //  [[lang="game"]]
-//  struct Game[C, S] { ... }
+//  struct Game[S] { ... }
 //  ```
 // のように名乗り出て、コンパイラが回収・検証する。
 // コンパイラ側にパスをハードコードしない。
@@ -225,7 +225,7 @@ macro_rules! lang_item_table {
     //
     //  ```biwa
     //  [[lang="$key"]]
-    //  struct Game[C, S] { ... }
+    //  struct Game[S] { ... }
     //  ```
     //             ^^^^^
     //             $generics (LangItemGenericRequirement)
@@ -310,7 +310,8 @@ macro_rules! lang_item_table {
 
 lang_item_table!(
     // ノベルゲームのシーンを記述する scene 構文が依存する型。
-    Game,      "game",      LangItemKind::Ty, LangItemGenericRequirement::Exact(2);
+    // ジェネリック引数は開発者が定義するゲームの状態 `S` の 1 つ (`Game[S]`)。
+    Game,      "game",      LangItemKind::Ty, LangItemGenericRequirement::Exact(1);
     Character, "character", LangItemKind::Ty, LangItemGenericRequirement::Exact(1);
 
     // ゲームの出力先 (canvas と message area) の束。
@@ -341,10 +342,10 @@ lang_item_table!(
     // 生テキストも `$` の埋め込み式も `content_push` に落ちる。
     // 引数は (game, content) で、ジェネリック引数は
     //   C: 積む値の型 (`Into[Content]` を満たすこと)
-    //   T, U: `Game[T, U]` の型引数
-    // の 3 つである。
-    ContentPush, "content_push", LangItemKind::Fn, LangItemGenericRequirement::Exact(3);
-    // `>>` の展開先。引数は (game) で、ジェネリック引数は `Game[T, U]` の 2 つ。
+    //   S: `Game[S]` の型引数
+    // の 2 つである。
+    ContentPush, "content_push", LangItemKind::Fn, LangItemGenericRequirement::Exact(2);
+    // `>>` の展開先。引数は (game) で、ジェネリック引数は `Game[S]` の 1 つ。
     ContentFlushAndWait, "content_flush_and_wait",
-        LangItemKind::Fn, LangItemGenericRequirement::Exact(2);
+        LangItemKind::Fn, LangItemGenericRequirement::Exact(1);
 );

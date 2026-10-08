@@ -74,6 +74,85 @@ fn app() -> Window {
 }
 ```
 
+## 改訂版: 最終的に目指すところ
+
+- `Window` にはプロパティが追加される
+  - `.main_scene: Scene[S]`: シーンをわたす
+    `Scene[S]` は `type Scene[S] = fn(Game[S]) -> Game[S];`
+    このゲームのカスタムのための型引数`S`を全体で共有するため`Window`も型引数を取る(`Window[S]`)
+  - `.scene_page: ScenePage`: シーン実行時に遷移すべきページのUI
+    エンジンのUIとstdに `ScenePage` を新設。以下2つをプロパティにもつ。もう文字列のidでElementが相互に参照し合う必要はない(syscall レベルでは ui_id で設定する)
+    - `.canvas: Canvas`
+    - `.message_area: MessageArea`
+- `SceneStartButton` Element を新設。基本的なプロパティは`Button`と同じだが、
+  - `on_click: fn(GameWindow) -> Game[S]`: 押されたときに Engine は Biwa Language 側のこのハンドラ関数をよびだす。
+    `GameWindow` の生成はすでに `[[host_export]]` で達成済みなので、 Engine はそれを渡すだけ。
+    Engine はシーンページに遷移し `Window` 全体に指定された `main_scene` に返ってきた `Game[S]` を渡してシーン本体の処理に入る。
+
+```biwa
+fn main() -> Window[S] {
+  let save_data_list = std::game::load_save_data_list();
+
+  let window = <Window
+    on_event=(on_event)
+
+    // fn(Game[S]) -> Game[S]
+    main_scene=(scenario)
+    scene_page=(
+      <ScenePage
+        canvas=(<Canvas />)
+        message_area=(<MessageArea />)
+      >
+      </ScenePage>
+    )
+  >
+    <Page page_id="main" background_image=(title_image) >
+      <Vertical margin_left=(vw(60)) >
+        <SceneStartButton
+          text=("NEW GAME")
+          // fn(GameWindow) -> Game[S]
+          on_click=(fn(window) { Game::new(window, "test game", MyGameStates::new(), Condig::default()) })
+        />
+        <Link text="LOAD" on_click_link="load" />
+        <Link text="CONFIG" on_click_link="config" />
+      </Vertical>
+    </Page>
+
+    <Page page_id="load" >
+      <HorizontalGrid>
+        save_data_list.
+          iter().
+          map(fn(d) {
+            <SceneStartButton
+              text=(match d.name {
+                Some(name) => name,
+                None => d.timestamp.to_string(),
+              })
+
+              // fn(GameWindow) -> Game[S]
+              on_click=(fn(window) { Game::load(window, d) })
+              background_image=(d.last_snapshot)
+            />
+          })
+      </HorizontalGrid>
+    </Page>
+
+    <Page page_id="config" >
+    </Page>
+  </Window>;
+
+  window.show();
+}
+```
+
+シーンの最初からの処理とセーブデータのロードによる再開のいずれもを統一的に扱えるための一歩になる。
+
+エントリポイントは以下の変更により1つのみになる。
+
+- `scene main` は廃止される。 `Window` から関数を渡せるため。
+- `fn on_new_game` は廃止される。`Game[S]` オブジェクトの生成は `SceneStartButton` に渡したハンドラ関数で行えるため。
+- `fn app` は `fn main` に改名。唯一のエントリポイントであるため `main` という名称でよい。
+
 ## Elements
 
 - `Window`

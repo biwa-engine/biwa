@@ -14,7 +14,7 @@ use crate::{
 /// scene のシグネチャは名前解決の時点で確定しており、型推論を待つ必要がない。
 ///
 /// 型 alias は lowering の最後で展開済みなので、
-/// `type MyGame = Game[A, B]` 越しに書かれていても `Game` として見える。
+/// `type MyGame = Game[MyState]` 越しに書かれていても `Game` として見える。
 pub fn check(
     hir: &Hir,
     lang_items: &LangItemTable,

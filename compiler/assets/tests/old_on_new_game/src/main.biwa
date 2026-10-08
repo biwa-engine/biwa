@@ -13,9 +13,7 @@ import std::game::window::Window;
 
 struct MyGameState {}
 
-struct MyGameCharacters {}
-
-type MyGame = Game[MyGameCharacters, MyGameState];
+type MyGame = Game[MyGameState];
 
 fn app() -> Window {
   Window::new()
@@ -25,7 +23,6 @@ fn on_new_game() -> MyGame {
   Game::new(
     game_window_new_for_host(0, 0),
     "old_on_new_game",
-    MyGameCharacters {},
     MyGameState {},
     Config::default(),
   )

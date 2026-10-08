@@ -192,14 +192,12 @@ fn alias_assoc_demo() {
 
 struct MyGameState {}
 
-struct MyGameCharacters {}
-
-type MyGame = Game[MyGameCharacters, MyGameState];
+type MyGame = Game[MyGameState];
 
 // 最初の `Game` を組み立てる。
 //
 // ランタイムがゲーム開始時にこれを呼び、返ってきた値を `scene main` に渡す。
-// `Game` は開発者が決める値 (characters / states / config) を含むので、
+// `Game` は開発者が決める値 (states / config) を含むので、
 // ランタイムには組み立てられない。
 // `window` (出力先の束) はランタイムが組み立てて渡すので、そのまま `Game::new` に渡す。
 // UI の root。ランタイムが起動時に最初に呼び、返った `Window` を表示する。
@@ -208,7 +206,7 @@ fn app() -> Window {
 }
 
 fn on_new_game(window: GameWindow) -> MyGame {
-  Game::new(window, "test1", MyGameCharacters {}, MyGameState {}, Config::default())
+  Game::new(window, "test1", MyGameState {}, Config::default())
 }
 
 // 埋め込み式で出す値。

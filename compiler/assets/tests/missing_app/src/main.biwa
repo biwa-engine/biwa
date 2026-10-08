@@ -11,12 +11,10 @@ import std::game::window::GameWindow;
 
 struct MyGameState {}
 
-struct MyGameCharacters {}
-
-type MyGame = Game[MyGameCharacters, MyGameState];
+type MyGame = Game[MyGameState];
 
 fn on_new_game(window: GameWindow) -> MyGame {
-  Game::new(window, "missing_app", MyGameCharacters {}, MyGameState {}, Config::default())
+  Game::new(window, "missing_app", MyGameState {}, Config::default())
 }
 
 scene main(g: MyGame) -> MyGame {{

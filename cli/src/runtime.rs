@@ -35,7 +35,7 @@ const ENTRYPOINT_NAME: &str = "__biwa_entrypoint";
 /// 初期 `Game` を組み立てる関数の固定名。
 ///
 /// 中身はゲーム側の `fn on_new_game(window: GameWindow)` である。
-/// `characters` や `states` の型はゲーム開発者が決めるので、
+/// `states` の型はゲーム開発者が決めるので、
 /// エンジンには組み立てられない。
 const NEW_GAME_NAME: &str = "__biwa_on_new_game";
 

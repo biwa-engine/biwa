@@ -75,11 +75,9 @@ fn adder() -> fn(Int) -> Int {
   fn(x) { x + 100 }
 }
 
-struct LibCharacters {}
-
 struct LibState {}
 
-type LibGame = Game[LibCharacters, LibState];
+type LibGame = Game[LibState];
 
 scene lib_scene(g: LibGame) -> LibGame {{
   From the library.

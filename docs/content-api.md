@@ -208,7 +208,7 @@ biwa は「1 つの型にぶら下がる関連名は一意」という規則を�
 #### 制約 B: 制限つきジェネリクスは TypeScript で出力できない
 
 ```biwa
-fn content_push[C: Into[Content], T, U](game: Game[T, U], content: C) {
+fn content_push[C: Into[Content], S](game: Game[S], content: C) {
   let c: Content = content.into();   // ← 制限越しのメソッド呼び出し
   ...
 }
@@ -229,8 +229,8 @@ driver が codegen の手前で弾く。しかも弾くのはパッケージ単�
 | key                      | 種別 | 形                                                     |
 | ------------------------ | ---- | ------------------------------------------------------ |
 | `content`                | 型   | `enum Content`                                         |
-| `content_push`           | 関数 | `fn content_push[T, U](game: Game[T, U], content: ..)` |
-| `content_flush_and_wait` | 関数 | `fn content_flush_and_wait[T, U](game: Game[T, U])`    |
+| `content_push`           | 関数 | `fn content_push[C, S](game: Game[S], content: ..)` |
+| `content_flush_and_wait` | 関数 | `fn content_flush_and_wait[S](game: Game[S])`    |
 
 `write` / `wait` は `content_push` / `content_flush_and_wait` に置き換わって消える。
 
@@ -242,8 +242,8 @@ driver が codegen の手前で弾く。しかも弾くのはパッケージ単�
 `LangItemKind` に `Trait` を足す必要も無い。
 
 `content_push` のシグニチャは
-`fn content_push[C: Into[Content], T, U](game: Game[T, U], content: C)` なので、
-lang item の検証はジェネリック引数を 3 つ要求する。
+`fn content_push[C: Into[Content], S](game: Game[S], content: C)` なので、
+lang item の検証はジェネリック引数を 2 つ要求する。
 
 ## 5. エンジンの syscall
 
@@ -342,7 +342,7 @@ click    → resolve する
 
 ```biwa
 [[lang="content_push"]]
-fn content_push[C: Into[Content], T, U](game: Game[T, U], content: C) {
+fn content_push[C: Into[Content], S](game: Game[S], content: C) {
   let c: Content = content.into();
   game.window.message_window.push_content(c);
 }
@@ -376,7 +376,7 @@ std に依存するすべてのパッケージも建たない。
 
 ```biwa
 [[lang="content_flush_and_wait"]]
-fn content_flush_and_wait[T, U](game: Game[T, U]) {
+fn content_flush_and_wait[S](game: Game[S]) {
   game.window.message_window.flush();   // sys_content_flush()
   game.window.wait();                   // sys_wait()
   game.window.message_window.clear();   // sys_content_clear()
@@ -391,7 +391,7 @@ fn content_flush_and_wait[T, U](game: Game[T, U]) {
 
 ```biwa
 // 将来。エンジンは変わらない。
-fn content_flush_and_wait_keep[T, U](game: Game[T, U]) {
+fn content_flush_and_wait_keep[S](game: Game[S]) {
   game.window.message_window.flush();
   game.window.wait();
   // clear を呼ばない
@@ -412,9 +412,8 @@ click    → resolve する (クリアはしない。std が次に呼ぶ)
 
 ```biwa
 [[lang="game"]]
-struct Game[C, S] {
+struct Game[S] {
   name: String,
-  characters: C,
   states: S,
   window: Window,
   config: Config,   // 追加
@@ -683,7 +682,7 @@ resolve の置き場所には 2 案あった。`MessageWindow::push_content(cont
 
 ```biwa
 [[lang="content_push"]]
-fn content_push[C: Into[Content], T, U](game: Game[T, U], content: C) {
+fn content_push[C: Into[Content], S](game: Game[S], content: C) {
   let c: Content = content.into();
   match c {
     Content::Text(text) => {

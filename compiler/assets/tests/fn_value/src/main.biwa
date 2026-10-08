@@ -18,16 +18,14 @@ import std::option::Option;
 
 struct MyGameState {}
 
-struct MyGameCharacters {}
-
-type MyGame = Game[MyGameCharacters, MyGameState];
+type MyGame = Game[MyGameState];
 
 fn app() -> Window {
   Window::new()
 }
 
 fn on_new_game(window: GameWindow) -> MyGame {
-  Game::new(window, "fn_value", MyGameCharacters {}, MyGameState {}, Config::default())
+  Game::new(window, "fn_value", MyGameState {}, Config::default())
 }
 
 fn add_one(x: Int) -> Int {

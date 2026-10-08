@@ -141,7 +141,7 @@ well_known_symbol_table!(
 
     // 最初の `Game` を組み立てる。
     //
-    // `Game` は `config` や開発者定義の `characters` / `states` を含むので、
+    // `Game` は `config` や開発者定義の `states` を含むので、
     // ランタイムには組み立てられない。wasm では `Game` が WasmGC の struct で、
     // そもそもホストから組めない。
     // したがってゲーム側が作り、ランタイムはそれを受け取って `main` に渡す。
