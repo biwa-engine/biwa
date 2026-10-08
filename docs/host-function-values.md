@@ -92,9 +92,24 @@ scene (generator function) を預けた場合、呼ぶ側が kernel で回す必
 - 形の合わない値を渡すと、wasm の境界で `TypeError` になる
   (例: `fn(Game[S]) -> Game[S]` に数を渡す)。`null` は境界を通るが、Biwa 側で使った時点で trap する。
   したがってホストは種類ごとの形を守らなければならない。
-- 型の安全は Biwa 側が保証する。std の型付きの API (`Window[S].main_scene(Scene[S])` など) が
+- 型の安全は Biwa 側が保証する。std の型付きの API (`Window::new(main_scene: Scene[S], ..)`、
+  `SceneStartButton::new(on_click: fn(GameWindow) -> Game[S])`) が
   種類ごとの形に合う関数しか `sys_ui_set_handler` に渡さず、UI の木の型引数 `S` が
   `main_scene` と `on_click` の `Game[S]` を揃える。ホストは kind の番号しか見ない。
+
+### scene の開始 (今ある唯一の呼び出し)
+
+SceneStartButton が押されると:
+
+1. メインスレッド (`UIObjects`) が、ボタンの `on_click` の番号・Window の `main_scene` の番号・
+   Window の ScenePage の Canvas / MessageArea の ui_id (無ければ 0) を揃え、
+   wasm では Worker に `{ kind: "startScene", .. }` を送る (TypeScript では `main.ts` が受け取る)。
+2. Worker が `__biwa_std_game_window_new(canvas, message_area)` で `GameWindow` を作り、
+   `game = on_click(window)` で `Game[S]` を作らせる。
+3. ScenePage を見せる (Worker 自身が流す cast `__biwa_enter_scene_page`。`on_click` の中の syscall の後に並ぶ)。
+4. `main_scene(game)` を呼ぶ。scene が終わると (今は) ゲームの実行が終わる。
+
+2 回目以降の開始は未定義で、メインスレッドは最初の 1 回だけ送る (`ui-api-impl-status.md` §19 の R8)。
 
 ### 呼んでよいとき
 
@@ -116,11 +131,11 @@ scene (generator function) を預けた場合、呼ぶ側が kernel で回す必
 | kind | 名前                      | 付けられる Element            | 形                                    | 使う段階 |
 | ---- | ------------------------- | ----------------------------- | ------------------------------------- | -------- |
 | 0    | `WindowMainScene`         | `Window`                      | `Scene[S]` = `fn(Game[S]) -> Game[S]` | R4       |
-| 1    | `SceneStartButtonOnClick` | `SceneStartButton` (まだ無い) | `fn(GameWindow) -> Game[S]`           | R6       |
+| 1    | `SceneStartButtonOnClick` | `SceneStartButton`            | `fn(GameWindow) -> Game[S]`           | R6       |
 
 - `WindowMainScene` は**必須**である。std は `Window::new(main_scene, ..)` で必ず受け取り、`show()` で
-  Page より先に設定する。エンジンは、これ (と `scene_page_id`) が無いまま Window に Page を積まれたら
-  ゲームを止める (`UiContractError`)。ホストがこれを呼ぶ契機はまだ無い (R6)。
+  Page より先に設定する。エンジンは、これ (と `scene_page`) が無いまま Window に Page を積まれたら
+  ゲームを止める (`UiContractError`)。
 
 種類を足すときは、`HandlerKind` と付けられる Element (`HANDLER_TARGETS`)、
 それを設定する std の型付きの API、ホストの呼ぶ側を対で変更する。

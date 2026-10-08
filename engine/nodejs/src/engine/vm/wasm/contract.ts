@@ -135,6 +135,15 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
 };
 
 /**
+ * Worker 自身がメインスレッドへ流す cast の名前 (std の import ではない)。
+ *
+ * scene を始めるとき、`on_click` が `Game[S]` を返した後・`main_scene` を呼ぶ前に
+ * ScenePage を見せる (引数は Window の ui_id)。`on_click` の中の syscall との前後が崩れないよう、
+ * 同じ cast の列に乗せる。
+ */
+export const ENTER_SCENE_PAGE = "__biwa_enter_scene_page";
+
+/**
  * cast したあと直ちに送り出す syscall。
  *
  * cast はまとめて 1 通の postMessage で流している (`bridge.ts`)。

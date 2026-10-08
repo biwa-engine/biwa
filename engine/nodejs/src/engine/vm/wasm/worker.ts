@@ -12,10 +12,12 @@ import { SyscallChannel, type WorkerMessage } from "./bridge";
 import {
   ENGINE_NAMESPACE,
   ENGINE_SYSCALLS,
+  ENTER_SCENE_PAGE,
   FLUSH_AFTER_CAST,
   RUNTIME_NAMESPACE,
 } from "./contract";
 import { HandlerTable } from "../handlerTable";
+import type { SceneStartRequest } from "../../ui/UIObjects";
 
 /** メインスレッドから来る起動指示。 */
 export interface StartMessage {
@@ -27,15 +29,13 @@ export interface StartMessage {
 }
 
 /**
- * scene を始めてよいという知らせ。
+ * scene を始めてほしいという知らせ。
  *
- * `app()` の Window の `scene_page_id` の Page に遷移したときにメインスレッドが送る。
- * 値はその Page の `canvas` / `message_area` から引いた出力先の ui_id (0 は「無し」)。
+ * SceneStartButton が押されたときにメインスレッドが送る。中身は `UIObjects` の `SceneStartRequest`
+ * (預けた関数の番号と、ScenePage の出力先の ui_id)。
  */
-export interface SceneMessage {
-  kind: "scene";
-  canvasId: number;
-  messageAreaId: number;
+export interface StartSceneMessage extends SceneStartRequest {
+  kind: "startScene";
 }
 
 /**
@@ -49,7 +49,7 @@ export interface ReleaseMessage {
   handles: number[];
 }
 
-type HostMessage = StartMessage | SceneMessage | ReleaseMessage;
+type HostMessage = StartMessage | StartSceneMessage | ReleaseMessage;
 
 /** DOM の型と衝突させずに Worker のグローバルを触るための最小の窓口。 */
 interface WorkerScope {
@@ -62,11 +62,8 @@ interface WorkerScope {
 
 const scope = globalThis as unknown as WorkerScope;
 
-/** コンパイラがエントリポイントに付ける固定の名前。 */
-const ENTRYPOINT = "__biwa_entrypoint";
-
-/** コンパイラが初期 `Game` の組み立てに付ける固定の名前。 */
-const NEW_GAME = "__biwa_on_new_game";
+// NOTE: コンパイラはまだ `__biwa_entrypoint` (`scene main`) と `__biwa_on_new_game` も export するが、
+// scene は SceneStartButton から始まるようになったので使わない (コンパイラ側は §19 の R7 で消す)。
 
 /** コンパイラが UI を出す関数 (`fn app()`) に付ける固定の名前。 */
 const APP = "__biwa_app";
@@ -80,8 +77,8 @@ const GAME_WINDOW_NEW = "__biwa_std_game_window_new";
 const decoder = new TextDecoder();
 
 /** 届いた scene 開始の知らせ。まだ誰も待っていなければここに置いておく。 */
-let sceneMessage: SceneMessage | null = null;
-let sceneWaiter: ((message: SceneMessage) => void) | null = null;
+let sceneMessage: StartSceneMessage | null = null;
+let sceneWaiter: ((message: StartSceneMessage) => void) | null = null;
 
 scope.addEventListener("message", (event) => {
   const message = event.data;
@@ -89,9 +86,8 @@ scope.addEventListener("message", (event) => {
     case "start":
       void start(message);
       return;
-    case "scene":
-      // 2 回目以降の遷移で何をするかは未定義 (セーブ・ロードが整っていないため)。
-      // メインスレッドは 1 回しか送らない。
+    case "startScene":
+      // 2 回目以降の scene の開始は未定義 (§19 の R8)。メインスレッドは 1 回しか送らない。
       if (sceneWaiter !== null) {
         sceneWaiter(message);
         sceneWaiter = null;
@@ -108,7 +104,7 @@ scope.addEventListener("message", (event) => {
 });
 
 /** scene 開始の知らせを待つ。 */
-function waitForScene(): Promise<SceneMessage> {
+function waitForScene(): Promise<StartSceneMessage> {
   if (sceneMessage !== null) {
     return Promise.resolve(sceneMessage);
   }
@@ -160,8 +156,6 @@ async function run(
 
   // 足りないものがあれば、何かを始める前に名前で叱る。
   const app = exported(instance, APP);
-  const entrypoint = exported(instance, ENTRYPOINT);
-  const newGame = exported(instance, NEW_GAME);
   const gameWindowNew = exported(instance, GAME_WINDOW_NEW);
 
   channel.report({ kind: "ready" });
@@ -171,14 +165,34 @@ async function run(
   app();
   channel.flush();
 
-  // 2. Window の `scene_page_id` の Page に遷移するまで待つ。
-  //    Worker はその間イベントループに帰るので、メインスレッドからの知らせを受け取れる。
-  const { canvasId, messageAreaId } = await waitForScene();
+  // 2. SceneStartButton が押されるまで待つ。
+  //    Worker はその間イベントループに帰る (Biwa のコードを実行していない) ので、
+  //    メインスレッドからの知らせを受け取れ、預かった関数を呼んでよい (`docs/host-function-values.md`)。
+  const request = await waitForScene();
+  const onClick = handlerOf(request.onClick, "on_click");
+  const mainScene = handlerOf(request.mainScene, "main_scene");
 
   // 3. scene を始める。`Game` も `GameWindow` も JS からは組み立てられないので、
-  //    出力先の束 `GameWindow` は std の host export に作らせ、
-  //    それを渡してゲーム側の `fn on_new_game(window)` に `Game` を作らせる。
-  entrypoint(newGame(gameWindowNew(canvasId, messageAreaId)));
+  //    出力先の束 `GameWindow` は std の host export に作らせ、ボタンの `on_click` に `Game[S]` を作らせる。
+  //    ScenePage を見せてから、その `Game[S]` で Window の `main_scene` を始める。
+  //    値はすべて中身を見ずに受け渡す (`S` はホストに見えない)。
+  const game = onClick(
+    gameWindowNew(request.canvasId, request.messageAreaId),
+  );
+  channel.cast(ENTER_SCENE_PAGE, [request.windowId]);
+  mainScene(game);
+}
+
+/** 預かった関数を引く。手放されていれば名前を添えて叱る。 */
+function handlerOf(
+  handle: number,
+  what: string,
+): (...args: unknown[]) => unknown {
+  const f = handlers.get(handle);
+  if (f === undefined) {
+    throw new Error(`[biwa] the ${what} handler (#${handle}) is not retained`);
+  }
+  return f;
 }
 
 /** 固定名の export を取り出す。無ければ名前を添えて叱る。 */
@@ -325,7 +339,7 @@ let nextObjectId = 1;
  * 関数はスレッドを越えられないので、ここに置いてメインスレッドには番号だけを送る。
  * ホストが関数を呼ぶ (ホスト → Biwa) のもこの Worker の中からで、
  * 呼んでよいのは Worker が Biwa のコードを実行していないときだけである
- * (`docs/host-function-values.md`)。呼ぶ契機はまだ無い (`docs/ui-api-impl-status.md` §19 の R6)。
+ * (`docs/host-function-values.md`)。今呼ぶのは SceneStartButton による scene の開始だけである (`run`)。
  */
 const handlers = new HandlerTable();
 

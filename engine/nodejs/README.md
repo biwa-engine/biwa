@@ -16,17 +16,18 @@ Biwa エンジンの基盤エンジン実装 (Node.js 版)。
 
 1. `__biwa_app` (= `fn app()`) を呼ぶ。ゲーム側がその中で `Window[S]` を組み立てて
    `show()` し、UI の syscall が出る。**エンジンは UI を何も置かない**。
-   Window は scene を映す Page (`scene_page_id`) と scene 本体 (`main_scene` のハンドラ) を
+   Window は scene を映すページ (`ScenePage`) と scene 本体 (`main_scene` のハンドラ) を
    Page より先に持っていなければならず、欠けていればゲームを止める (`UiContractError`)
-2. Window の `scene_page_id` の Page に遷移するのを待つ (`UIObjects.onScenePageEntered`)
-3. その Page の `canvas` / `message_area` の ui_id で `__biwa_std_game_window_new` を呼び、
-   `__biwa_on_new_game(window)` → `__biwa_entrypoint` (= `scene main`) を始める
-   (2 回目以降の遷移は未定義。いまは最初の 1 回だけ)
+2. SceneStartButton が押されるのを待つ (`UIObjects.setSceneStarter`)
+3. Window の ScenePage の Canvas / MessageArea の ui_id で `__biwa_std_game_window_new` を呼び、
+   ボタンの `on_click(window)` で `Game[S]` を作らせ、ScenePage を見せてから
+   Window の `main_scene(game)` を始める。関数は預けた番号で指す (`docs/host-function-values.md`)
+   (2 回目以降の開始は未定義。いまは最初の 1 回だけ)
 
 ```
 src/main.ts
-  ├─ kind: "wasm"        → runWasm(url, scenePage)          ← Worker で wasm を走らせる
-  └─ kind: "typescript"  → kernel.run(entrypoint(game))     ← scene main (generator)
+  ├─ kind: "wasm"        → runWasm(url)                     ← Worker で wasm を走らせる
+  └─ kind: "typescript"  → kernel.run(mainScene(game))      ← scene (generator)
 ```
 
 どちらで来ても、エンジン API の実装 (`src/engine/api/*`) は同じものが呼ばれる。

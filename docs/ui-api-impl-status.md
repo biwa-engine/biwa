@@ -1539,7 +1539,7 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
     ページに `[biwa] ui element 1 (Window) must have `scene_page_id`and`main_scene` set before its pages are pushed`
     が出てゲームが止まる (UI は出ない) ことを確認。
 
-#### R5. `ScenePage` Element
+#### R5. `ScenePage` Element — **実装済み** (R6 と一緒に実装した。実装結果は R6 の後)
 
 - エンジン: Element の kind を足す。子に Canvas と MessageArea を 1 つずつ持つ (どちらも省略可)。
 - std: `ScenePage[S]` (`.canvas(Canvas[S])` / `.message_area(MessageArea[S])`)。`Window[S]` に `.scene_page(ScenePage[S])`
@@ -1549,7 +1549,7 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
 - 文字列 id で繋いでいた `Window.scene_page_id`・`Page.canvas` / `Page.message_area`・
   エンジンの `onScenePageEntered` / `resolveId` による scene の開始は、R7 で入口を切り替えるときに消す。
 
-#### R6. `SceneStartButton` Element
+#### R6. `SceneStartButton` Element — **実装済み**
 
 - エンジン: Element の kind を足す (見た目は Link と同じ property。Button はまだ無いので、テキストと背景を持つ箱)。
   クリックでメインスレッドが Worker に `{ kind: "start", handler }` を送る。
@@ -1557,6 +1557,50 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
   メインスレッドに scene 用の Page (ScenePage) への遷移を指示 → `main_scene(game)`。
 - std: `SceneStartButton[S]` (`.text(..)` など Link と同じビルダー + `.on_click(fn(GameWindow) -> Game[S])`)。
 - このステップの終わりで、改訂版の流れ (ボタン → `Game` を作る → scene) が通しで動く (入口はまだ `app` の名前でもよい)。
+
+##### R5・R6 実装結果 (完了)
+
+改訂版の流れ (`SceneStartButton` を押す → `on_click` で `Game[S]` を作る → ScenePage を見せる → `main_scene`) が
+通しで動くようになった。エントリポイントの名前 (`app` / `on_new_game` / `scene main`) は R7 のまま。
+
+- std (本物):
+  - `ScenePage[S]` (`ui/scene_page.biwa`): `ScenePage::new()`・`.canvas(Canvas[S])`・`.message_area(MessageArea[S])`・
+    `.id(..)`・`.background_color(..)` / `.background_image(..)`。`materialize()` は ui_id を返すだけで、Window に結びつけるのは `Window::show`。
+  - `SceneStartButton[S]` (`ui/scene_start_button.biwa`): `SceneStartButton::new(on_click: fn(GameWindow) -> Game[S])` と
+    Link と同じビルダー (layout・background・text 系)。`UiElement[S]` の variant。`materialize()` で
+    `sys_ui_set_handler(id, 1 (SceneStartButtonOnClick), on_click)`。
+  - **`Window::new(main_scene: Scene[S], scene_page: ScenePage[S], pages: Vec[Page[S]])`** (R4 の `scene_page_id: String` を置き換え)。
+    `show()` は ScenePage を materialize し、その ui_id を Window の数値 property `WindowScenePage` (15、val_u1) に設定してから
+    `main_scene` のハンドラを設定し、Page を積む。
+  - 文字列 id で繋ぐ仕組みを消した: `Page.canvas` / `Page.message_area`、`Window.scene_page_id`、property 107〜109 (欠番に)。
+    計画では R7 で消す予定だったが、std が使わなくなったので今消した。`GameWindow` などのコメントを新しい流れに直した。
+- エンジン:
+  - `ElementKind.ScenePage` = 11、`ElementKind.SceneStartButton` = 12、`PropertyKind.WindowScenePage` = 15。
+    `HandlerKind.SceneStartButtonOnClick` を SceneStartButton に付けられるようにした。
+  - ScenePage: `WindowScenePage` を設定すると Window の隠れた子になる (置き換えると古い方は消える)。Page と同じく Window を埋め、
+    子は Canvas と MessageArea を 1 つずつまで (同じ種類は置き換え、他の kind は叱って消す)。Layers と同じく 1 マスのグリッドに重ね、
+    **push の順によらず Canvas が下、MessageArea が上**。Link では遷移できず、Link で Page を移ると隠れる。
+  - SceneStartButton: 見た目は Link と同じ (div、`cursor: pointer`)。クリックで `SceneStartRequest`
+    (Window の ui_id・`on_click` と `main_scene` の番号・ScenePage の Canvas / MessageArea の ui_id (無ければ 0)) を、
+    走らせる側が `setSceneStarter` で差し込んだ関数に渡す。
+  - Window の必須設定の検査 (R4) は `scene_page_id` の代わりに ScenePage を見る。
+  - wasm: メインスレッドは最初の 1 回だけ Worker に `{ kind: "startScene", .. }` を送る。Worker は
+    `on_click(__biwa_std_game_window_new(canvas, message_area))` → 自分で cast `__biwa_enter_scene_page(window)` (ScenePage を見せる) →
+    `main_scene(game)`。`__biwa_entrypoint` / `__biwa_on_new_game` はもう呼ばない (コンパイラはまだ export する)。
+  - TypeScript (tier 2): `main.ts` が同じ流れを `api/handler.ts` の表で行う (scene を値にできないので実際には届かない)。
+    `BiwaBackend` と CLI のエントリスタブから `entrypoint` / `onNewGame` を、`game.ts` から `BiwaGame` などを消した。
+  - 消したもの: `onScenePageEntered` / `ScenePageEntry` / `pageEntered` / `resolveOutput`、Worker の `SceneMessage`、
+    `runWasm` の `scenePage` 引数。
+  - `docs/host-function-values.md` に scene の開始の流れを書いた。
+- `~/test1`: "シーンへ" を `SceneStartButton::new(on_new_game)` に (`on_new_game` はコンパイラがまだ要求するので、それを `on_click` に使う)。
+  scene の Page を `ScenePage::new().canvas(..).message_area(..).background_image("sample.png")` にした
+  (以前の Layers・空の Vertical による配置は要らなくなった。MessageArea は `margin_top(vh(63.8889))` で下端に置く)。
+- 確認:
+  - compiler (114 件)・LSP (94 件) の全テスト、`npx tsc --noEmit`。
+  - `~/test1` を強制再ビルドして Playwright (fv・Link・単位・Layers・演出、エラー無し)。Layers のスクリプトの scene の部分を ScenePage の形に直し、
+    ScenePage が Window を埋めて `grid` で見え、他の Page が隠れ、Canvas (0, 0, 1280×720, z 0) と
+    MessageArea (0, 460, 1280×260, z 1) が以前と同じ位置になることを確認。
+  - ScenePage は最初と "second" の Page では隠れていて (`display: none`)、"シーンへ" を押すと見える (`grid`) ことを確認。
 
 #### R7. エントリポイントを `fn main()` に一本化する
 
@@ -1567,6 +1611,8 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
   (std の `__biwa_std_window_show` と `app` の戻り値は R4 で消した)。
 - エンジン: 起動は `__biwa_entrypoint` を呼んで (その中の `show` の syscall で UI が出る) イベントを待つ。
   `on_new_game` / `entrypoint` / `windowShow` の経路を消す。
+  (→ `windowShow` は R4、`on_new_game` / `entrypoint` を呼ぶ経路は R6 で消した。残るのは呼ぶ export の名前を
+  `__biwa_app` から変えることだけ)
 - フィクスチャ (`missing_app` は `missing_main` に、`old_on_new_game` は廃止など)、`~/test1` を改訂版の形に書き換え、
   `biwa dev` + Playwright で確認する。
 

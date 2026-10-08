@@ -34,8 +34,9 @@ import {
   failCall,
   type WorkerMessage,
 } from "./bridge";
-import { type ScenePageEntry, UiContractError } from "../../ui/UIObjects";
-import type { ReleaseMessage, SceneMessage, StartMessage } from "./worker";
+import { UiContractError } from "../../ui/UIObjects";
+import { ENTER_SCENE_PAGE } from "./contract";
+import type { ReleaseMessage, StartMessage, StartSceneMessage } from "./worker";
 
 /**
  * syscall の実装。
@@ -148,20 +149,20 @@ function createHandlers(): Record<string, SyscallHandler> {
     // `handle` は Worker が関数を預かって振った番号 (`contract.ts` の `retain`)。
     sys_ui_set_handler: (id: number, kind: number, handle: number) =>
       setUiHandler(id, kind, handle),
+
+    // Worker 自身が流す cast (`contract.ts`)。scene を始めるときに ScenePage を見せる。
+    [ENTER_SCENE_PAGE]: (windowId: number) => engine().ui.enterScenePage(windowId),
   };
 }
 
 /**
  * wasm の生成物を Worker で走らせ、終わるまで待つ。
  *
- * Worker はまず `app()` の Window を表示し、`scenePage` が解決したら
- * (= `scene_page_id` の Page に遷移したら) その出力先で scene を始める。
+ * Worker はまず `app()` で Window を表示し、SceneStartButton が押されたら
+ * その `on_click` と Window の `main_scene` で scene を始める。
  * 返る Promise はゲームが最後まで進んだときに解決する。
  */
-export function runWasm(
-  url: string,
-  scenePage: Promise<ScenePageEntry>,
-): Promise<void> {
+export function runWasm(url: string): Promise<void> {
   if (
     typeof SharedArrayBuffer === "undefined" ||
     !globalThis.crossOriginIsolated
@@ -185,6 +186,7 @@ export function runWasm(
   return new Promise<void>((resolve, reject) => {
     const finish = (done: () => void): void => {
       engine().ui.setHandlerReleaser(() => {});
+      engine().ui.setSceneStarter(() => {});
       worker.terminate();
       done();
     };
@@ -234,10 +236,14 @@ export function runWasm(
     const start: StartMessage = { kind: "start", url, buffer };
     worker.postMessage(start);
 
-    // scene を映す Page に遷移したら、その出力先で scene を始めさせる。
-    void scenePage.then(({ canvasId, messageAreaId }) => {
-      const scene: SceneMessage = { kind: "scene", canvasId, messageAreaId };
-      worker.postMessage(scene);
+    // SceneStartButton が押されたら、Worker に scene を始めさせる。
+    // 2 回目以降の開始は未定義 (§19 の R8) なので、最初の 1 回だけ送る。
+    let sceneStarted = false;
+    engine().ui.setSceneStarter((request) => {
+      if (sceneStarted) return;
+      sceneStarted = true;
+      const message: StartSceneMessage = { kind: "startScene", ...request };
+      worker.postMessage(message);
     });
   });
 }

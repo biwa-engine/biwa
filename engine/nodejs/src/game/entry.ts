@@ -3,20 +3,14 @@
 import type {
   BiwaApp,
   BiwaBackend,
-  BiwaEntrypoint,
   BiwaGameWindowNew,
-  BiwaOnNewGame,
 } from "../engine/game";
 
-// UI は何も出さない。scene を映す Page も無いので、entrypoint まで進むことは無い。
+// UI は何も出さない。SceneStartButton も無いので、scene まで進むことは無い。
 const app: BiwaApp = () => {
   console.warn(
     "[biwa] no game is loaded: run `biwa dev` in a Biwa package to generate src/game/entry.ts",
   );
-};
-
-const entrypoint: BiwaEntrypoint = function*(game) {
-  return game;
 };
 
 const gameWindowNew: BiwaGameWindowNew = (canvasId, messageAreaId) => ({
@@ -24,18 +18,9 @@ const gameWindowNew: BiwaGameWindowNew = (canvasId, messageAreaId) => ({
   message_area: messageAreaId,
 });
 
-const onNewGame: BiwaOnNewGame = (window) => ({
-  name: "(no game)",
-  characters: {},
-  states: {},
-  window,
-});
-
 const backend: BiwaBackend = {
   kind: "typescript",
   packageName: "(no game)",
-  entrypoint,
-  onNewGame,
   gameWindowNew,
   app,
 };

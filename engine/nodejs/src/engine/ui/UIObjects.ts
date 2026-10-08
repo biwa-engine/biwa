@@ -39,12 +39,11 @@ interface UiNode {
    * 上書き・削除のときに古いキーを引くのに使う。
    */
   idKey: string | null;
-  /** Page の `canvas` property (出力先にする Canvas の `id`)。Page 以外では使わない。 */
-  pageCanvas: string | null;
-  /** Page の `message_area` property (出力先にする MessageArea の `id`)。Page 以外では使わない。 */
-  pageMessageArea: string | null;
-  /** Window の `scene_page_id` property。Window 以外では使わない。 */
-  scenePageId: string | null;
+  /**
+   * Window の ScenePage (`WindowScenePage` property)。Window 以外では使わない。
+   * ScenePage は Window の子でもある (隠れていて、scene が始まるときだけ見える)。
+   */
+  scenePage: UiNode | null;
   /**
    * `MessageArea` が持つ Message Window の実体。それ以外では `null`。
    * Content API はこれに出力する。
@@ -74,17 +73,24 @@ interface UiNode {
 }
 
 /**
- * scene を映す Page に遷移したことの知らせ。
+ * SceneStartButton が押され、scene を始めてほしいという要求。
  *
- * `canvasId` / `messageAreaId` はその Page の `canvas` / `message_area` property から
- * 引いた出力先の ui_id。設定されていない・引けなかったものは **0 (「無し」)** で、
- * そのまま `__biwa_std_game_window_new` に渡せる形にしてある。
+ * 値はすべて番号で、関数そのものは関数を預かっている側 (wasm は Worker) にある
+ * (`docs/host-function-values.md`)。受け取った側は
+ * `onClick(GameWindow::new(canvasId, messageAreaId))` で `Game[S]` を作り、
+ * `enterScenePage(windowId)` で ScenePage を見せてから `mainScene(game)` を呼ぶ。
  */
-export interface ScenePageEntry {
-  /** 遷移が起きた Window の ui_id。 */
+export interface SceneStartRequest {
+  /** ボタンが属する Window の ui_id。 */
   windowId: number;
-  /** scene を映す Page の page_id (= Window の `scene_page_id`)。 */
-  pageId: string;
+  /** ボタンの `on_click` (`fn(GameWindow) -> Game[S]`) の番号。 */
+  onClick: number;
+  /** Window の `main_scene` (`Scene[S]`) の番号。 */
+  mainScene: number;
+  /**
+   * Window の ScenePage の Canvas / MessageArea の ui_id。持っていなければ **0 (「無し」)** で、
+   * そのまま `__biwa_std_game_window_new` に渡せる形にしてある。
+   */
   canvasId: number;
   messageAreaId: number;
 }
@@ -104,7 +110,7 @@ export class UiContractError extends Error {
 }
 
 /** 親が子をいくつ持てるか。`docs/ui-api.md` の push_child の規則そのもの。 */
-type ChildCapacity = "many" | "single" | "none";
+type ChildCapacity = "many" | "single" | "none" | "scene";
 
 function childCapacity(kind: number): ChildCapacity {
   switch (kind) {
@@ -117,8 +123,10 @@ function childCapacity(kind: number): ChildCapacity {
       return "many";
     case ElementKind.Box:
       return "single";
+    case ElementKind.ScenePage:
+      return "scene";
     default:
-      // Link や、まだ知らない kind はここに来る。子は持てない。
+      // Link / SceneStartButton や、まだ知らない kind はここに来る。子は持てない。
       return "none";
   }
 }
@@ -146,9 +154,13 @@ export class UIObjects {
    * すべての MessageArea に効かせる。毎回 `nodes` を舐めないよう別に持つ。
    */
   private readonly messageAreas = new Set<UiNode>();
-  /** scene を映す Page への遷移を待っている者 (`onScenePageEntered`)。 */
-  private readonly scenePageListeners: Array<(entry: ScenePageEntry) => void> =
-    [];
+  /**
+   * SceneStartButton が押されたときに scene を始める者。
+   *
+   * 関数を預かっている側 (wasm は Worker、TypeScript は `main.ts`) が scene を走らせるので、
+   * 走らせる側が `setSceneStarter` で差し込む。差し込まれるまでは何もしない。
+   */
+  private startScene: (request: SceneStartRequest) => void = () => {};
   private nextId = 1;
   /**
    * 要らなくなったハンドラの番号を、関数を預かっている側に返す。
@@ -205,15 +217,30 @@ export class UIObjects {
     return node.textBox;
   }
 
+  /** SceneStartButton が押されたときに scene を始める者を決める (`startScene` を参照)。 */
+  setSceneStarter(start: (request: SceneStartRequest) => void): void {
+    this.startScene = start;
+  }
+
   /**
-   * scene を映す Page (Window の `scene_page_id`) に遷移したら呼ばれる。
+   * Window の ScenePage を見せ、他の Page を隠す。
    *
-   * Page が隠れた状態から見える状態になったときだけ知らせる (最初の Page として
-   * 表示されたときも含む)。既に見えている Page への Link では知らせない。
-   * `main.ts` はこれで scene を起動する (`on_new_game(window)` → `scene main`)。
+   * scene を始める側が、`on_click` で `Game[S]` を作った後・`main_scene` を呼ぶ前に呼ぶ。
    */
-  onScenePageEntered(listener: (entry: ScenePageEntry) => void): void {
-    this.scenePageListeners.push(listener);
+  enterScenePage(windowId: number): void {
+    const window = this.nodes.get(windowId);
+    if (window === undefined || window.kind !== ElementKind.Window) {
+      console.error(`[biwa] no such ui element (window): ${windowId}`);
+      return;
+    }
+    if (window.scenePage === null) {
+      console.error(`[biwa] ui element ${windowId} (Window) has no ScenePage`);
+      return;
+    }
+    for (const child of window.children) {
+      if (child.kind === ElementKind.Page) child.dom.style.display = "none";
+    }
+    window.scenePage.dom.style.display = "grid";
   }
 
   /**
@@ -288,9 +315,7 @@ export class UIObjects {
       onClickLink: null,
       pageId: null,
       idKey: null,
-      pageCanvas: null,
-      pageMessageArea: null,
-      scenePageId: null,
+      scenePage: null,
       textBox,
       textEl: null,
       z: 0,
@@ -303,6 +328,12 @@ export class UIObjects {
 
     if (kind === ElementKind.Window) {
       this.root.appendChild(node.dom);
+    }
+    if (kind === ElementKind.SceneStartButton) {
+      dom.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.handleSceneStartClick(node);
+      });
     }
   }
 
@@ -325,6 +356,11 @@ export class UIObjects {
     }
     if (!isKnownNumericProperty(kind)) {
       console.error(`[biwa] unknown or non-numeric ui property: ${kind}`);
+      return;
+    }
+
+    if (kind === PropertyKind.WindowScenePage) {
+      this.setScenePage(node, valU1);
       return;
     }
 
@@ -442,6 +478,24 @@ export class UIObjects {
       case "many":
         this.attach(parent, child);
         return;
+      case "scene":
+        // Canvas と MessageArea を 1 つずつまで。同じ種類があれば置き換える。
+        if (
+          child.kind !== ElementKind.Canvas &&
+          child.kind !== ElementKind.MessageArea
+        ) {
+          console.error(
+            `[biwa] ScenePage (ui element ${parent.id}) can only have a Canvas and a MessageArea, ` +
+            `but ui element ${child.id} (kind ${child.kind}) was pushed`,
+          );
+          this.destroy(child);
+          return;
+        }
+        for (const existing of parent.children.filter((c) => c.kind === child.kind)) {
+          this.destroy(existing);
+        }
+        this.attach(parent, child);
+        return;
     }
   }
 
@@ -450,14 +504,14 @@ export class UIObjects {
   /**
    * Window がノベルゲームとして scene を始められることを確かめる。
    *
-   * scene を映す Page の page_id (`scene_page_id`) と scene 本体 (`main_scene` のハンドラ) は
-   * どちらも欠かせない。最初の Page が積まれた時点で表示が始まり、その Page が scene の
-   * Page でもありうるので、Page を積む前に揃っていなければならない。
+   * scene を映すページ (`scene_page`) と scene 本体 (`main_scene` のハンドラ) は
+   * どちらも欠かせない。Page を積んだ時点で表示が始まりボタンが押せるようになるので、
+   * Page を積む前に揃っていなければならない。
    * std は `Window::new` の引数で必ず受け取り、Page より先に設定している。
    */
   private requireSceneSettings(window: UiNode): void {
     const missing: string[] = [];
-    if (window.scenePageId === null) missing.push("`scene_page_id`");
+    if (window.scenePage === null) missing.push("`scene_page`");
     if (!window.handlers.has(HandlerKind.WindowMainScene)) missing.push("`main_scene`");
     if (missing.length > 0) {
       throw new UiContractError(
@@ -476,7 +530,7 @@ export class UIObjects {
     parent.dom.appendChild(child.dom);
     // 子の部分木はすでに組み上がっている (create → property → push_child の順) ので、
     // 繋がった時点で部分木ごと重なりの高さを決め直す。
-    this.assignZ(child, zOfChild(parent, parent.children.length - 1));
+    this.assignZ(child, zOfChild(parent, child, parent.children.length - 1));
 
     if (child.kind === ElementKind.Page) {
       this.showFirstPageIfNoneVisible(parent, child);
@@ -489,7 +543,10 @@ export class UIObjects {
     parent.children = parent.children.filter((c) => c !== node);
     node.dom.remove();
     node.parent = null;
-    if (parent.kind === ElementKind.Layers) {
+    if (parent.scenePage === node) {
+      parent.scenePage = null;
+    }
+    if (parent.kind === ElementKind.Layers || parent.kind === ElementKind.ScenePage) {
       node.dom.style.gridArea = "";
       node.dom.style.alignSelf = "";
       node.dom.style.zIndex = "";
@@ -509,13 +566,14 @@ export class UIObjects {
    */
   private assignZ(node: UiNode, z: number): void {
     node.z = z;
-    if (node.parent?.kind === ElementKind.Layers) {
+    const parentKind = node.parent?.kind;
+    if (parentKind === ElementKind.Layers || parentKind === ElementKind.ScenePage) {
       node.dom.style.gridArea = "1 / 1";
       node.dom.style.alignSelf = "start";
       node.dom.style.zIndex = String(z);
     }
     node.children.forEach((child, index) => {
-      this.assignZ(child, zOfChild(node, index));
+      this.assignZ(child, zOfChild(node, child, index));
     });
   }
 
@@ -575,24 +633,6 @@ export class UIObjects {
         return;
       case PropertyKind.Id:
         this.setId(node, valS);
-        return;
-      case PropertyKind.PageCanvas:
-        if (!expectKind(node, ElementKind.Page, "canvas")) return;
-        node.pageCanvas = valS;
-        return;
-      case PropertyKind.PageMessageArea:
-        if (!expectKind(node, ElementKind.Page, "message_area")) return;
-        node.pageMessageArea = valS;
-        return;
-      case PropertyKind.WindowScenePageId:
-        if (!expectKind(node, ElementKind.Window, "scene_page_id")) return;
-        node.scenePageId = valS;
-        // 後から設定された場合に備え、既に見えている Page が該当すれば知らせる。
-        for (const page of node.children) {
-          if (page.kind === ElementKind.Page && isVisible(page)) {
-            this.pageEntered(node, page);
-          }
-        }
         return;
       default:
         console.error(`[biwa] unhandled string ui property: ${kind}`);
@@ -678,81 +718,86 @@ export class UIObjects {
     );
     if (!alreadyVisible) {
       page.dom.style.display = "";
-      this.pageEntered(window, page);
     }
   }
 
-  /** Window 直下の Page を、page_id が一致するものだけ見せる。 */
+  /**
+   * Window 直下の Page を、page_id が一致するものだけ見せる。
+   *
+   * ScenePage は Link では遷移できない (page_id を持たない) ので、見えていれば隠すだけである。
+   */
   private showPage(window: UiNode, pageId: string): void {
     let found = false;
-    const entered: UiNode[] = [];
     for (const child of window.children) {
+      if (child.kind === ElementKind.ScenePage) {
+        child.dom.style.display = "none";
+        continue;
+      }
       if (child.kind !== ElementKind.Page) continue;
       const match = child.pageId === pageId;
-      if (match && !isVisible(child)) entered.push(child);
       child.dom.style.display = match ? "" : "none";
       found ||= match;
     }
     if (!found) {
       console.error(`[biwa] no such page in this window: "${pageId}"`);
     }
-    // 表示を切り替え終えてから知らせる (受け取った側が画面の状態を見てもよいように)。
-    for (const page of entered) {
-      this.pageEntered(window, page);
-    }
-  }
-
-  /** Page が見える状態になった。scene を映す Page なら出力先を引いて知らせる。 */
-  private pageEntered(window: UiNode, page: UiNode): void {
-    if (window.scenePageId === null || page.pageId !== window.scenePageId) {
-      return;
-    }
-    const entry: ScenePageEntry = {
-      windowId: window.id,
-      pageId: window.scenePageId,
-      canvasId: this.resolveOutput(page, "canvas", page.pageCanvas, {
-        kind: ElementKind.Canvas,
-        name: "Canvas",
-      }),
-      messageAreaId: this.resolveOutput(
-        page,
-        "message_area",
-        page.pageMessageArea,
-        { kind: ElementKind.MessageArea, name: "MessageArea" },
-      ),
-    };
-    for (const listener of this.scenePageListeners) {
-      listener(entry);
-    }
   }
 
   /**
-   * Page の `canvas` / `message_area` property (Element の `id`) から ui_id を引く。
+   * Window に ScenePage を結びつける (`WindowScenePage` property)。
    *
-   * 設定されていなければ 0 (「無し」)。引けない・種類が違うものは名指しで叱って 0。
+   * ScenePage は Window の隠れた子になる。既に別の ScenePage があれば消して置き換える。
    */
-  private resolveOutput(
-    page: UiNode,
-    property: string,
-    name: string | null,
-    expected: { kind: number; name: string },
-  ): number {
-    if (name === null) return 0;
-    const id = this.idsByName.get(name);
-    const node = id === undefined ? undefined : this.nodes.get(id);
-    if (node === undefined) {
+  private setScenePage(window: UiNode, scenePageId: number): void {
+    if (!expectKind(window, ElementKind.Window, "scene_page")) return;
+    const scenePage = this.nodes.get(scenePageId);
+    if (scenePage === undefined || scenePage.kind !== ElementKind.ScenePage) {
       console.error(
-        `[biwa] page "${page.pageId}": ${property} refers to "${name}", but no ui element has that id`,
+        `[biwa] "scene_page" of ui element ${window.id} must be a ScenePage, but got ui element ${scenePageId}`,
       );
-      return 0;
+      return;
     }
-    if (node.kind !== expected.kind) {
-      console.error(
-        `[biwa] page "${page.pageId}": ${property} refers to "${name}" (ui element ${node.id}), which is not a ${expected.name}`,
-      );
-      return 0;
+    if (window.scenePage === scenePage) return;
+    if (window.scenePage !== null) {
+      this.destroy(window.scenePage);
     }
-    return node.id;
+    this.attach(window, scenePage);
+    window.scenePage = scenePage;
+  }
+
+  /**
+   * SceneStartButton が押された。Window の ScenePage の出力先と預けた関数の番号を揃えて、
+   * scene を始める者 (`setSceneStarter`) に渡す。
+   *
+   * クリックは host まで伝播させない (Link と同じ理由)。
+   */
+  private handleSceneStartClick(button: UiNode): void {
+    const onClick = button.handlers.get(HandlerKind.SceneStartButtonOnClick);
+    if (onClick === undefined) {
+      console.error(`[biwa] SceneStartButton (ui element ${button.id}) has no on_click`);
+      return;
+    }
+    const win = ownerWindow(button);
+    if (win === null) {
+      console.error("[biwa] a SceneStartButton outside of any Window was clicked");
+      return;
+    }
+    const mainScene = win.handlers.get(HandlerKind.WindowMainScene);
+    const scenePage = win.scenePage;
+    if (mainScene === undefined || scenePage === null) {
+      // Page を積む時点で検査している (`requireSceneSettings`) ので、ここには来ない想定。
+      console.error(`[biwa] ui element ${win.id} (Window) cannot start a scene`);
+      return;
+    }
+    const outputOf = (kind: number): number =>
+      scenePage.children.find((c) => c.kind === kind)?.id ?? 0;
+    this.startScene({
+      windowId: win.id,
+      onClick,
+      mainScene,
+      canvasId: outputOf(ElementKind.Canvas),
+      messageAreaId: outputOf(ElementKind.MessageArea),
+    });
   }
 }
 
@@ -763,7 +808,7 @@ function createDom(kind: number): HTMLElement {
       return styled(document.createElement("div"), {
         position: "absolute",
         inset: "0",
-        // Window 自身はクリックを奪わない。奪うのは Link だけ。
+        // Window 自身はクリックを奪わない。奪うのは Link と SceneStartButton だけ。
         pointerEvents: "none",
       });
     case ElementKind.Page:
@@ -773,10 +818,21 @@ function createDom(kind: number): HTMLElement {
         // 最初は隠れている。表示は `showFirstPageIfNoneVisible` / `showPage` が決める。
         display: "none",
       });
+    case ElementKind.ScenePage:
+      // Page と同じく Window を埋め、最初は隠れている (scene が始まるときに `enterScenePage` が見せる)。
+      // 子 (Canvas / MessageArea) は Layers と同じく 1 マスのグリッドに重ねる (`assignZ`)。
+      return styled(document.createElement("div"), {
+        position: "absolute",
+        inset: "0",
+        display: "none",
+        gridTemplateColumns: "100%",
+        gridTemplateRows: "100%",
+      });
     case ElementKind.Box:
       return styled(document.createElement("div"), {
         position: "relative",
       });
+    case ElementKind.SceneStartButton:
     case ElementKind.Link:
       return styled(document.createElement("div"), {
         display: "inline-flex",
@@ -938,9 +994,21 @@ function sizeToCss(unit: number, value: number): string {
   }
 }
 
-/** `parent` の `index` 番目の子の重なりの高さ。Layers の子だけが上に積み上がる。 */
-function zOfChild(parent: UiNode, index: number): number {
-  return parent.kind === ElementKind.Layers ? parent.z + index : parent.z;
+/**
+ * `parent` の `index` 番目の子 `child` の重なりの高さ。
+ *
+ * Layers の子は push された順に上に積み上がる。ScenePage の子は順番によらず
+ * Canvas が下、MessageArea が上になる。
+ */
+function zOfChild(parent: UiNode, child: UiNode, index: number): number {
+  switch (parent.kind) {
+    case ElementKind.Layers:
+      return parent.z + index;
+    case ElementKind.ScenePage:
+      return parent.z + (child.kind === ElementKind.MessageArea ? 1 : 0);
+    default:
+      return parent.z;
+  }
 }
 
 /** property を付けてよい Element か。違えば名指しで叱る。 */

@@ -37,7 +37,19 @@ export const ElementKind = {
    * (x / y 方向には互いに干渉しない)、push された順に上に積み上がる。
    */
   Layers: 10,
-  // Button は funcref 前提のため実装しない (`docs/ui-api.md`)。
+  /**
+   * scene を映すページ。Window が 1 つだけ持つ (`WindowScenePage` property で結びつける)。
+   * Link では遷移できず、scene が始まるときに表示される。
+   * 子に Canvas と MessageArea を 1 つずつまで持ち、Canvas を下、MessageArea を上に重ねる
+   * (それぞれ ScenePage の中にいるのと同じように配置する。`Layers` と同じ置き方)。
+   */
+  ScenePage: 11,
+  /**
+   * 押すと scene を始めるボタン。見た目の property は Link と同じ。子は持てない。
+   * `SceneStartButtonOnClick` のハンドラを持つ。
+   */
+  SceneStartButton: 12,
+  // Button はまだ実装しない (`docs/ui-api.md`)。
 } as const;
 
 const KNOWN_ELEMENT_KINDS = new Set<number>(Object.values(ElementKind));
@@ -79,6 +91,11 @@ export const PropertyKind = {
   TextWeight: 13,
   /** r, g, b, a (0〜255) を val_u1..val_u4 に積む。BackgroundColor と同じ理由。 */
   TextColor: 14,
+  /**
+   * Window の ScenePage。val_u1 に ScenePage の ui_id を積む。Window 以外には付けられない。
+   * 設定すると ScenePage はその Window の (隠れた) 子になる。
+   */
+  WindowScenePage: 15,
 
   // --- sys_ui_set_property_with_string (文字列: val_s) ---
   /** Page が持つ識別子。Link の遷移先として参照される。 */
@@ -101,18 +118,7 @@ export const PropertyKind = {
    * ui_id を引けるようにするのがエンジン側の `UIObjects` の役目である。
    */
   Id: 106,
-  /**
-   * Page が scene を映すときの Canvas API の出力先。Page の中の `Canvas` の `id` 文字列。
-   * Page 以外には付けられない。
-   */
-  PageCanvas: 107,
-  /** Page が scene を映すときの Content API の出力先。`MessageArea` の `id` 文字列。 */
-  PageMessageArea: 108,
-  /**
-   * Window の、scene を映す Page の page_id。Window 以外には付けられない。
-   * この Page に遷移したら、その Page の `canvas` / `message_area` から出力先を引く (§14 S7/S8)。
-   */
-  WindowScenePageId: 109,
+  // 107〜109 は欠番 (以前は文字列の id で scene の出力先と scene の Page を指していた。今は ScenePage)。
 } as const;
 
 const NUMERIC_PROPERTY_KINDS = new Set<number>([
@@ -131,6 +137,7 @@ const NUMERIC_PROPERTY_KINDS = new Set<number>([
   PropertyKind.TextSize,
   PropertyKind.TextWeight,
   PropertyKind.TextColor,
+  PropertyKind.WindowScenePage,
 ]);
 
 const STRING_PROPERTY_KINDS = new Set<number>([
@@ -141,9 +148,6 @@ const STRING_PROPERTY_KINDS = new Set<number>([
   PropertyKind.BackgroundImage,
   PropertyKind.Image,
   PropertyKind.Id,
-  PropertyKind.PageCanvas,
-  PropertyKind.PageMessageArea,
-  PropertyKind.WindowScenePageId,
 ]);
 
 export function isKnownNumericProperty(kind: number): boolean {
@@ -161,8 +165,8 @@ export function isKnownStringProperty(kind: number): boolean {
  * (引数と戻り値) で呼ぶ。形が合っていることは std の型付きの API が保証し、
  * ホストは引数・戻り値の中身を見ない (`docs/host-function-values.md`)。
  *
- * 呼ぶ側 (どの契機でどの関数を呼ぶか) はまだ無い。
- * `docs/ui-api-impl-status.md` §19 の R4 / R6 で足す。
+ * 呼ぶのは SceneStartButton が押されたとき (`UIObjects` の `SceneStartRequest` → wasm は Worker、
+ * TypeScript は `main.ts`)。`on_click` で `Game[S]` を作り、ScenePage を表示してから `main_scene` を呼ぶ。
  */
 export const HandlerKind = {
   /**
@@ -170,24 +174,21 @@ export const HandlerKind = {
    * Window 以外には付けられない。
    */
   WindowMainScene: 0,
-  /**
-   * SceneStartButton の `on_click` (R6)。`fn(GameWindow) -> Game[S]`。
-   * Element の kind がまだ無いので、今はどの Element にも付けられない。
-   */
+  /** SceneStartButton の `on_click` (R6)。`fn(GameWindow) -> Game[S]`。 */
   SceneStartButtonOnClick: 1,
 } as const;
 
-/** ハンドラの種類 → それを付けられる Element の kind (まだ付けられる先が無ければ `null`)。 */
-const HANDLER_TARGETS = new Map<number, number | null>([
+/** ハンドラの種類 → それを付けられる Element の kind。 */
+const HANDLER_TARGETS = new Map<number, number>([
   [HandlerKind.WindowMainScene, ElementKind.Window],
-  [HandlerKind.SceneStartButtonOnClick, null],
+  [HandlerKind.SceneStartButtonOnClick, ElementKind.SceneStartButton],
 ]);
 
 export function isKnownHandlerKind(kind: number): boolean {
   return HANDLER_TARGETS.has(kind);
 }
 
-/** その種類のハンドラを付けられる Element の kind。付けられる先が無ければ `null`。 */
+/** その種類のハンドラを付けられる Element の kind。知らない種類なら `null`。 */
 export function handlerTarget(kind: number): number | null {
   return HANDLER_TARGETS.get(kind) ?? null;
 }

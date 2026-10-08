@@ -29,16 +29,6 @@ const ENTRY_FILE: &str = "entry.ts";
 /// wasm の生成物を置く名前。パッケージ名に依らない固定名にして、
 /// エンジン側の import (`./game.wasm?url`) を安定させる。
 const WASM_FILE: &str = "game.wasm";
-/// コンパイラがエントリポイントに付ける名前。
-const ENTRYPOINT_NAME: &str = "__biwa_entrypoint";
-
-/// 初期 `Game` を組み立てる関数の固定名。
-///
-/// 中身はゲーム側の `fn on_new_game(window: GameWindow)` である。
-/// `states` の型はゲーム開発者が決めるので、
-/// エンジンには組み立てられない。
-const NEW_GAME_NAME: &str = "__biwa_on_new_game";
-
 /// std が `GameWindow` の組み立て口として host export している名前。
 ///
 /// `[[host_export="__biwa_std_game_window_new"]]` (`library/std/src/game/ui.biwa`)。
@@ -346,8 +336,10 @@ fn content_id(bytes: &[u8]) -> String {
 /// TypeScript 生成物のためのスタブ。
 ///
 /// 生成物のシンボルはマングルされていてパッケージごとに名前が変わるが、
-/// エントリポイントと初期 `Game` の組み立てだけは
-/// `__biwa_entrypoint` / `__biwa_on_new_game` という固定名で export されている。
+/// エンジンが呼ぶもの (`fn app()` と std の `GameWindow` の組み立て口) だけは
+/// `__biwa_app` / `__biwa_std_game_window_new` という固定名で export されている。
+/// (scene は SceneStartButton から預けた関数を通して始まるので、`__biwa_entrypoint` /
+/// `__biwa_on_new_game` はもう使わない)
 /// それをさらに固定のファイル名・固定の default export に均し、
 /// エンジンがパッケージ名を知らなくても済むようにする。
 fn write_typescript_entry_stub(project: &Project, dst_dir: &Path) -> Result<()> {
@@ -356,33 +348,25 @@ fn write_typescript_entry_stub(project: &Project, dst_dir: &Path) -> Result<()> 
 //
 // コンパイル結果のエントリポイントを、エンジンが知っている形に均すスタブ。
 import {{
-  {entrypoint},
-  {new_game},
   {game_window_new},
   {app},
 }} from "./{pkg}.ts";
 import type {{
   BiwaApp,
   BiwaBackend,
-  BiwaEntrypoint,
   BiwaGameWindowNew,
-  BiwaOnNewGame,
 }} from "../engine/game";
 
 const backend: BiwaBackend = {{
   kind: "typescript",
   packageName: "{pkg}",
-  // 生成コードの `Game` 型はマングル名なので、エンジン側の構造的な型に読み替える。
-  entrypoint: {entrypoint} as unknown as BiwaEntrypoint,
-  onNewGame: {new_game} as unknown as BiwaOnNewGame,
+  // 生成コードの型はマングル名なので、エンジン側の構造的な型に読み替える。
   gameWindowNew: {game_window_new} as unknown as BiwaGameWindowNew,
   app: {app} as unknown as BiwaApp,
 }};
 
 export default backend;
 "#,
-        entrypoint = ENTRYPOINT_NAME,
-        new_game = NEW_GAME_NAME,
         game_window_new = GAME_WINDOW_NEW_NAME,
         app = APP_NAME,
         pkg = project.name,
