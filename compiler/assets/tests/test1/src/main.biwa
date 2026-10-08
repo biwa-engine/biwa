@@ -48,7 +48,7 @@ fn add(x: Int, y: Int) -> Int {
 
 // `[[host_export="..."]]` の検証用。
 //
-// scene main からもどこからも呼ばれていない。
+// scene opening からもどこからも呼ばれていない。
 // これは意図的である: 到達性による除去 (単相化の roots) が
 // scene だけでなく host_export された関数も根として扱うことを、
 // この関数が実際に生成物へ現れることで確かめる。
@@ -182,9 +182,9 @@ fn alias_assoc_demo() {
   let v = IntVec::new();
 }
 
-// 単相化の根はランタイムが呼ぶ scene (main) だけなので、
+// 単相化の根はランタイムが呼ぶ `fn main()` (と host export) だけなので、
 // そこから辿れない関数は成果物に入らない。
-// scene main が foo() と greeting_demo() を呼んでいるのは、
+// `main` が Window に渡す scene `opening` が foo() と greeting_demo() を呼んでいるのは、
 // ジェネリクスの実体化と、パッケージをまたぐ実体化を通すためである。
 //
 //  - foo()            -> Pair::new が [Int, Int] と [Line, Int] の 2 通りに実体化される
@@ -194,25 +194,18 @@ struct MyGameState {}
 
 type MyGame = Game[MyGameState];
 
-// 最初の `Game` を組み立てる。
+// エントリポイント。ランタイムが起動時に呼ぶ。`Window` を組み立てて `show()` する。
 //
-// ランタイムがゲーム開始時にこれを呼び、返ってきた値を `scene main` に渡す。
-// `Game` は開発者が決める値 (states / config) を含むので、
-// ランタイムには組み立てられない。
-// `window` (出力先の束) はランタイムが組み立てて渡すので、そのまま `Game::new` に渡す。
-// UI を出す。ランタイムが起動時に最初に呼ぶ。`Window` を組み立てて `show()` する。
-fn app() {
-  Window::new(start).show();
+// このフィクスチャは `--emit mir` (TypeScript ターゲット) でもビルドするが、
+// `--emit mir` は TypeScript 固有の検査 (`SceneValueOnTypeScript`) の手前で終わるので、
+// scene をそのまま値として渡せる。
+fn main() {
+  Window::new(opening).show();
 }
 
-// Window の scene 本体。このフィクスチャは TypeScript にもビルドするが、
-// TypeScript ターゲットでは scene を関数の値にできない (`SceneValueOnTypeScript`) ので、
-// `scene main` ではなく同じ型 (`Scene[MyGameState]`) の普通の関数を渡す。
-fn start(g: MyGame) -> MyGame {
-  g
-}
-
-fn on_new_game(window: GameWindow) -> MyGame {
+// 最初の `Game` を組み立てる (本物の std では `SceneStartButton` の `on_click` に渡す形)。
+// 単相化の根から辿れないので成果物には入らないが、型検査は受ける。
+fn new_game(window: GameWindow) -> MyGame {
   Game::new(window, "test1", MyGameState {}, Config::default())
 }
 
@@ -221,7 +214,7 @@ fn greet_name() -> std::string::String {
   greeter::greet("Biwa")
 }
 
-scene main(g: MyGame) -> MyGame {{
+scene opening(g: MyGame) -> MyGame {{
   Hello, World!
 
   // `$` 埋め込み式。生テキストと式が 1 行の中で混ざる。

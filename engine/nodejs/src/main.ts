@@ -54,14 +54,14 @@ setEngineContext({
 
 document.title = `${backend.packageName} — Biwa`;
 
-// エンジンは UI を何も置かない。`app()` の Window が表示されて初めて画面に何かが出る。
+// エンジンは UI を何も置かない。`fn main()` が Window を表示して初めて画面に何かが出る。
 await runGame(backend);
 
 /**
  * ゲームを走らせる。
  *
  * 流れはどちらのターゲットでも同じである:
- * `app()` で Window を表示 → SceneStartButton が押されるのを待つ →
+ * `fn main()` で Window を表示 → SceneStartButton が押されるのを待つ →
  * Window の ScenePage の出力先で `GameWindow` を作り、ボタンの `on_click(window)` で `Game[S]` を作る →
  * ScenePage を見せる → Window の `main_scene(game)`。
  *
@@ -73,7 +73,7 @@ async function runGame(backend: BiwaBackend): Promise<void> {
     case "typescript": {
       // ゲームコードもこのスレッドで走るので、預けた関数はこのスレッドの表にある。
       ui.setHandlerReleaser(releaseHandlers);
-      backend.app();
+      backend.entrypoint();
 
       // 2 回目以降の開始は未定義 (§19 の R8) なので、最初の 1 回だけ受け取る。
       const request = await new Promise<SceneStartRequest>((resolve) => {

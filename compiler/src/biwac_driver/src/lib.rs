@@ -595,7 +595,7 @@ fn load_analyze_and_codegen_single_package(
     .map_err(|errs| print_errors(&errs, interner, &srcs, metadata))?;
 
     // Scene contract check: scene のシグネチャと、
-    // playable package のエントリポイント (scene main) の存在を検証する。
+    // playable package のエントリポイント (`fn main()`) の存在を検証する。
     // シグネチャは名前解決の時点で確定しているので型推論より前に走らせる。
     let well_known_scenes = biwac_scene::check(&hir, &lang_items, pkg_kind, root_mod_id, interner)
         .map_err(|errs| print_errors(&errs, interner, &srcs, metadata))?;
@@ -754,16 +754,11 @@ fn load_analyze_and_codegen_single_package(
                 let mangler =
                     biwac_generator::mangle::Mangler::new(&hir, interner, &srcs, &ext_pkgs_for_ty);
 
-                let wat = biwac_generator::arch::wasm::emit(
-                    &mono,
-                    &mangler,
-                    &well_known_scenes,
-                    &host_exports,
-                )
-                .map_err(|e| {
-                    eprintln!("Error: wasm code generation failed: {e}");
-                    biwac_base::print_error_finish_message(1);
-                })?;
+                let wat = biwac_generator::arch::wasm::emit(&mono, &mangler, &host_exports)
+                    .map_err(|e| {
+                        eprintln!("Error: wasm code generation failed: {e}");
+                        biwac_base::print_error_finish_message(1);
+                    })?;
 
                 // .wat は成果物として残す。デバッグではこちらを読む。
                 let wat_path = target_dir(&build_dir_path, options.target)
@@ -880,7 +875,7 @@ fn monomorphize_program(
     host_exports: &biwac_host_export::HostExportTable,
     interner: &mut IdentInterner,
 ) -> Result<biwac_mir::MonoMir, ()> {
-    // 根はランタイムが名前で呼ぶ scene と、host export された関数である。
+    // 根はランタイムが名前で呼ぶ `fn main()` と、host export された関数である。
     // そこから辿れない関数は成果物に入らない (到達性による除去がここで効く)。
     // host export された関数はどこからも呼ばれていなくても
     // ホストから直接呼ばれうるので、除去されては困る。
@@ -1290,9 +1285,9 @@ mod tests {
         let deps: &[&str] = match pkg {
             "test1" => &["std", "color", "greeter"],
             "greeter" => &["std", "color"],
-            "old_on_new_game" => &["std"],
-            "old_app" => &["std"],
-            "missing_app" => &["std"],
+            "scene_main" => &["std"],
+            "main_returning_window" => &["std"],
+            "missing_main" => &["std"],
             "uninferable" => &["std"],
             "fn_value"
             | "fn_value_rank1"
@@ -1545,7 +1540,7 @@ mod tests {
 
         // 同じ関数が複数の実体を持つこと。
         //
-        // `scene main` -> `foo()` は `Pair::new(l, z)` と `Pair::new(x, ...)` を呼び、
+        // `scene opening` -> `foo()` は `Pair::new(l, z)` と `Pair::new(x, ...)` を呼び、
         // 前者は [Line, Int]、後者は [Int, Int] になる。
         // 制限つきのジェネリクス (`Wrapper[T: Level]` など) も
         // 満たす型ごとに実体化される。
@@ -1691,20 +1686,17 @@ mod tests {
         // 単相化されているので、同じ struct の複数の実体が別々の型になる。
         assert!(wat.contains("(rec"), "{wat}");
         assert!(wat.contains("struct.new"), "{wat}");
-        // エントリポイントが export される。
+        // エントリポイント `fn main()` が export される。ランタイムが名前で呼ぶのはこれだけである。
         assert!(wat.contains("(export \"__biwa_entrypoint\""), "{wat}");
-        // 初期 `Game` を組み立てる入口も export される。
-        assert!(wat.contains("(export \"__biwa_on_new_game\""), "{wat}");
+        assert!(!wat.contains("__biwa_on_new_game"), "{wat}");
+        assert!(!wat.contains("__biwa_app"), "{wat}");
+        assert!(!wat.contains("__biwa_std_window_show"), "{wat}");
         // `[[host_export="..."]]` が付いた関数も export される。
-        // scene main から辿れないので、これが出ているのは
+        // main から辿れないので、これが出ているのは
         // 単相化の roots に host export が正しく加わっている証拠でもある。
         assert!(wat.contains("(export \"host_export_demo\""), "{wat}");
-        // UI を出す `fn app()`。ランタイムが起動時に最初に呼ぶ。
-        // `Window` の表示は `app` の中で行うので、std はそのための入口を export しない。
-        assert!(wat.contains("(export \"__biwa_app\""), "{wat}");
-        assert!(!wat.contains("__biwa_std_window_show"), "{wat}");
         // std の `GameWindow` を組み立てる入口。ランタイムはこれで作った値を
-        // `on_new_game(window)` に渡す。std (依存) の host export なので、
+        // `SceneStartButton` の `on_click` に渡す。std (依存) の host export なので、
         // test1 の生成物から出ていることがパッケージ越しの export の実用上の確認になる。
         assert!(
             wat.contains("(export \"__biwa_std_game_window_new\""),
@@ -1812,17 +1804,17 @@ mod tests {
         assert_eq!(meta.compute_svh(), meta.svh);
     }
 
-    /// 旧い契約 `fn on_new_game() -> Game[..]` の playable package が拒否されること。
+    /// 以前のエントリポイントの形 (`scene main`) の playable package が拒否されること。
     ///
-    /// ランタイムは `on_new_game` に `GameWindow` を渡すので、
-    /// 引数を取らない `on_new_game` のままではビルドを通してはならない。
-    /// フィクスチャの本体は型としては正しく、失敗の理由はシグニチャ検査だけである。
+    /// エントリポイントは `fn main()` だけで、scene は `Window` の `main_scene` として渡す。
+    /// `main` という名前の scene は「`main` が関数でない」として拒否する。
+    /// フィクスチャの本体は型としては正しく、失敗の理由は契約違反だけである。
     #[test]
-    fn rejects_on_new_game_without_game_window() {
-        ensure_fixture_deps("old_on_new_game");
+    fn rejects_scene_main() {
+        ensure_fixture_deps("scene_main");
         let result = with_build_lock(|_| {
             compile(
-                Path::new("../../assets/tests/old_on_new_game").to_path_buf(),
+                Path::new("../../assets/tests/scene_main").to_path_buf(),
                 BuildOptions {
                     force_rebuild: true,
                     emit_mir: true,
@@ -1830,22 +1822,19 @@ mod tests {
                 },
             )
         });
-        assert!(
-            result.is_err(),
-            "`fn on_new_game()` without a `GameWindow` must be rejected"
-        );
+        assert!(result.is_err(), "`scene main` must be rejected");
     }
 
-    /// 旧い契約 `fn app() -> Window` の playable package が拒否されること。
+    /// `Window` を返す `fn main()` の playable package が拒否されること。
     ///
-    /// `Window[S]` は状態の型 `S` を持つのでホストには渡せない。`app` は戻り値を持たず、
+    /// `Window[S]` は状態の型 `S` を持つのでホストには渡せない。`main` は戻り値を持たず、
     /// 中で `show()` する。フィクスチャの本体は型としては正しく、失敗の理由はシグニチャ検査だけである。
     #[test]
-    fn rejects_app_returning_window() {
-        ensure_fixture_deps("old_app");
+    fn rejects_main_returning_window() {
+        ensure_fixture_deps("main_returning_window");
         let result = with_build_lock(|_| {
             compile(
-                Path::new("../../assets/tests/old_app").to_path_buf(),
+                Path::new("../../assets/tests/main_returning_window").to_path_buf(),
                 BuildOptions {
                     force_rebuild: true,
                     emit_mir: true,
@@ -1855,20 +1844,20 @@ mod tests {
         });
         assert!(
             result.is_err(),
-            "`fn app()` returning a `Window` must be rejected"
+            "`fn main()` returning a `Window` must be rejected"
         );
     }
 
-    /// `fn app()` を持たない playable package が拒否されること。
+    /// `fn main()` を持たない playable package が拒否されること。
     ///
-    /// ランタイムは起動時にまず `app()` を呼ぶ。フィクスチャの他の部分は正しく、
-    /// 失敗の理由は `app` の欠落だけである。
+    /// ランタイムは起動時に `main()` を呼ぶ。フィクスチャは以前の入口の名前 `app` で書いてあり、
+    /// 他の部分は正しく、失敗の理由は `main` の欠落だけである。
     #[test]
-    fn rejects_playable_without_app() {
-        ensure_fixture_deps("missing_app");
+    fn rejects_playable_without_main() {
+        ensure_fixture_deps("missing_main");
         let result = with_build_lock(|_| {
             compile(
-                Path::new("../../assets/tests/missing_app").to_path_buf(),
+                Path::new("../../assets/tests/missing_main").to_path_buf(),
                 BuildOptions {
                     force_rebuild: true,
                     emit_mir: true,
@@ -1878,7 +1867,7 @@ mod tests {
         });
         assert!(
             result.is_err(),
-            "a playable package without `fn app()` must be rejected"
+            "a playable package without `fn main()` must be rejected"
         );
     }
 

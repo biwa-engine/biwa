@@ -448,6 +448,10 @@ let color = match content.color {
 
 ### 5. `Game` の初期化は `on_new_game()` が行う
 
+> **後に廃止した**: エントリポイントは `fn main()` だけになり、`Game` は `SceneStartButton` の `on_click`
+> (`fn(GameWindow) -> Game[S]`) が作る。`on_new_game` / `scene main` は特別な名前ではなくなった
+> (`ui-api-impl-status.md` §19 の R6・R7)。以下は当時の決定の記録である。
+
 playable package の `main.biwa` に、次の関数を**必ず定義する**。
 
 ```biwa

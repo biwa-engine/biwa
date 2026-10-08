@@ -62,11 +62,13 @@ interface WorkerScope {
 
 const scope = globalThis as unknown as WorkerScope;
 
-// NOTE: コンパイラはまだ `__biwa_entrypoint` (`scene main`) と `__biwa_on_new_game` も export するが、
-// scene は SceneStartButton から始まるようになったので使わない (コンパイラ側は §19 の R7 で消す)。
-
-/** コンパイラが UI を出す関数 (`fn app()`) に付ける固定の名前。 */
-const APP = "__biwa_app";
+/**
+ * コンパイラがエントリポイント (`fn main()`) に付ける固定の名前。
+ *
+ * ランタイムが名前で呼ぶゲーム側の関数はこれだけである。scene も最初の `Game` の作り方も、
+ * 関数の値として UI (`Window` / `SceneStartButton`) から預かる。
+ */
+const ENTRYPOINT = "__biwa_entrypoint";
 
 /**
  * std が `GameWindow` を組み立てる入口として host export している名前。
@@ -155,14 +157,14 @@ async function run(
   instance = await WebAssembly.instantiate(module, imports);
 
   // 足りないものがあれば、何かを始める前に名前で叱る。
-  const app = exported(instance, APP);
+  const entrypoint = exported(instance, ENTRYPOINT);
   const gameWindowNew = exported(instance, GAME_WINDOW_NEW);
 
   channel.report({ kind: "ready" });
 
-  // 1. UI を出す。UI はすべてゲーム側 (`fn app()`) が決め、その中で `Window` を `show()` する。
+  // 1. UI を出す。UI はすべてゲーム側 (`fn main()`) が決め、その中で `Window` を `show()` する。
   //    UI の syscall は止まらない (まとめて流す) ので、ここで流し切っておく。
-  app();
+  entrypoint();
   channel.flush();
 
   // 2. SceneStartButton が押されるまで待つ。

@@ -35,7 +35,7 @@ struct Game[S] {
 type Scene[S] = fn(Game[S]) -> Game[S];
 
 impl[S] Game[S] {
-  // `window` はランタイムが組み立てて `on_new_game(window)` に渡したもの。
+  // `window` は本物の std ではランタイムが組み立てて `SceneStartButton` の `on_click(window)` に渡したもの。
   fn new(window: GameWindow, name: String, states: S, config: Config) -> Self {
     Self {
       name = name,

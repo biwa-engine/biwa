@@ -18,7 +18,7 @@ use super::codec::{DiskDecode, DiskEncode, DiskVec, impl_u32_newtype_codec};
 use crate::error::DepMetadataError;
 
 pub const BIWAC_DEPENDENCY_METADATA_MAGIC: &[u8; 4] = b"bwmt";
-pub const BIWAC_DEPENDENCY_METADATA_FORMAT_VERSION: u32 = 12;
+pub const BIWAC_DEPENDENCY_METADATA_FORMAT_VERSION: u32 = 13;
 
 // --- インデックス / オフセット型 ---
 

@@ -36,8 +36,8 @@ const WASM_FILE: &str = "game.wasm";
 /// エントリポイントと同じくパッケージのモジュールから import できる。
 const GAME_WINDOW_NEW_NAME: &str = "__biwa_std_game_window_new";
 
-/// UI を出す関数の固定名。中身はゲーム側の `fn app()` (中で `Window` を `show()` する)。
-const APP_NAME: &str = "__biwa_app";
+/// エントリポイントの固定名。中身はゲーム側の `fn main()` (中で `Window` を `show()` する)。
+const ENTRYPOINT_NAME: &str = "__biwa_entrypoint";
 
 /// 依存パッケージとして `std` を用意する。
 ///
@@ -336,10 +336,8 @@ fn content_id(bytes: &[u8]) -> String {
 /// TypeScript 生成物のためのスタブ。
 ///
 /// 生成物のシンボルはマングルされていてパッケージごとに名前が変わるが、
-/// エンジンが呼ぶもの (`fn app()` と std の `GameWindow` の組み立て口) だけは
-/// `__biwa_app` / `__biwa_std_game_window_new` という固定名で export されている。
-/// (scene は SceneStartButton から預けた関数を通して始まるので、`__biwa_entrypoint` /
-/// `__biwa_on_new_game` はもう使わない)
+/// エンジンが呼ぶもの (`fn main()` と std の `GameWindow` の組み立て口) だけは
+/// `__biwa_entrypoint` / `__biwa_std_game_window_new` という固定名で export されている。
 /// それをさらに固定のファイル名・固定の default export に均し、
 /// エンジンがパッケージ名を知らなくても済むようにする。
 fn write_typescript_entry_stub(project: &Project, dst_dir: &Path) -> Result<()> {
@@ -348,12 +346,12 @@ fn write_typescript_entry_stub(project: &Project, dst_dir: &Path) -> Result<()> 
 //
 // コンパイル結果のエントリポイントを、エンジンが知っている形に均すスタブ。
 import {{
+  {entrypoint},
   {game_window_new},
-  {app},
 }} from "./{pkg}.ts";
 import type {{
-  BiwaApp,
   BiwaBackend,
+  BiwaEntrypoint,
   BiwaGameWindowNew,
 }} from "../engine/game";
 
@@ -361,14 +359,14 @@ const backend: BiwaBackend = {{
   kind: "typescript",
   packageName: "{pkg}",
   // 生成コードの型はマングル名なので、エンジン側の構造的な型に読み替える。
+  entrypoint: {entrypoint} as unknown as BiwaEntrypoint,
   gameWindowNew: {game_window_new} as unknown as BiwaGameWindowNew,
-  app: {app} as unknown as BiwaApp,
 }};
 
 export default backend;
 "#,
+        entrypoint = ENTRYPOINT_NAME,
         game_window_new = GAME_WINDOW_NEW_NAME,
-        app = APP_NAME,
         pkg = project.name,
     );
 

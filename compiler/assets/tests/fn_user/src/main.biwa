@@ -5,8 +5,6 @@
 // - 依存のジェネリックな関数・struct を関数型で実体化する
 
 import std::game::Game;
-import std::game::config::Config;
-import std::game::window::GameWindow;
 import std::game::window::Window;
 import fn_lib::Action;
 import fn_lib::Endo;
@@ -18,12 +16,9 @@ struct MyGameState {}
 
 type MyGame = Game[MyGameState];
 
-fn app() {
-  Window::new(main).show();
-}
-
-fn on_new_game(window: GameWindow) -> MyGame {
-  Game::new(window, "fn_user", MyGameState {}, Config::default())
+// エントリポイント。scene 本体 (`opening`) を Window に渡して表示する。
+fn main() {
+  Window::new(opening).show();
 }
 
 fn double(x: Int) -> Int {
@@ -55,7 +50,7 @@ fn compute() -> Int {
   a + b + c + d + e + f + g + h + endo(0) + exec(op, 0) + i + j
 }
 
-scene main(g: MyGame) -> MyGame {{
+scene opening(g: MyGame) -> MyGame {{
   #let n = compute()
   Hello.
 

@@ -6,8 +6,7 @@ use crate::{ContractTy, WellKnownSymbol};
 pub enum SceneError {
     /// ランタイムが呼ぶシンボルのシグネチャが期待と違う。
     ///
-    /// scene は `(Game[..]) -> Game[..]`、`on_new_game` は
-    /// `(GameWindow) -> Game[..]` である (期待は表 `WellKnownSymbol` が持つ)。
+    /// scene は `(Game[..]) -> Game[..]`、`main` は `()` である (期待は表 `WellKnownSymbol` が持つ)。
     InvalidSceneSignature {
         scene: String,
         expected_args: &'static [ContractTy],
@@ -20,7 +19,8 @@ pub enum SceneError {
     MissingEntryPoint { scene: WellKnownSymbol },
 
     /// 名前は使われているが、期待した種別 (scene / 関数) ではない。
-    EntryPointNotScene { scene: WellKnownSymbol, span: Span },
+    /// 例: 以前のエントリポイントの形 `scene main`。
+    EntryPointWrongKind { scene: WellKnownSymbol, span: Span },
 }
 
 #[derive(Debug)]
@@ -41,7 +41,7 @@ pub enum SignatureProblem {
 impl SceneError {
     pub fn span(&self) -> Option<&Span> {
         match self {
-            Self::InvalidSceneSignature { span, .. } | Self::EntryPointNotScene { span, .. } => {
+            Self::InvalidSceneSignature { span, .. } | Self::EntryPointWrongKind { span, .. } => {
                 Some(span)
             }
             Self::MissingEntryPoint { .. } => None,
@@ -94,11 +94,21 @@ impl SceneError {
                 scene.kind().describe(),
                 scene.name()
             ),
-            Self::EntryPointNotScene { scene, .. } => format!(
-                "the runtime calls `{}` directly, so it must be {}",
-                scene.name(),
-                scene.kind().describe()
-            ),
+            Self::EntryPointWrongKind { scene, .. } => {
+                let hint = match scene {
+                    // 以前は `scene main` がエントリポイントだった。
+                    WellKnownSymbol::Main => {
+                        " (a scene is no longer an entry point: pass it to `Window::new` as \
+                         the `main_scene` and call `show()` in `fn main()`)"
+                    }
+                };
+                format!(
+                    "the runtime calls `{}` directly, so it must be {}{}",
+                    scene.name(),
+                    scene.kind().describe(),
+                    hint
+                )
+            }
         }
     }
 }

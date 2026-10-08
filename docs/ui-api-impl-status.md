@@ -1602,7 +1602,7 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
     MessageArea (0, 460, 1280×260, z 1) が以前と同じ位置になることを確認。
   - ScenePage は最初と "second" の Page では隠れていて (`display: none`)、"シーンへ" を押すと見える (`grid`) ことを確認。
 
-#### R7. エントリポイントを `fn main()` に一本化する
+#### R7. エントリポイントを `fn main()` に一本化する — **実装済み**
 
 - コンパイラ (`biwac_scene`): 既知シンボル表から `scene main` (`Main`) と `on_new_game` を消し、`app` を `main` に改名
   (`fn()`、playable で必須)。`main` という名前の scene は認めない (関数の `main` と名前がぶつかる) か、普通の scene として扱うかを決める。
@@ -1615,6 +1615,47 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
   `__biwa_app` から変えることだけ)
 - フィクスチャ (`missing_app` は `missing_main` に、`old_on_new_game` は廃止など)、`~/test1` を改訂版の形に書き換え、
   `biwa dev` + Playwright で確認する。
+
+##### R7 実装結果 (完了)
+
+- 決定 (指示による): `fn()` の `main` の export 名は **`__biwa_entrypoint`**。それ以外のエントリポイントの export
+  (`__biwa_on_new_game` / `__biwa_app`) は廃止。`main` という名前の scene は**認めない** (関数でなければならない)。
+- コンパイラ:
+  - `biwac_scene`: 既知シンボル表を `Main, "main", Fn, () -> ()` (playable で必須) の 1 行だけにした。
+    `scene main`・`on_new_game`・`app` は特別な名前ではなくなった (普通の scene / 関数)。`ContractTy::GameWindow` を消した。
+  - `scene main` のままだと「the runtime calls `main` directly, so it must be a function (a scene is no longer an entry point:
+    pass it to `Window::new` as the `main_scene` and call `show()` in `fn main()`)」。
+    エラーの名前を `EntryPointNotScene` から `EntryPointWrongKind` に (中身は「期待した種別でない」なので)。
+  - 単相化の根は表の先頭 (= `fn main()`) と host export。`MonoMir::entry` は `fn main()` の実体。
+  - wasm: `__biwa_entrypoint` (`fn main()`) だけを export する。エクスポートに要らなくなった `emit` の `well_known` 引数を消した。
+    TypeScript: `__biwa_entrypoint` だけを別名 export する。
+  - lang item `game_window` はコンパイラが使わなくなった。→ その後、lang item から外した (下の「R7 の後」)。
+- エンジン・CLI: Worker は `__biwa_entrypoint` を呼ぶ (`BiwaApp` → `BiwaEntrypoint`、`backend.app` → `backend.entrypoint`)。
+  CLI の TypeScript のエントリスタブも `__biwa_entrypoint` を import する。
+- std: コメントの `fn app()` / `on_new_game` を `fn main()` / `SceneStartButton` の `on_click` に。
+- フィクスチャ:
+  - `fn_value` / `fn_user` / `test1`: `fn main() { Window::new(opening).show(); }`、`scene main` → `scene opening`、
+    `on_new_game` を削除 (`test1` は普通の関数 `new_game` として残した)。`test1` の R4 の回避策 (`fn start`) は、
+    `--emit mir` が TypeScript 固有の検査の手前で終わるので要らず、scene をそのまま渡した。
+  - 負例: `old_on_new_game` を廃止、`missing_app` → `missing_main` (`fn app()` のままで `main` が無い)、
+    `old_app` → `main_returning_window` (`fn main() -> Window[..]`)、新しく `scene_main` (R6 までの形: `scene main` + `fn app()` + `fn on_new_game`)。
+    テストは `rejects_playable_without_main` / `rejects_main_returning_window` / `rejects_scene_main`。
+    3 つとも本来の理由 (欠落・戻り値・種別) だけで失敗することを確認。
+  - `wasm_output` のテストは `__biwa_entrypoint` があり、`__biwa_on_new_game` / `__biwa_app` / `__biwa_std_window_show` が無いことを確かめる。
+- `~/test1`: `fn app()` → `fn main()`、`scene main` → `scene opening`、`on_new_game` → `new_game` (SceneStartButton の `on_click`)。
+- docs: `content-api.md` の「`on_new_game()` が行う」の節に、後に廃止した旨を注記した。
+- 確認:
+  - compiler (114 件)・LSP (94 件) の全テスト、`npx tsc --noEmit`。fn_value の wasm を Node で実行して `fn_value_compute` = 169。
+    生成物の export は `__biwa_entrypoint` と host export だけ。
+  - `~/test1` を強制再ビルドして Playwright (fv・Link・単位・Layers・演出、ScenePage の表示の切り替え。エラー無し)。
+
+##### R7 の後: `GameWindow` を lang item から外した
+
+- 指示により、使われなくなった lang item `game_window` を `biwac_lang_item` の表から消し、std (本物とフィクスチャ) の
+  `[[lang="game_window"]]` を外した。`GameWindow` は普通の struct で、ランタイムとの取り決めは host export
+  `__biwa_std_game_window_new` の名前と引数 (ui_id 2 つ) だけになった。
+- `LangItem` の discriminant (`.biwameta` に書く番号) がずれるので、`.biwameta` のフォーマットの版を 12 → 13 に上げた。
+- 確認: compiler・LSP の全テスト、`~/test1` の強制再ビルドと Playwright。
 
 #### R8. scene の終わりと 2 回目以降
 

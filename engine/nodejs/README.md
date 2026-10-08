@@ -14,7 +14,7 @@ Biwa エンジンの基盤エンジン実装 (Node.js 版)。
 ゲーム側の入口は `biwa dev` が生成するスタブ `src/game/entry.ts` を経由して呼ばれる。
 起動の流れはどちらのターゲットでも同じである:
 
-1. `__biwa_app` (= `fn app()`) を呼ぶ。ゲーム側がその中で `Window[S]` を組み立てて
+1. `__biwa_entrypoint` (= `fn main()`) を呼ぶ。ランタイムが名前で呼ぶゲーム側の関数はこれだけである。ゲーム側がその中で `Window[S]` を組み立てて
    `show()` し、UI の syscall が出る。**エンジンは UI を何も置かない**。
    Window は scene を映すページ (`ScenePage`) と scene 本体 (`main_scene` のハンドラ) を
    Page より先に持っていなければならず、欠けていればゲームを止める (`UiContractError`)

@@ -109,7 +109,7 @@ pub fn check(
         // 同名の値が scene でない形で定義されていないかを見て、
         // 「無い」のか「scene でない」のかを区別して報告する。
         match val_named_with_other_kind(hir, well_known, root_mod_id, interner) {
-            Some(span) => errors.push(SceneError::EntryPointNotScene {
+            Some(span) => errors.push(SceneError::EntryPointWrongKind {
                 scene: well_known,
                 span,
             }),
@@ -135,7 +135,7 @@ fn finish(
 ///
 /// - scene は `(Game[..]) -> Game[..]`
 /// - 既知の関数は表 (`WellKnownSymbol::args` / `ret`) のとおり
-///   (`on_new_game` は `(GameWindow) -> Game[..]`)
+///   (`main` は `()`、引数も戻り値も無い)
 ///
 /// ジェネリック引数に何が入るかは問わない。
 ///

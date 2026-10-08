@@ -32,8 +32,6 @@ pub enum WellKnownKind {
 pub enum ContractTy {
     /// lang item `game`。
     Game,
-    /// lang item `game_window`。
-    GameWindow,
     /// 戻り値なし。
     Void,
 }
@@ -43,7 +41,6 @@ impl ContractTy {
     pub fn lang_item(&self) -> Option<biwac_lang_item::LangItem> {
         match self {
             Self::Game => Some(biwac_lang_item::LangItem::Game),
-            Self::GameWindow => Some(biwac_lang_item::LangItem::GameWindow),
             Self::Void => None,
         }
     }
@@ -51,7 +48,6 @@ impl ContractTy {
     pub fn describe(&self) -> &'static str {
         match self {
             Self::Game => "`Game`",
-            Self::GameWindow => "`GameWindow`",
             Self::Void => "nothing",
         }
     }
@@ -135,38 +131,20 @@ macro_rules! well_known_symbol_table {
 }
 
 well_known_symbol_table!(
-    // ゲームのストーリー起動時にランタイムが呼ぶエントリポイント。
-    // playable package では main.biwa に定義されていなければならない。
-    Main, "main", WellKnownKind::Scene, SCENE_ARGS, SCENE_RET,
-        SceneRequirement::RequiredInPlayable;
-
-    // 最初の `Game` を組み立てる。
+    // ランタイムが起動時に呼ぶ唯一のエントリポイント。playable package の main.biwa に定義する。
     //
-    // `Game` は `config` や開発者定義の `states` を含むので、
-    // ランタイムには組み立てられない。wasm では `Game` が WasmGC の struct で、
-    // そもそもホストから組めない。
-    // したがってゲーム側が作り、ランタイムはそれを受け取って `main` に渡す。
-    //
-    // 引数の `GameWindow` はランタイムが組み立てて渡す (出力先の canvas /
-    // message area の ui_id の束。std の host export
-    // `__biwa_std_game_window_new` で作る)。ゲーム側はこれを
-    // `Game::new()` にそのまま渡す。
-    OnNewGame, "on_new_game", WellKnownKind::Fn,
-        &[ContractTy::GameWindow], ContractTy::Game,
-        SceneRequirement::RequiredInPlayable;
-
-    // UI を出す。ランタイムは起動時にまずこれを呼ぶ。中で `Window[S]` を組み立てて
-    // `show()` するのはゲーム側で、UI はすべてゲーム側が決める。
-    // 戻り値を持たないのは、`Window[S]` の `S` (ゲームの状態の型) をホストに見せないためである
+    // 中で `Window[S]` を組み立てて `show()` するのはゲーム側で、UI はすべてゲーム側が決める。
+    // scene (`Window` の `main_scene`) も最初の `Game` の作り方 (`SceneStartButton` の `on_click`) も
+    // 関数の値として UI に渡すので、ランタイムが名前で呼ぶものはこれだけでよい。
+    // 引数も戻り値も持たないのは、`S` (ゲームの状態の型) をホストに見せないためである
     // (ホストは単相化された型を名指しできない)。
-    // Window の `scene_page_id` の Page に遷移すると `on_new_game` → `main` が始まる。
     //
-    // `main` より後ろに置くこと。wasm の単相化は表の先頭 (`main`) をエントリとして扱う。
-    App, "app", WellKnownKind::Fn, &[], ContractTy::Void,
+    // 表の先頭が単相化のエントリ (wasm の `__biwa_entrypoint`) になる。
+    Main, "main", WellKnownKind::Fn, &[], ContractTy::Void,
         SceneRequirement::RequiredInPlayable;
 
     // 将来ここにイベントハンドラ的なものが増える想定:
-    // OnSave, "on_save", WellKnownKind::Scene, SceneRequirement::Optional;
+    // OnSave, "on_save", WellKnownKind::Fn, SceneRequirement::Optional;
 );
 
 /// 検査を通った既知シンボルの解決結果。

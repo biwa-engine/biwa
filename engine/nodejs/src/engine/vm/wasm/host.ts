@@ -158,7 +158,7 @@ function createHandlers(): Record<string, SyscallHandler> {
 /**
  * wasm の生成物を Worker で走らせ、終わるまで待つ。
  *
- * Worker はまず `app()` で Window を表示し、SceneStartButton が押されたら
+ * Worker はまず `fn main()` (`__biwa_entrypoint`) で Window を表示し、SceneStartButton が押されたら
  * その `on_click` と Window の `main_scene` で scene を始める。
  * 返る Promise はゲームが最後まで進んだときに解決する。
  */

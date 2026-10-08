@@ -12,7 +12,6 @@
 
 import std::game::Game;
 import std::game::config::Config;
-import std::game::window::GameWindow;
 import std::game::window::Window;
 import std::game::window::game_window_new_for_host;
 import std::game::Scene;
@@ -22,12 +21,9 @@ struct MyGameState {}
 
 type MyGame = Game[MyGameState];
 
-fn app() {
-  Window::new(main).show();
-}
-
-fn on_new_game(window: GameWindow) -> MyGame {
-  Game::new(window, "fn_value", MyGameState {}, Config::default())
+// エントリポイント。scene 本体 (`opening`) を Window に渡して表示する。
+fn main() {
+  Window::new(opening).show();
 }
 
 fn add_one(x: Int) -> Int {
@@ -295,7 +291,7 @@ fn compute() -> Int {
   }
 }
 
-scene main(g: MyGame) -> MyGame {{
+scene opening(g: MyGame) -> MyGame {{
   #let f: fn(Int) -> Int = add_one
   #let n = f(compute())
   #let p = pick(TRUE)(n)

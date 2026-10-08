@@ -29,13 +29,13 @@ export type BiwaGameWindowNew = (
 ) => BiwaGameWindow;
 
 /**
- * `__biwa_app` の型。ゲーム側の `fn app()`。
+ * `__biwa_entrypoint` の型。ゲーム側の `fn main()`。ランタイムが名前で呼ぶのはこれだけである。
  *
- * ランタイムは起動時にまずこれを呼ぶ。ゲーム側がその中で `Window[S]` を組み立てて
+ * ランタイムは起動時にこれを呼ぶ。ゲーム側がその中で `Window[S]` を組み立てて
  * `show()` し、UI の syscall が出る。UI はすべてゲーム側が決める (エンジンは既定の UI を置かない)。
  * 戻り値が無いのは、`Window[S]` の `S` (ゲームの状態の型) をホストに見せないためである。
  */
-export type BiwaApp = () => void;
+export type BiwaEntrypoint = () => void;
 
 /**
  * ゲーム本体の受け渡し方。`biwa dev` が生成する `src/game/entry.ts` の形である。
@@ -51,8 +51,8 @@ export type BiwaBackend =
     packageName: string;
     /** std の `__biwa_std_game_window_new` (playable package のモジュールから再 export されている)。 */
     gameWindowNew: BiwaGameWindowNew;
-    /** ゲーム側の `fn app()`。 */
-    app: BiwaApp;
+    /** ゲーム側の `fn main()` (`__biwa_entrypoint`)。 */
+    entrypoint: BiwaEntrypoint;
   }
   | {
     /** 生成物が wasm。Worker で走らせ、syscall はスレッドを跨ぐ。 */
