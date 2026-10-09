@@ -594,11 +594,23 @@ fn load_analyze_and_codegen_single_package(
     .try_resolve(interner)
     .map_err(|errs| print_errors(&errs, interner, &srcs, metadata))?;
 
-    // Scene contract check: scene のシグネチャと、
-    // playable package のエントリポイント (scene main) の存在を検証する。
+    // scene のシグネチャ (`(Game[..]) -> Game[..]`) と、
+    // playable package のエントリポイント (`fn main()`) を検証する。
     // シグネチャは名前解決の時点で確定しているので型推論より前に走らせる。
-    let well_known_scenes = biwac_scene::check(&hir, &lang_items, pkg_kind, root_mod_id, interner)
-        .map_err(|errs| print_errors(&errs, interner, &srcs, metadata))?;
+    // 2 つの検査は独立しているので、両方の誤りをまとめて報告する。
+    let scene_errors = biwac_scene::check(&hir, &lang_items, interner)
+        .err()
+        .unwrap_or_default();
+    let entrypoints = biwac_entrypoint::check(&hir, pkg_kind, root_mod_id, interner);
+    let entrypoint_errors = entrypoints.as_ref().err().map_or(&[][..], Vec::as_slice);
+    let errors: Vec<&dyn biwac_base::BiwacError> = (scene_errors.iter().map(|e| e as _))
+        .chain(entrypoint_errors.iter().map(|e| e as _))
+        .collect();
+    if !errors.is_empty() {
+        print_errors(&errors, interner, &srcs, metadata);
+        return Err(());
+    }
+    let entrypoints = entrypoints.unwrap_or_default();
 
     let hir =
         biwac_type_inferrer::TyCtx::new(hir, lang_items.clone(), ext_pkgs_for_ty.clone(), interner)
@@ -654,7 +666,7 @@ fn load_analyze_and_codegen_single_package(
                 &mir,
                 &ext_pkgs_for_ty,
                 &dep_mirs,
-                &well_known_scenes,
+                &entrypoints,
                 &host_exports,
                 interner,
             )?;
@@ -689,6 +701,31 @@ fn load_analyze_and_codegen_single_package(
                 return Err(());
             }
 
+            // scene の値も TypeScript では扱えない。
+            // scene は generator function で、呼ぶ側が `yield*` で委譲しなければならないが、
+            // 関数の値を通した呼び出しでは、呼び先が scene かどうかが呼ぶ側で分からない。
+            let is_scene = |def_id: &biwac_span::ValDefId| {
+                if def_id.pkg().is_self() {
+                    matches!(
+                        hir.vals.get(def_id),
+                        Some(biwac_hir::ValDefKind::NovelScene(_))
+                    )
+                } else {
+                    ext_pkgs_for_ty
+                        .iter()
+                        .find(|(pkg_id, _)| *pkg_id == def_id.pkg())
+                        .is_some_and(|(_, meta)| meta.is_scene(def_id.local_idx()))
+                }
+            };
+            let unsupported: Vec<SceneValueOnTypeScript> = scene_values_in(&mir, is_scene)
+                .into_iter()
+                .map(|span| SceneValueOnTypeScript { span })
+                .collect();
+            if !unsupported.is_empty() {
+                print_errors(&unsupported, interner, &srcs, metadata);
+                return Err(());
+            }
+
             // codegen も lang item を使う。
             // novel statement を std の関数呼び出しに展開するため。
             // 外部パッケージのメタデータはシンボル名のマングリングに使う
@@ -698,7 +735,7 @@ fn load_analyze_and_codegen_single_package(
                 interner,
                 &srcs,
                 &ext_pkgs_for_ty,
-                &well_known_scenes,
+                &entrypoints,
                 &host_exports,
             );
 
@@ -719,7 +756,7 @@ fn load_analyze_and_codegen_single_package(
                     &mir,
                     &ext_pkgs_for_ty,
                     &dep_mirs,
-                    &well_known_scenes,
+                    &entrypoints,
                     &host_exports,
                     interner,
                 )?;
@@ -729,16 +766,11 @@ fn load_analyze_and_codegen_single_package(
                 let mangler =
                     biwac_generator::mangle::Mangler::new(&hir, interner, &srcs, &ext_pkgs_for_ty);
 
-                let wat = biwac_generator::arch::wasm::emit(
-                    &mono,
-                    &mangler,
-                    &well_known_scenes,
-                    &host_exports,
-                )
-                .map_err(|e| {
-                    eprintln!("Error: wasm code generation failed: {e}");
-                    biwac_base::print_error_finish_message(1);
-                })?;
+                let wat = biwac_generator::arch::wasm::emit(&mono, &mangler, &host_exports)
+                    .map_err(|e| {
+                        eprintln!("Error: wasm code generation failed: {e}");
+                        biwac_base::print_error_finish_message(1);
+                    })?;
 
                 // .wat は成果物として残す。デバッグではこちらを読む。
                 let wat_path = target_dir(&build_dir_path, options.target)
@@ -851,19 +883,19 @@ fn monomorphize_program(
     own: &biwac_mir::Mir,
     ext_pkgs: &[(PackageId, Arc<DepMetadata>)],
     dep_mirs: &[(PackageId, biwac_mir::Mir)],
-    well_known_scenes: &biwac_scene::WellKnownSymbols,
+    entrypoints: &biwac_entrypoint::Entrypoints,
     host_exports: &biwac_host_export::HostExportTable,
     interner: &mut IdentInterner,
 ) -> Result<biwac_mir::MonoMir, ()> {
-    // 根はランタイムが名前で呼ぶ scene と、host export された関数である。
+    // 根はランタイムが名前で呼ぶ `fn main()` と、host export された関数である。
     // そこから辿れない関数は成果物に入らない (到達性による除去がここで効く)。
     // host export された関数はどこからも呼ばれていなくても
     // ホストから直接呼ばれうるので、除去されては困る。
     // 依存パッケージ (std 等) が host export した関数もここに含まれる
     // (名前解決が `.biwameta` から取り込んでいる)。
-    let roots: Vec<biwac_span::ValDefId> = biwac_scene::WellKnownSymbol::ALL
+    let roots: Vec<biwac_span::ValDefId> = biwac_entrypoint::Entrypoint::ALL
         .iter()
-        .filter_map(|s| well_known_scenes.get(*s))
+        .filter_map(|s| entrypoints.get(*s))
         .chain(host_exports.iter().map(|(def_id, _)| def_id))
         .collect();
 
@@ -1027,6 +1059,69 @@ impl biwac_base::BiwacError for TraitBoundOnTypeScript {
             )
             .print();
     }
+}
+
+/// TypeScript ターゲットが扱えない、scene の値。
+#[derive(Debug)]
+struct SceneValueOnTypeScript {
+    span: biwac_span::Span,
+}
+
+impl biwac_base::BiwacError for SceneValueOnTypeScript {
+    fn print_error_message(&self, ctx: &biwac_base::ErrorContext) {
+        ctx.diagnostic("The TypeScript target does not support scenes as values yet.")
+            .label(
+                biwac_base::DiagSpan::new(self.span.module(), self.span.begin(), self.span.end()),
+                "a scene is used as a value here",
+            )
+            .note(
+                "a scene is a generator function in TypeScript and must be delegated to with \
+                 `yield*`, but a call through a function value cannot tell whether it calls a scene; \
+                 build for the wasm target",
+            )
+            .print();
+    }
+}
+
+/// scene を値として使っている位置 (scene への関数参照) を集める。
+fn scene_values_in(
+    mir: &biwac_mir::Mir,
+    is_scene: impl Fn(&biwac_span::ValDefId) -> bool,
+) -> Vec<biwac_span::Span> {
+    use biwac_mir::{Const, Operand, Rvalue, StatementKind, TerminatorKind};
+
+    let refers_scene =
+        |op: &Operand| matches!(op, Operand::Const(Const::FnDef(def_id, _)) if is_scene(def_id));
+
+    let mut out = Vec::new();
+    for item in mir.items.values() {
+        let biwac_mir::MirItem::Body(body) = item else {
+            continue;
+        };
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                let StatementKind::Assign(_, rvalue) = &stmt.kind;
+                let found = match rvalue {
+                    Rvalue::Use(op) | Rvalue::UnaryOp(_, op) => refers_scene(op),
+                    Rvalue::BinaryOp(_, l, r) => refers_scene(l) || refers_scene(r),
+                    Rvalue::Aggregate(_, members) => members.iter().any(|(_, op)| refers_scene(op)),
+                    Rvalue::Discriminant(_) => false,
+                };
+                if found {
+                    out.push(stmt.span.clone());
+                }
+            }
+            if let TerminatorKind::Call { callee, args, .. } = &block.term.kind {
+                let callee_is_scene =
+                    matches!(callee, biwac_mir::Callee::Indirect(op) if refers_scene(op));
+                if callee_is_scene || args.iter().any(refers_scene) {
+                    out.push(block.term.span.clone());
+                }
+            }
+        }
+    }
+    out.sort_by_key(|s| s.begin());
+    out
 }
 
 /// 実装がまだ決まっていない呼び出しの位置を集める。
@@ -1202,8 +1297,9 @@ mod tests {
         let deps: &[&str] = match pkg {
             "test1" => &["std", "color", "greeter"],
             "greeter" => &["std", "color"],
-            "old_on_new_game" => &["std"],
-            "missing_app" => &["std"],
+            "scene_main" => &["std"],
+            "main_returning_window" => &["std"],
+            "missing_main" => &["std"],
             "uninferable" => &["std"],
             "fn_value"
             | "fn_value_rank1"
@@ -1456,7 +1552,7 @@ mod tests {
 
         // 同じ関数が複数の実体を持つこと。
         //
-        // `scene main` -> `foo()` は `Pair::new(l, z)` と `Pair::new(x, ...)` を呼び、
+        // `scene opening` -> `foo()` は `Pair::new(l, z)` と `Pair::new(x, ...)` を呼び、
         // 前者は [Line, Int]、後者は [Int, Int] になる。
         // 制限つきのジェネリクス (`Wrapper[T: Level]` など) も
         // 満たす型ごとに実体化される。
@@ -1602,20 +1698,17 @@ mod tests {
         // 単相化されているので、同じ struct の複数の実体が別々の型になる。
         assert!(wat.contains("(rec"), "{wat}");
         assert!(wat.contains("struct.new"), "{wat}");
-        // エントリポイントが export される。
+        // エントリポイント `fn main()` が export される。ランタイムが名前で呼ぶのはこれだけである。
         assert!(wat.contains("(export \"__biwa_entrypoint\""), "{wat}");
-        // 初期 `Game` を組み立てる入口も export される。
-        assert!(wat.contains("(export \"__biwa_on_new_game\""), "{wat}");
+        assert!(!wat.contains("__biwa_on_new_game"), "{wat}");
+        assert!(!wat.contains("__biwa_app"), "{wat}");
+        assert!(!wat.contains("__biwa_std_window_show"), "{wat}");
         // `[[host_export="..."]]` が付いた関数も export される。
-        // scene main から辿れないので、これが出ているのは
+        // main から辿れないので、これが出ているのは
         // 単相化の roots に host export が正しく加わっている証拠でもある。
         assert!(wat.contains("(export \"host_export_demo\""), "{wat}");
-        // UI の root を組み立てる `fn app()`。ランタイムが起動時に最初に呼ぶ。
-        assert!(wat.contains("(export \"__biwa_app\""), "{wat}");
-        // それを表示する std の入口 (依存の host export)。
-        assert!(wat.contains("(export \"__biwa_std_window_show\""), "{wat}");
         // std の `GameWindow` を組み立てる入口。ランタイムはこれで作った値を
-        // `on_new_game(window)` に渡す。std (依存) の host export なので、
+        // `SceneStartButton` の `on_click` に渡す。std (依存) の host export なので、
         // test1 の生成物から出ていることがパッケージ越しの export の実用上の確認になる。
         assert!(
             wat.contains("(export \"__biwa_std_game_window_new\""),
@@ -1723,17 +1816,37 @@ mod tests {
         assert_eq!(meta.compute_svh(), meta.svh);
     }
 
-    /// 旧い契約 `fn on_new_game() -> Game[..]` の playable package が拒否されること。
+    /// 以前のエントリポイントの形 (`scene main`) の playable package が拒否されること。
     ///
-    /// ランタイムは `on_new_game` に `GameWindow` を渡すので、
-    /// 引数を取らない `on_new_game` のままではビルドを通してはならない。
-    /// フィクスチャの本体は型としては正しく、失敗の理由はシグニチャ検査だけである。
+    /// エントリポイントは `fn main()` だけで、scene は `Window` の `main_scene` として渡す。
+    /// `main` という名前の scene は「`main` が関数でない」として拒否する。
+    /// フィクスチャの本体は型としては正しく、失敗の理由は契約違反だけである。
     #[test]
-    fn rejects_on_new_game_without_game_window() {
-        ensure_fixture_deps("old_on_new_game");
+    fn rejects_scene_main() {
+        ensure_fixture_deps("scene_main");
         let result = with_build_lock(|_| {
             compile(
-                Path::new("../../assets/tests/old_on_new_game").to_path_buf(),
+                Path::new("../../assets/tests/scene_main").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(result.is_err(), "`scene main` must be rejected");
+    }
+
+    /// `Window` を返す `fn main()` の playable package が拒否されること。
+    ///
+    /// `Window[S]` は状態の型 `S` を持つのでホストには渡せない。`main` は戻り値を持たず、
+    /// 中で `show()` する。フィクスチャの本体は型としては正しく、失敗の理由はシグニチャ検査だけである。
+    #[test]
+    fn rejects_main_returning_window() {
+        ensure_fixture_deps("main_returning_window");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/main_returning_window").to_path_buf(),
                 BuildOptions {
                     force_rebuild: true,
                     emit_mir: true,
@@ -1743,20 +1856,20 @@ mod tests {
         });
         assert!(
             result.is_err(),
-            "`fn on_new_game()` without a `GameWindow` must be rejected"
+            "`fn main()` returning a `Window` must be rejected"
         );
     }
 
-    /// `fn app() -> Window` を持たない playable package が拒否されること。
+    /// `fn main()` を持たない playable package が拒否されること。
     ///
-    /// ランタイムは起動時にまず `app()` を呼ぶ。フィクスチャの他の部分は正しく、
-    /// 失敗の理由は `app` の欠落だけである。
+    /// ランタイムは起動時に `main()` を呼ぶ。フィクスチャは以前の入口の名前 `app` で書いてあり、
+    /// 他の部分は正しく、失敗の理由は `main` の欠落だけである。
     #[test]
-    fn rejects_playable_without_app() {
-        ensure_fixture_deps("missing_app");
+    fn rejects_playable_without_main() {
+        ensure_fixture_deps("missing_main");
         let result = with_build_lock(|_| {
             compile(
-                Path::new("../../assets/tests/missing_app").to_path_buf(),
+                Path::new("../../assets/tests/missing_main").to_path_buf(),
                 BuildOptions {
                     force_rebuild: true,
                     emit_mir: true,
@@ -1766,7 +1879,7 @@ mod tests {
         });
         assert!(
             result.is_err(),
-            "a playable package without `fn app() -> Window` must be rejected"
+            "a playable package without `fn main()` must be rejected"
         );
     }
 
@@ -1855,10 +1968,9 @@ mod tests {
         assert!(wat.contains("call_ref"), "{wat}");
     }
 
-    /// 依存パッケージの scene を値にするのは型エラーであること
-    /// (scene かどうかは `.biwameta` から分かる)。
+    /// 依存パッケージの scene も値にできること (`Scene[S]`。`docs/ui-api-impl-status.md` §19 の R2)。
     #[test]
-    fn scene_of_a_dependency_as_value_is_an_error() {
+    fn scene_of_a_dependency_as_value() {
         ensure_fixture_deps("fn_lib");
         ensure_fixture_deps("fn_user_scene");
         let result = with_build_lock(|_| {
@@ -1872,8 +1984,8 @@ mod tests {
             )
         });
         assert!(
-            result.is_err(),
-            "a scene of a dependency used as a value must be rejected"
+            result.is_ok(),
+            "a scene of a dependency must be usable as a value"
         );
     }
 

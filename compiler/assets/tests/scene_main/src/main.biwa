@@ -1,0 +1,29 @@
+// 以前のエントリポイントの形 (`scene main` + `fn app()` + `fn on_new_game`) のままの playable package。
+//
+// エントリポイントは `fn main()` だけになり、scene は `Window` の `main_scene` として渡す。
+// `main` という名前の scene は「`main` が関数でない」として拒否されなければならない (biwac_entrypoint)。
+//
+// 本体は型としては正しい。ビルドが失敗する理由が契約違反だけになるようにするためである。
+
+import std::game::Game;
+import std::game::config::Config;
+import std::game::window::GameWindow;
+import std::game::window::Window;
+
+struct MyGameState {}
+
+type MyGame = Game[MyGameState];
+
+fn app() {
+  Window::new(main).show();
+}
+
+fn on_new_game(window: GameWindow) -> MyGame {
+  Game::new(window, "scene_main", MyGameState {}, Config::default())
+}
+
+scene main(g: MyGame) -> MyGame {{
+  Hello.
+
+  #endscene g
+}}

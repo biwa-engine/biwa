@@ -1,0 +1,22 @@
+// `fn main()` を持たない playable package。
+//
+// ランタイムは起動時に `main()` を呼ぶので、playable package は `main` を定義しなければならない
+// (biwac_entrypoint が検査する)。以前の入口の名前 `app` で書いてあり、それ以外は正しい形にしてある。
+// ビルドが失敗する理由が `main` の欠落だけになるようにするためである。
+
+import std::game::Game;
+import std::game::window::Window;
+
+struct MyGameState {}
+
+type MyGame = Game[MyGameState];
+
+fn app() {
+  Window::new(opening).show();
+}
+
+scene opening(g: MyGame) -> MyGame {{
+  Hello.
+
+  #endscene g
+}}

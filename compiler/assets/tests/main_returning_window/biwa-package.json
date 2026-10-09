@@ -1,0 +1,14 @@
+{
+  "name": "main_returning_window",
+  "version": "0.1.0",
+  "description": "rejects `fn main()` returning a `Window`",
+  "dependencies": [
+    {
+      "name": "std",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

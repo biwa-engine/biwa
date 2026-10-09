@@ -23,17 +23,20 @@ import {
 import {
   createUiElement,
   pushUiChild,
+  setUiHandler,
   setUiProperty,
   setUiPropertyString,
 } from "../../api/ui";
+import { engine } from "../../api/context";
 import {
   completeCall,
   createChannelBuffer,
   failCall,
   type WorkerMessage,
 } from "./bridge";
-import type { ScenePageEntry } from "../../ui/UIObjects";
-import type { SceneMessage, StartMessage } from "./worker";
+import { UiContractError } from "../../ui/UIObjects";
+import { ENTER_SCENE_PAGE } from "./contract";
+import type { ReleaseMessage, StartMessage, StartSceneMessage } from "./worker";
 
 /**
  * syscall の実装。
@@ -142,20 +145,24 @@ function createHandlers(): Record<string, SyscallHandler> {
 
     sys_ui_push_child: (parent: number, child: number) =>
       pushUiChild(parent, child),
+
+    // `handle` は Worker が関数を預かって振った番号 (`contract.ts` の `retain`)。
+    sys_ui_set_handler: (id: number, kind: number, handle: number) =>
+      setUiHandler(id, kind, handle),
+
+    // Worker 自身が流す cast (`contract.ts`)。scene を始めるときに ScenePage を見せる。
+    [ENTER_SCENE_PAGE]: (windowId: number) => engine().ui.enterScenePage(windowId),
   };
 }
 
 /**
  * wasm の生成物を Worker で走らせ、終わるまで待つ。
  *
- * Worker はまず `app()` の Window を表示し、`scenePage` が解決したら
- * (= `scene_page_id` の Page に遷移したら) その出力先で scene を始める。
+ * Worker はまず `fn main()` (`__biwa_entrypoint`) で Window を表示し、SceneStartButton が押されたら
+ * その `on_click` と Window の `main_scene` で scene を始める。
  * 返る Promise はゲームが最後まで進んだときに解決する。
  */
-export function runWasm(
-  url: string,
-  scenePage: Promise<ScenePageEntry>,
-): Promise<void> {
+export function runWasm(url: string): Promise<void> {
   if (
     typeof SharedArrayBuffer === "undefined" ||
     !globalThis.crossOriginIsolated
@@ -178,9 +185,17 @@ export function runWasm(
 
   return new Promise<void>((resolve, reject) => {
     const finish = (done: () => void): void => {
+      engine().ui.setHandlerReleaser(() => {});
+      engine().ui.setSceneStarter(() => {});
       worker.terminate();
       done();
     };
+
+    // Element が消えたら、預けた関数を Worker に手放させる。
+    engine().ui.setHandlerReleaser((handles) => {
+      const release: ReleaseMessage = { kind: "release", handles };
+      worker.postMessage(release);
+    });
 
     worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
       const message = event.data;
@@ -190,7 +205,11 @@ export function runWasm(
           // 止まらない syscall のまとまり。1 通で来るので、
           // この間にフレームが挟まることはない。
           for (const call of message.calls) {
-            dispatch(handlers, call.name, call.args);
+            const fatal = dispatch(handlers, call.name, call.args);
+            if (fatal !== null) {
+              finish(() => reject(fatal));
+              return;
+            }
           }
           return;
         case "syscall":
@@ -217,10 +236,14 @@ export function runWasm(
     const start: StartMessage = { kind: "start", url, buffer };
     worker.postMessage(start);
 
-    // scene を映す Page に遷移したら、その出力先で scene を始めさせる。
-    void scenePage.then(({ canvasId, messageAreaId }) => {
-      const scene: SceneMessage = { kind: "scene", canvasId, messageAreaId };
-      worker.postMessage(scene);
+    // SceneStartButton が押されたら、Worker に scene を始めさせる。
+    // 2 回目以降の開始は未定義 (§19 の R8) なので、最初の 1 回だけ送る。
+    let sceneStarted = false;
+    engine().ui.setSceneStarter((request) => {
+      if (sceneStarted) return;
+      sceneStarted = true;
+      const message: StartSceneMessage = { kind: "startScene", ...request };
+      worker.postMessage(message);
     });
   });
 }
@@ -229,23 +252,29 @@ export function runWasm(
  * 止まらない syscall を 1 つ処理する。
  *
  * 呼び出し元は既に返っているので、失敗しても伝える先が無い。ログに出す。
+ * ただし続けてもゲームとして成り立たない誤り (`UiContractError`) は返し、
+ * 呼んだ側が実行を失敗させる。
  */
 function dispatch(
   handlers: Record<string, SyscallHandler>,
   name: string,
   args: unknown[],
-): void {
+): Error | null {
   const handler = handlers[name];
   if (handler === undefined) {
     console.error(`[biwa] unknown syscall: ${name}`);
-    return;
+    return null;
   }
 
   try {
     (handler as (...a: unknown[]) => unknown)(...args);
   } catch (e) {
+    if (e instanceof UiContractError) {
+      return e;
+    }
     console.error(`[biwa] syscall \`${name}\` failed:`, e);
   }
+  return null;
 }
 
 /**

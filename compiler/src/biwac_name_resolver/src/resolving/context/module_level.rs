@@ -727,7 +727,7 @@ fn module_item_to_def_id_kind(item: &ModuleNameTreeItem) -> DefIdKind {
         ModuleNameTreeItem::Mod(module) => DefIdKind::Mod(module.mod_id),
         // 型の位置では alias を canonical な型に潰さない。
         //
-        // 潰すと `type MyGame = Game[A, B]` の [A, B] が失われてしまう
+        // 潰すと `type MyGame = Game[MyState]` の [MyState] が失われてしまう
         // (ここは TyDefId しか運べないため)。
         // alias 自身の TyDefId のまま HIR まで運び、
         // lowering の最後で alias_expansion が右辺ごと置き換える。

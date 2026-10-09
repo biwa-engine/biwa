@@ -1,0 +1,23 @@
+// `Window` を返す `fn main()` の playable package。
+//
+// `Window[S]` は状態の型 `S` を持つので、ランタイムには受け取れない。
+// `main` は戻り値を持たず、中で `show()` する契約である (biwac_entrypoint が検査する)。
+//
+// 本体は型としては正しい。ビルドが失敗する理由が契約違反だけになるようにするためである。
+
+import std::game::Game;
+import std::game::window::Window;
+
+struct MyGameState {}
+
+type MyGame = Game[MyGameState];
+
+fn main() -> Window[MyGameState] {
+  Window::new(opening)
+}
+
+scene opening(g: MyGame) -> MyGame {{
+  Hello.
+
+  #endscene g
+}}

@@ -128,7 +128,7 @@ attribute_table!(
     //
     //  ```biwa
     //  [[lang="game"]]
-    //  struct Game[C, S] { ... }
+    //  struct Game[S] { ... }
     //  ```
     Lang, "lang",
         AttrShape::Value(AttrValueKind::String),

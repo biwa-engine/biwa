@@ -3,21 +3,13 @@
  *
  * 生成された TypeScript の型はマングル名で、パッケージごとに変わるため、
  * エンジンからは構造だけを見る。
- * `characters` と `states` はゲーム開発者が定義する型なので、
- * エンジンは中身を知らない。
  */
-export interface BiwaGame {
-  name: string;
-  characters: unknown;
-  states: unknown;
-  window: BiwaGameWindow;
-}
 
 /**
  * std の `GameWindow` (出力先の Canvas / MessageArea の ui_id の束)。
  *
  * エンジンは中身を見ない。`__biwa_std_game_window_new` で作り、
- * そのまま `on_new_game` に渡すだけである
+ * そのまま SceneStartButton の `on_click` に渡すだけである
  * (wasm では JS から作れない WasmGC の struct でもある)。
  */
 export interface BiwaGameWindow {
@@ -37,46 +29,13 @@ export type BiwaGameWindowNew = (
 ) => BiwaGameWindow;
 
 /**
- * std の `Window` (UI の root Element)。エンジンは中身を見ない。
- * `__biwa_app` が返したものを `__biwa_std_window_show` に渡すだけである。
- */
-export type BiwaUiWindow = unknown;
-
-/**
- * `__biwa_app` の型。ゲーム側の `fn app() -> Window`。
+ * `__biwa_entrypoint` の型。ゲーム側の `fn main()`。ランタイムが名前で呼ぶのはこれだけである。
  *
- * ランタイムは起動時にまずこれを呼び、返った Window を表示する。
- * UI はすべてゲーム側が決める (エンジンは既定の UI を置かない)。
+ * ランタイムは起動時にこれを呼ぶ。ゲーム側がその中で `Window[S]` を組み立てて
+ * `show()` し、UI の syscall が出る。UI はすべてゲーム側が決める (エンジンは既定の UI を置かない)。
+ * 戻り値が無いのは、`Window[S]` の `S` (ゲームの状態の型) をホストに見せないためである。
  */
-export type BiwaApp = () => BiwaUiWindow;
-
-/**
- * std が host export する `__biwa_std_window_show` の型。
- * UI の syscall を発行して Window を表示し、root の ui_id を返す。
- */
-export type BiwaWindowShow = (window: BiwaUiWindow) => number;
-
-/**
- * `__biwa_entrypoint` の型。
- *
- * scene は generator function として出力される (`scene main` のシグネチャ
- * `(g: Game) -> Game` に対応)。呼んでも本体は走らず、
- * kernel が `next()` で駆動して初めて進む。
- */
-export type BiwaEntrypoint = (
-  game: BiwaGame,
-) => Generator<unknown, BiwaGame, unknown>;
-
-/**
- * `__biwa_on_new_game` の型。
- *
- * ゲーム開始時の `Game` はゲーム側の `fn on_new_game(window: GameWindow) -> Game[..]`
- * が組み立てる。エンジンが組み立てられないのは、`characters` と `states` の型を
- * ゲーム開発者が決めるからである
- * (wasm ではさらに、`Game` が JS から作れない WasmGC の struct でもある)。
- * 出力先の束 `window` だけはエンジンが用意して渡す。
- */
-export type BiwaOnNewGame = (window: BiwaGameWindow) => BiwaGame;
+export type BiwaEntrypoint = () => void;
 
 /**
  * ゲーム本体の受け渡し方。`biwa dev` が生成する `src/game/entry.ts` の形である。
@@ -90,14 +49,10 @@ export type BiwaBackend =
     /** 生成物が TypeScript。scene は generator で、kernel が `next()` で駆動する。 */
     kind: "typescript";
     packageName: string;
-    entrypoint: BiwaEntrypoint;
-    onNewGame: BiwaOnNewGame;
     /** std の `__biwa_std_game_window_new` (playable package のモジュールから再 export されている)。 */
     gameWindowNew: BiwaGameWindowNew;
-    /** ゲーム側の `fn app() -> Window`。 */
-    app: BiwaApp;
-    /** std の `__biwa_std_window_show` (同じく再 export されている)。 */
-    windowShow: BiwaWindowShow;
+    /** ゲーム側の `fn main()` (`__biwa_entrypoint`)。 */
+    entrypoint: BiwaEntrypoint;
   }
   | {
     /** 生成物が wasm。Worker で走らせ、syscall はスレッドを跨ぐ。 */

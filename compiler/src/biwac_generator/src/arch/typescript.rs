@@ -17,19 +17,11 @@ use crate::arch::typescript::{
     globals::native_code_as_oxc,
 };
 
-// ランタイムとの規約: ゲームのストーリー起動時にこの名前の関数が呼ばれる。
+// ランタイムとの規約: 起動時にこの名前の関数 (`fn main()`) が呼ばれる。
 //
 // これは TypeScript ターゲット固有の規約なので、
-// どの scene がエントリポイントかを決める biwac_scene 側はこの名前を知らない。
+// どの関数がエントリポイントかを決める biwac_entrypoint 側はこの名前を知らない。
 const ENTRYPOINT_NAME: &str = "__biwa_entrypoint";
-
-// 最初の `Game` を組み立てる関数。ランタイムはこれを呼んでから
-// エントリポイントに渡す (`docs/content-api.md` を参照)。
-const NEW_GAME_NAME: &str = "__biwa_on_new_game";
-
-// UI の root `Window` を組み立てる関数 (`fn app()`)。ランタイムが起動時に最初に呼び、
-// std の host export `__biwa_std_window_show` で表示する。
-const APP_NAME: &str = "__biwa_app";
 
 pub fn generate(
     hir: &Hir,
@@ -39,7 +31,7 @@ pub fn generate(
         biwac_base::PackageId,
         std::sync::Arc<biwac_dependency_metadata::DepMetadata>,
     )],
-    well_known: &biwac_scene::WellKnownSymbols,
+    entrypoints: &biwac_entrypoint::Entrypoints,
     host_exports: &biwac_host_export::HostExportTable,
 ) -> String {
     let allocator = oxc_allocator::Allocator::default();
@@ -249,19 +241,13 @@ pub fn generate(
     // エントリポイントは通常どおりマングル名で出力したうえで、
     // ランタイムが知っている名前へ別名 export する。
     // こうすると biwa コード内から呼ぶ経路 (マングル名参照) がそのまま動く。
-    for (symbol, export_name) in [
-        (biwac_scene::WellKnownSymbol::Main, ENTRYPOINT_NAME),
-        (biwac_scene::WellKnownSymbol::OnNewGame, NEW_GAME_NAME),
-        (biwac_scene::WellKnownSymbol::App, APP_NAME),
-    ] {
-        if let Some(def_id) = well_known.get(symbol) {
-            body.push(export_alias(
-                &ctx.get_value_mangled(&def_id),
-                export_name,
-                None,
-                &allocator,
-            ));
-        }
+    if let Some(def_id) = entrypoints.get(biwac_entrypoint::Entrypoint::Main) {
+        body.push(export_alias(
+            &ctx.get_value_mangled(&def_id),
+            ENTRYPOINT_NAME,
+            None,
+            &allocator,
+        ));
     }
 
     // `[[host_export="..."]]` が付いた関数も同じ形で別名 export する。

@@ -1,7 +1,7 @@
 /*
  * ページ全体のスタイル。
  *
- * Biwa Language (`fn app() -> Window`) が制御する UI の範囲を画面全体にするため、
+ * Biwa Language (`fn main()` が `show()` する `Window`) が制御する UI の範囲を画面全体にするため、
  * ブラウザ既定の余白 (body の margin など) を消して host (`#app`) が画面いっぱいに広がれるようにする。
  * host 自身の大きさは `Renderer.init` が決める (既定は 100vw x 100vh)。
  */

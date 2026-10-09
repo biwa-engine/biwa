@@ -1413,7 +1413,7 @@ impl[T] Foo[T] {
     #[test]
     fn parse_type_alias() {
         no_errors("type MyInt = Int;");
-        no_errors("type MyGame = Game[MyGameCharacters, MyGameState];");
+        no_errors("type MyGame = Game[MyGameState];");
         no_errors("type Boxed[T] = Box[T];");
     }
 

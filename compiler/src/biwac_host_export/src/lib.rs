@@ -7,7 +7,7 @@ use biwac_span::{Span, ValDefId};
 //
 // `[[lang="..."]]` が「コンパイラ自身が呼ぶ」ためのものであるのに対し、
 // `[[host_export="..."]]` は「ホスト側が呼ぶ」ためのもの。
-// `__biwa_entrypoint` / `__biwa_on_new_game` (biwac_scene の WellKnownSymbol)
+// `__biwa_entrypoint` (`fn main()`、biwac_entrypoint の `Entrypoint`)
 // が固定名・固定シグネチャの特別扱いなのに対し、こちらは属性で好きな関数を
 // 好きな名前で export できる汎用の仕組みである。
 //

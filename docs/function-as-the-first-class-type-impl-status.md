@@ -217,7 +217,8 @@ issue #7 の型表現 `fn[T, U](Int, T) -> U` はこの範囲を超えるので�
      同名の項目を許す (呼び出しの曖昧さの解き方と合わせて)。
    - 関数を値にする話と独立なので、別の作業として切り出してもよい。
 9. **serialize の marker trait** (関数型を対象外にする) の設計。
-10. **scene を関数型として扱う** (`type Scene[S] = fn(Game[S]) -> Game[S]`)。
+10. **scene を関数型として扱う** (`type Scene[S] = fn(Game[S]) -> Game[S]`)。 — **wasm では実装済み**
+    (`docs/ui-api-impl-status.md` §19 の R2。TypeScript では出力の手前で名指しのエラーにしている)。
 11. **UI Phase3**: `Button.on_click` など、ホストから Biwa の関数を呼ぶ経路。
 
 ## 5. ステップ 1 の実装状況
@@ -278,8 +279,8 @@ fn use_twice[T](f: fn(T) -> T, x: T) -> T { f(1) }
 
 - ~~メンバを直接呼ぶ `self.run(x)`、`make()(x)` / `(f)(x)`~~ → ステップ 2 で実装 (§6)。
 - ~~**`self` を取るメソッドを値にする**のは型エラー `MethodAsValue`~~ → ステップ 4 で値にできるようになった (§9)。
-- **scene を値にする**のは型エラー `SceneAsValue` (ステップ 10)。外部パッケージの scene の素通りは
-  ステップ 6 で塞いだ (§10)。
+- ~~**scene を値にする**のは型エラー `SceneAsValue`~~ → `docs/ui-api-impl-status.md` §19 の R2 で値にできるようにした
+  (`SceneAsValue` は削除。TypeScript では出力の手前で名指しのエラー)。
 - ~~外部パッケージの関数を値にする / 関数型の型エイリアス~~ → ステップ 6 で確認・実装 (§10)。
 - **TypeScript (tier 2)** は未対応・未確認。関数名の値は HIR の `VarIdKind::Global` をマングルした名前に落ちるが、
   ジェネリックな関数・scene (generator) の扱いは確認していない。

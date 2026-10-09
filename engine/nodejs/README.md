@@ -14,17 +14,20 @@ Biwa エンジンの基盤エンジン実装 (Node.js 版)。
 ゲーム側の入口は `biwa dev` が生成するスタブ `src/game/entry.ts` を経由して呼ばれる。
 起動の流れはどちらのターゲットでも同じである:
 
-1. `__biwa_app` (= `fn app() -> Window`) を呼び、返った Window を std の
-   `__biwa_std_window_show` で表示する。**エンジンは UI を何も置かない**
-2. Window の `scene_page_id` の Page に遷移するのを待つ (`UIObjects.onScenePageEntered`)
-3. その Page の `canvas` / `message_area` の ui_id で `__biwa_std_game_window_new` を呼び、
-   `__biwa_on_new_game(window)` → `__biwa_entrypoint` (= `scene main`) を始める
-   (2 回目以降の遷移は未定義。いまは最初の 1 回だけ)
+1. `__biwa_entrypoint` (= `fn main()`) を呼ぶ。ランタイムが名前で呼ぶゲーム側の関数はこれだけである。ゲーム側がその中で `Window[S]` を組み立てて
+   `show()` し、UI の syscall が出る。**エンジンは UI を何も置かない**。
+   Window は scene を映すページ (`ScenePage`) と scene 本体 (`main_scene` のハンドラ) を
+   Page より先に持っていなければならず、欠けていればゲームを止める (`UiContractError`)
+2. SceneStartButton が押されるのを待つ (`UIObjects.setSceneStarter`)
+3. Window の ScenePage の出力先 (Canvas / MessageArea) の ui_id で `__biwa_std_game_window_new` を呼び、
+   ボタンの `on_click(window)` で `Game[S]` を作らせ、ScenePage を見せてから
+   Window の `main_scene(game)` を始める。関数は預けた番号で指す (`docs/host-function-values.md`)
+   (2 回目以降の開始は未定義。いまは最初の 1 回だけ)
 
 ```
 src/main.ts
-  ├─ kind: "wasm"        → runWasm(url, scenePage)          ← Worker で wasm を走らせる
-  └─ kind: "typescript"  → kernel.run(entrypoint(game))     ← scene main (generator)
+  ├─ kind: "wasm"        → runWasm(url)                     ← Worker で wasm を走らせる
+  └─ kind: "typescript"  → kernel.run(mainScene(game))      ← scene (generator)
 ```
 
 どちらで来ても、エンジン API の実装 (`src/engine/api/*`) は同じものが呼ばれる。
@@ -134,7 +137,7 @@ wasm 自身には中断の仕組みが無いので、**wasm を Worker で走ら
 
 ```
 src/engine/vm/wasm/
-  contract.ts  # import 名 → 区分 (local / cast / call)。std との合意点
+  contract.ts  # import 名 → 区分 (local / cast / alloc / retain / call)。std との合意点
   bridge.ts    # SAB のプロトコル
   worker.ts    # wasm の instantiate と実行。ここが VM の中
   host.ts      # メインスレッド側の kernel。syscall を api/* に流す
@@ -151,11 +154,18 @@ src/engine/vm/wasm/
 | `biwa:engine` `sys_sleep`                       | **中断する** | Main                              |
 | `biwa:engine` `sys_string_concat` / `sys_map_*` | -            | Worker                            |
 | `biwa:engine` `sys_int_to_string` ほか          | -            | Worker                            |
+| `biwa:engine` `sys_ui_set_handler`              | 積んで返る   | Main (関数は Worker に預ける)     |
 
 `sys_create_object` は戻り値 (オブジェクト id) を持つが**中断しない**。
 採番だけを Worker 内で行い、本体はメインスレッドへ投げるからである
 (`contract.ts` の `alloc`)。素直に中断させると、
 オブジェクトを 1 つ作るたびにスレッドが往復してしまう。
+
+`sys_ui_set_handler` は Biwa の関数の値 (`funcref`) を受け取る。関数は
+`postMessage` できないので Worker のハンドラの表に預け、メインスレッドには
+番号だけを送る (`contract.ts` の `retain`)。持ち主の Element が消えると
+メインスレッドが番号を Worker に返し、Worker は表から外す。
+規定は `docs/host-function-values.md` にある。
 
 積んで返る syscall はまとめて 1 通の `postMessage` で流している。
 Worker はゲームの実行中にイベントループへ帰らない (生成物を同期に呼び切る) ので、

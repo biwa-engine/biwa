@@ -216,11 +216,6 @@ fn to_diagnostic(report: &TyErrorReport, interner: &IdentInterner) -> Option<(Sp
             ))
         }
 
-        TyError::SceneAsValue { span } => Some((
-            span.clone(),
-            "A scene cannot be used as a value yet.".to_string(),
-        )),
-
         TyError::ReturnTypeRequired { rty } => {
             let ty = names.render(&rty.kind);
             Some((rty.span.clone(), format!("This function must return `{ty}`.")))

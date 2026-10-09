@@ -29,11 +29,9 @@ fn native_add(x: Int, y: Int) -> Int {{
 
 struct MyGameState {}
 
-struct MyGameCharacters {}
-
 scene scene1(
-    g: std::game::Game[MyGameCharacters, MyGameState]
-  ) -> std::game::Game[MyGameCharacters, MyGameState] {{
+    g: std::game::Game[MyGameState]
+  ) -> std::game::Game[MyGameState] {{
   Hello, World!
   #let x = native_add(1, 2)
   #if x > 2 {

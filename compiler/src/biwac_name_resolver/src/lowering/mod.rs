@@ -86,7 +86,7 @@ pub(crate) fn lower(
     // Pass 5: 型 alias を右辺で置き換える。
     //
     // 名前解決は alias をその場で canonical な TyDefId に潰さない
-    // (潰すと `type MyGame = Game[A, B]` の [A, B] が失われるため)。
+    // (潰すと `type MyGame = Game[MyState]` の [MyState] が失われるため)。
     // 代わりにここで、すべての型・値を lower し終えたあとに一括で展開する。
     //
     // 依存パッケージの型エイリアス (`fn_lib::IntFn`) も同じく展開する。

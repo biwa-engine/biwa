@@ -11,6 +11,7 @@ biwac_attribute = { path = "../biwac_attribute"}
 biwac_lang_item = { path = "../biwac_lang_item"}
 biwac_host_export = { path = "../biwac_host_export"}
 biwac_hir = { path = "../biwac_hir"}
+biwac_entrypoint = { path = "../biwac_entrypoint"}
 biwac_scene = { path = "../biwac_scene"}
 biwac_dependency_metadata = { path = "../biwac_dependency_metadata"}
 biwac_fingerprint = { path = "../biwac_fingerprint"}

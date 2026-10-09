@@ -1,7 +1,7 @@
 {
-  "name": "missing_app",
+  "name": "missing_main",
   "version": "0.1.0",
-  "description": "rejects a playable package without `fn app() -> Window`",
+  "description": "rejects a playable package without `fn main()`",
   "dependencies": [
     {
       "name": "std",

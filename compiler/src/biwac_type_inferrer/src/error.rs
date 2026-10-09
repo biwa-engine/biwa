@@ -88,11 +88,6 @@ pub enum TyError {
         method: Box<Ident>,
     },
 
-    /// scene を値として使った。まだ値にできない。
-    SceneAsValue {
-        span: Span,
-    },
-
     /// trait 越しの項目 (`T::guee`) を値として使った。まだ値にできない。
     TraitItemAsValue {
         span: Span,
@@ -517,12 +512,6 @@ impl BiwacError for TyErrorReport {
                 .print();
             }
 
-            TyError::SceneAsValue { span } => {
-                ctx.diagnostic("A scene cannot be used as a value yet.")
-                    .label(at(span), "this is a scene")
-                    .print();
-            }
-
             TyError::ReturnTypeRequired { rty } => {
                 let ty = names.render(&rty.kind);
 
@@ -703,7 +692,6 @@ pub(crate) fn error_tys(error: &TyError) -> Vec<&Ty> {
         | TyError::StructNotHasMember { .. }
         | TyError::InvalidAssignOperation { .. }
         | TyError::InsufficientContext
-        | TyError::SceneAsValue { .. }
         | TyError::TraitItemAsValue { .. }
         | TyError::MissingLangItem { .. } => Vec::new(),
 

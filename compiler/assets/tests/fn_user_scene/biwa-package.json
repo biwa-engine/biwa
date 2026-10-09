@@ -1,7 +1,7 @@
 {
   "name": "fn_user_scene",
   "version": "0.1.0",
-  "description": "rejects a scene of a dependency used as a value",
+  "description": "uses a scene of a dependency as a value",
   "dependencies": [
     {
       "name": "std",

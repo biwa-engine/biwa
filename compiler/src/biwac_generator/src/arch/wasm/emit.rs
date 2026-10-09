@@ -58,16 +58,9 @@ use crate::mangle::Mangler;
 const STRING_CONST_IMPORT: &str = r#"(import "biwa:runtime" "string_const"
     (func $__biwa_string_const (param i32 i32) (result externref)))"#;
 
-/// ランタイムがストーリー起動時に呼ぶ関数の名前。
+/// ランタイムが起動時に呼ぶ関数 (`fn main()`) の名前。
 /// TypeScript バックエンドと同じ規約である。
 const ENTRYPOINT_NAME: &str = "__biwa_entrypoint";
-
-/// 最初の `Game` を組み立てる関数。TypeScript と同じ規約である。
-const NEW_GAME_NAME: &str = "__biwa_on_new_game";
-
-/// UI の root `Window` を組み立てる関数 (`fn app()`)。ランタイムが起動時に最初に呼ぶ。
-/// TypeScript と同じ規約である。
-const APP_NAME: &str = "__biwa_app";
 
 #[derive(Debug)]
 pub enum WasmError {
@@ -100,17 +93,14 @@ impl std::fmt::Display for WasmError {
 pub fn emit(
     mono: &MonoMir,
     mangler: &Mangler,
-    well_known: &biwac_scene::WellKnownSymbols,
     host_exports: &biwac_host_export::HostExportTable,
 ) -> Result<String, WasmError> {
-    Emitter::new(mono, mangler, well_known, host_exports).run()
+    Emitter::new(mono, mangler, host_exports).run()
 }
 
 struct Emitter<'a> {
     mono: &'a MonoMir,
     mangler: &'a Mangler<'a>,
-    /// ランタイムが名前で呼ぶシンボル。export を出すのに使う。
-    well_known: &'a biwac_scene::WellKnownSymbols,
     /// `[[host_export="..."]]` が付いた関数。export を出すのに使う。
     host_exports: &'a biwac_host_export::HostExportTable,
     /// 実体 → wasm の関数名。
@@ -141,7 +131,6 @@ impl<'a> Emitter<'a> {
     fn new(
         mono: &'a MonoMir,
         mangler: &'a Mangler<'a>,
-        well_known: &'a biwac_scene::WellKnownSymbols,
         host_exports: &'a biwac_host_export::HostExportTable,
     ) -> Self {
         // 名前は実体の索引を添えて一意にする。
@@ -240,7 +229,6 @@ impl<'a> Emitter<'a> {
         Self {
             mono,
             mangler,
-            well_known,
             host_exports,
             fn_names,
             ty_names,
@@ -362,20 +350,9 @@ impl<'a> Emitter<'a> {
         }
 
         // --- ランタイムが名前で呼ぶもの ---
+        // `fn main()` だけである。scene も最初の `Game` の作り方も、関数の値として UI に渡される。
         let entry_name = &self.fn_names[&self.mono.instances[entry].key];
         let _ = writeln!(out, "  (export \"{ENTRYPOINT_NAME}\" (func ${entry_name}))");
-
-        for (symbol, export_name) in [
-            (biwac_scene::WellKnownSymbol::OnNewGame, NEW_GAME_NAME),
-            (biwac_scene::WellKnownSymbol::App, APP_NAME),
-        ] {
-            if let Some(def_id) = self.well_known.get(symbol)
-                && let Some(inst) = self.mono.instances.iter().find(|i| i.key.def_id == def_id)
-            {
-                let name = &self.fn_names[&inst.key];
-                let _ = writeln!(out, "  (export \"{export_name}\" (func ${name}))");
-            }
-        }
 
         // `[[host_export="..."]]` が付いた関数。
         //

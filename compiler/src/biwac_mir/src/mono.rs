@@ -60,7 +60,7 @@ pub struct MonoMir {
     /// 単相化のときにここへ移し替えて `Const::Str` を付け替えてある。
     pub strings: StringPool,
 
-    /// エントリポイント (`scene main`) の実体索引。
+    /// エントリポイント (`fn main()`) の実体索引。
     pub entry: Option<usize>,
 
     /// モジュール全体に前置されるネイティブコード。

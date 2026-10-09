@@ -63,7 +63,7 @@ impl BasicBlock {
 ///
 /// scene も普通の関数と同じくこれになる。
 /// scene がエントリポイントであるかどうかは
-/// [`biwac_scene::WellKnownScenes`] が既に持っているので、ここには重複させない。
+/// [`biwac_entrypoint::Entrypoints`] が既に持っているので、ここには重複させない。
 #[derive(Debug, Clone)]
 pub struct Body {
     pub def_id: ValDefId,

@@ -12,22 +12,18 @@
 
 import std::game::Game;
 import std::game::config::Config;
-import std::game::window::GameWindow;
 import std::game::window::Window;
+import std::game::window::game_window_new_for_host;
+import std::game::Scene;
 import std::option::Option;
 
 struct MyGameState {}
 
-struct MyGameCharacters {}
+type MyGame = Game[MyGameState];
 
-type MyGame = Game[MyGameCharacters, MyGameState];
-
-fn app() -> Window {
-  Window::new()
-}
-
-fn on_new_game(window: GameWindow) -> MyGame {
-  Game::new(window, "fn_value", MyGameCharacters {}, MyGameState {}, Config::default())
+// エントリポイント。scene 本体 (`opening`) を Window に渡して表示する。
+fn main() {
+  Window::new(opening).show();
 }
 
 fn add_one(x: Int) -> Int {
@@ -236,7 +232,25 @@ fn step7() -> Int {
   a + b + c + d + e + f + g + h + i + j + k + l  // 66
 }
 
-// 期待値は 168 (各行のコメントの合計)。テストがホストから呼んで確かめられるよう export する。
+// scene を関数型の値にする (`docs/ui-api-impl-status.md` §19 の R2)。
+// scene は `Scene[S]` (`fn(Game[S]) -> Game[S]`) の値として渡せ、関数の値として呼べる。
+scene pass_through(g: MyGame) -> MyGame {{
+  #endscene g
+}}
+
+fn run_scene(s: Scene[MyGameState], g: MyGame) -> MyGame {
+  s(g)
+}
+
+fn scene_value() -> Int {
+  let g = Game::new(game_window_new_for_host(1, 2), "fn_value", MyGameState {}, Config::default());
+  let s: Scene[MyGameState] = pass_through;
+  let g2 = run_scene(s, g);
+  let g3 = run_scene(pass_through, g2);
+  1
+}
+
+// 期待値は 169 (各行のコメントの合計)。テストがホストから呼んで確かめられるよう export する。
 [[host_export="fn_value_compute"]]
 fn compute() -> Int {
   let f: fn(Int) -> Int = add_one;
@@ -264,10 +278,11 @@ fn compute() -> Int {
   let q = via_trait(Holder::make(3));    // 12
   let s6 = step6();                      // 24
   let s7 = step7();                      // 66
+  let sv = scene_value();                // 1
   call_void(ignore, 1);
   if e {
     if compare_later() {
-      a + b + c + d + g + h + i + j + k + l + n + o + p + q + s6 + s7
+      a + b + c + d + g + h + i + j + k + l + n + o + p + q + s6 + s7 + sv
     } else {
       0
     }
@@ -276,12 +291,13 @@ fn compute() -> Int {
   }
 }
 
-scene main(g: MyGame) -> MyGame {{
+scene opening(g: MyGame) -> MyGame {{
   #let f: fn(Int) -> Int = add_one
   #let n = f(compute())
   #let p = pick(TRUE)(n)
   #let lf = fn(x) { x * 2 }
   #let lv = lf(p)
+  #let g2 = run_scene(pass_through, g)
   Hello.
 
   #endscene g

@@ -7,17 +7,16 @@ import window::Position;
 import config::Config;
 
 // 進行中のノベルゲームを表す構造体
-// C: キャラクター構造体Character[V]のみをいくつもメンバに含む構造体
-//    - characters.akane でakaneというキャラクターにアクセスできる
-//    というようにユーザが定義
 // S: ゲーム内で(セーブ、ロードも関係なく)継続して保持したい状態をいくつもメンバに含む構造体
 //    - states.likeabilities.akane でakaneというキャラクターのプレイヤーへの好感度にアクセスできる
 //    - states.game_difficulty でゲームの難易度にアクセスできる
 //    というようにユーザが定義
+//
+// 以前はキャラクターの束を別の型引数 `C` (`Game[C, S]`) で持っていたが廃止した。
+// キャラクターが要るなら `S` のメンバに持つか、scene の中で作る。
 [[lang="game"]]
-struct Game[C, S] {
+struct Game[S] {
   name: String, // ゲームの名前
-  characters: C,
   states: S,
   window: GameWindow,
 
@@ -28,12 +27,18 @@ struct Game[C, S] {
   config: Config,
 }
 
-impl[C, S] Game[C, S] {
-  // `window` はランタイムが組み立てて `on_new_game(window)` に渡したもの。
-  fn new(window: GameWindow, name: String, characters: C, states: S, config: Config) -> Self {
+// scene の型。scene は `Game[S]` を受け取って (状態を進めた) `Game[S]` を返す関数である。
+//
+// `scene foo(g: MyGame) -> MyGame {{ .. }}` は `Scene[MyGameState]` の値として渡せる
+// (例えば UI の `Window` の `main_scene` に。`docs/ui-api.md` の改訂版)。
+// wasm では scene は普通の関数である。TypeScript では generator function なので、まだ値にできない。
+type Scene[S] = fn(Game[S]) -> Game[S];
+
+impl[S] Game[S] {
+  // `window` は本物の std ではランタイムが組み立てて `SceneStartButton` の `on_click(window)` に渡したもの。
+  fn new(window: GameWindow, name: String, states: S, config: Config) -> Self {
     Self {
       name = name,
-      characters = characters,
       states = states,
       window = window,
       config = config,

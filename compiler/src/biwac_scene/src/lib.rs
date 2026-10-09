@@ -1,21 +1,13 @@
 mod check;
 mod error;
-mod table;
 
 pub use check::check;
 pub use error::{SceneError, SignatureProblem};
-pub use table::{
-    ContractTy, SCENE_ARGS, SCENE_RET, SceneRequirement, WellKnownKind, WellKnownSymbol,
-    WellKnownSymbols,
-};
 
-// この crate は「scene がランタイムとの間で守るべき規約」を持つ。
+// この crate は「scene が守るべき規約」を持つ。
 //
-// - すべての scene は lang item `game` のみを引数に取り `game` を返す。
-//   scene はストーリーの一区切りであり、ゲームの状態を受け取って返すためである。
-// - ランタイムが名前を知っていて直接呼ぶシンボルの一覧。
-//   いまは `scene main`・`fn on_new_game(window: GameWindow)`・`fn app() -> Window` の
-//   3 つで、playable package はすべて定義しなければならない。
+// すべての scene は lang item `game` のみを引数に取り `game` を返す (`(Game[..]) -> Game[..]`)。
+// scene はストーリーの一区切りであり、ゲームの状態を受け取って返すためである。
+// ジェネリック引数に何が入るかは問わない (`Game[..]` の中身は開発者が決める)。
 //
-// どのターゲット言語でどんなシンボル名として公開されるかは
-// codegen 側 (biwac_generator の各 arch) の規約であり、ここでは関知しない。
+// ランタイムが名前で呼ぶエントリポイント (`fn main()`) の規約は biwac_entrypoint にある。

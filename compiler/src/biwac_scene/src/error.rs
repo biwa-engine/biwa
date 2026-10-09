@@ -1,38 +1,25 @@
 use biwac_span::Span;
 
-use crate::{ContractTy, WellKnownSymbol};
-
 #[derive(Debug)]
 pub enum SceneError {
-    /// ランタイムが呼ぶシンボルのシグネチャが期待と違う。
-    ///
-    /// scene は `(Game[..]) -> Game[..]`、`on_new_game` は
-    /// `(GameWindow) -> Game[..]` である (期待は表 `WellKnownSymbol` が持つ)。
-    InvalidSceneSignature {
-        scene: String,
-        expected_args: &'static [ContractTy],
-        expected_ret: ContractTy,
+    /// scene のシグネチャが `(Game[..]) -> Game[..]` でない。
+    InvalidSignature {
+        name: String,
         reason: SignatureProblem,
         span: Span,
     },
-
-    /// playable package に必須のシンボルが無い。
-    MissingEntryPoint { scene: WellKnownSymbol },
-
-    /// 名前は使われているが、期待した種別 (scene / 関数) ではない。
-    EntryPointNotScene { scene: WellKnownSymbol, span: Span },
 }
 
 #[derive(Debug)]
 pub enum SignatureProblem {
-    /// 引数の個数が期待と違う。
-    ArgCount { found: usize, expected: usize },
+    /// 引数の個数が 1 でない。
+    ArgCount { found: usize },
 
-    /// `index` 番目 (0 始まり) の引数の型が期待した lang item ではない。
-    ArgType { index: usize, expected: ContractTy },
+    /// `index` 番目 (0 始まり) の引数の型が `Game` ではない。
+    ArgType { index: usize },
 
-    /// 戻り値の型が期待した lang item ではない。
-    ReturnType { expected: ContractTy },
+    /// 戻り値の型が `Game` ではない。
+    ReturnType,
 
     /// レシーバ (`self`) を取っている。
     HasReceiver,
@@ -41,57 +28,25 @@ pub enum SignatureProblem {
 impl SceneError {
     pub fn span(&self) -> Option<&Span> {
         match self {
-            Self::InvalidSceneSignature { span, .. } | Self::EntryPointNotScene { span, .. } => {
-                Some(span)
-            }
-            Self::MissingEntryPoint { .. } => None,
+            Self::InvalidSignature { span, .. } => Some(span),
         }
     }
 
     pub fn message(&self) -> String {
         match self {
-            Self::InvalidSceneSignature {
-                scene,
-                expected_args,
-                expected_ret,
-                reason,
-                ..
-            } => {
+            Self::InvalidSignature { name, reason, .. } => {
                 let detail = match reason {
-                    SignatureProblem::ArgCount { found, expected } => {
-                        format!("it takes {found} argument(s) instead of {expected}")
+                    SignatureProblem::ArgCount { found } => {
+                        format!("it takes {found} argument(s) instead of 1")
                     }
-                    SignatureProblem::ArgType { index, expected } => format!(
-                        "its argument #{} is not a {}",
-                        index + 1,
-                        expected.describe()
-                    ),
-                    SignatureProblem::ReturnType { expected } => {
-                        format!("it does not return a {}", expected.describe())
+                    SignatureProblem::ArgType { index } => {
+                        format!("its argument #{} is not a `Game`", index + 1)
                     }
+                    SignatureProblem::ReturnType => "it does not return a `Game`".to_string(),
                     SignatureProblem::HasReceiver => "it takes a receiver".to_string(),
                 };
-
-                let args = if expected_args.is_empty() {
-                    "no argument".to_string()
-                } else {
-                    let list: Vec<&str> = expected_args.iter().map(|a| a.describe()).collect();
-                    format!("exactly ({})", list.join(", "))
-                };
-                let expected = format!("take {args} and return a {}", expected_ret.describe());
-
-                format!("`{scene}` must {expected}, but {detail}")
+                format!("`{name}` must take exactly (`Game`) and return a `Game`, but {detail}")
             }
-            Self::MissingEntryPoint { scene } => format!(
-                "this playable package must define {} `{}` in the root module",
-                scene.kind().describe(),
-                scene.name()
-            ),
-            Self::EntryPointNotScene { scene, .. } => format!(
-                "the runtime calls `{}` directly, so it must be {}",
-                scene.name(),
-                scene.kind().describe()
-            ),
         }
     }
 }
