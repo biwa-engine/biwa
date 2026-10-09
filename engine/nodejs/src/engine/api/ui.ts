@@ -40,8 +40,8 @@ export const ElementKind = {
   /**
    * scene を映すページ。Window が 1 つだけ持つ (`WindowScenePage` property で結びつける)。
    * Link では遷移できず、scene が始まるときに表示される。
-   * 子に Canvas と MessageArea を 1 つずつまで持ち、Canvas を下、MessageArea を上に重ねる
-   * (それぞれ ScenePage の中にいるのと同じように配置する。`Layers` と同じ置き方)。
+   * 子は Page と同じく自由に持てる。scene の出力先は `ScenePageCanvas` / `ScenePageMessageArea`
+   * で指し、その実体は子孫に置かれていなければならない (Window に結びつけるときに確かめる)。
    */
   ScenePage: 11,
   /**
@@ -96,6 +96,12 @@ export const PropertyKind = {
    * 設定すると ScenePage はその Window の (隠れた) 子になる。
    */
   WindowScenePage: 15,
+  /**
+   * ScenePage の scene の出力先。val_u1 に Canvas / MessageArea の ui_id を積む。ScenePage 以外には付けられない。
+   * 指す Element は ScenePage の子孫でなければならない。
+   */
+  ScenePageCanvas: 16,
+  ScenePageMessageArea: 17,
 
   // --- sys_ui_set_property_with_string (文字列: val_s) ---
   /** Page が持つ識別子。Link の遷移先として参照される。 */
@@ -138,6 +144,8 @@ const NUMERIC_PROPERTY_KINDS = new Set<number>([
   PropertyKind.TextWeight,
   PropertyKind.TextColor,
   PropertyKind.WindowScenePage,
+  PropertyKind.ScenePageCanvas,
+  PropertyKind.ScenePageMessageArea,
 ]);
 
 const STRING_PROPERTY_KINDS = new Set<number>([

@@ -45,6 +45,13 @@ interface UiNode {
    */
   scenePage: UiNode | null;
   /**
+   * ScenePage の scene の出力先 (`ScenePageCanvas` / `ScenePageMessageArea`) の ui_id。
+   * ScenePage 以外では使わない。指す Element は ScenePage の子孫でなければならない
+   * (Window に結びつけるとき・scene を始めるときに確かめる)。
+   */
+  sceneCanvasId: number | null;
+  sceneMessageAreaId: number | null;
+  /**
    * `MessageArea` が持つ Message Window の実体。それ以外では `null`。
    * Content API はこれに出力する。
    */
@@ -88,8 +95,9 @@ export interface SceneStartRequest {
   /** Window の `main_scene` (`Scene[S]`) の番号。 */
   mainScene: number;
   /**
-   * Window の ScenePage の Canvas / MessageArea の ui_id。持っていなければ **0 (「無し」)** で、
-   * そのまま `__biwa_std_game_window_new` に渡せる形にしてある。
+   * Window の ScenePage の出力先 (Canvas / MessageArea) の ui_id。そのまま `__biwa_std_game_window_new` に渡す。
+   * ScenePage は今は両方を必ず持つ (`sceneOutputsOf`) が、`GameWindow` 側は将来に備えて
+   * 「0 は無し」の取り決めのまま (`Option`) にしてある。
    */
   canvasId: number;
   messageAreaId: number;
@@ -110,12 +118,13 @@ export class UiContractError extends Error {
 }
 
 /** 親が子をいくつ持てるか。`docs/ui-api.md` の push_child の規則そのもの。 */
-type ChildCapacity = "many" | "single" | "none" | "scene";
+type ChildCapacity = "many" | "single" | "none";
 
 function childCapacity(kind: number): ChildCapacity {
   switch (kind) {
     case ElementKind.Window:
     case ElementKind.Page:
+    case ElementKind.ScenePage:
     case ElementKind.Layers:
     case ElementKind.Horizontal:
     case ElementKind.Vertical:
@@ -123,8 +132,6 @@ function childCapacity(kind: number): ChildCapacity {
       return "many";
     case ElementKind.Box:
       return "single";
-    case ElementKind.ScenePage:
-      return "scene";
     default:
       // Link / SceneStartButton や、まだ知らない kind はここに来る。子は持てない。
       return "none";
@@ -240,7 +247,7 @@ export class UIObjects {
     for (const child of window.children) {
       if (child.kind === ElementKind.Page) child.dom.style.display = "none";
     }
-    window.scenePage.dom.style.display = "grid";
+    window.scenePage.dom.style.display = "";
   }
 
   /**
@@ -316,6 +323,8 @@ export class UIObjects {
       pageId: null,
       idKey: null,
       scenePage: null,
+      sceneCanvasId: null,
+      sceneMessageAreaId: null,
       textBox,
       textEl: null,
       z: 0,
@@ -361,6 +370,13 @@ export class UIObjects {
 
     if (kind === PropertyKind.WindowScenePage) {
       this.setScenePage(node, valU1);
+      return;
+    }
+    if (
+      kind === PropertyKind.ScenePageCanvas ||
+      kind === PropertyKind.ScenePageMessageArea
+    ) {
+      this.setSceneOutput(node, kind, valU1);
       return;
     }
 
@@ -464,6 +480,17 @@ export class UIObjects {
     if (parent.kind === ElementKind.Window) {
       this.requireSceneSettings(parent);
     }
+    // Canvas / MessageArea は std が `new()` の時点で作るので、同じ値を 2 か所に置くと
+    // 同じ Element が 2 回積まれる。黙って移すと先の配置から消えるので止める。
+    if (
+      child.parent !== null &&
+      (child.kind === ElementKind.Canvas || child.kind === ElementKind.MessageArea)
+    ) {
+      throw new UiContractError(
+        `ui element ${child.id} (${child.kind === ElementKind.Canvas ? "Canvas" : "MessageArea"}) ` +
+        `is already placed in ui element ${child.parent.id}; the same element cannot be placed twice`,
+      );
+    }
 
     switch (childCapacity(parent.kind)) {
       case "none":
@@ -476,24 +503,6 @@ export class UIObjects {
         this.attach(parent, child);
         return;
       case "many":
-        this.attach(parent, child);
-        return;
-      case "scene":
-        // Canvas と MessageArea を 1 つずつまで。同じ種類があれば置き換える。
-        if (
-          child.kind !== ElementKind.Canvas &&
-          child.kind !== ElementKind.MessageArea
-        ) {
-          console.error(
-            `[biwa] ScenePage (ui element ${parent.id}) can only have a Canvas and a MessageArea, ` +
-            `but ui element ${child.id} (kind ${child.kind}) was pushed`,
-          );
-          this.destroy(child);
-          return;
-        }
-        for (const existing of parent.children.filter((c) => c.kind === child.kind)) {
-          this.destroy(existing);
-        }
         this.attach(parent, child);
         return;
     }
@@ -530,7 +539,7 @@ export class UIObjects {
     parent.dom.appendChild(child.dom);
     // 子の部分木はすでに組み上がっている (create → property → push_child の順) ので、
     // 繋がった時点で部分木ごと重なりの高さを決め直す。
-    this.assignZ(child, zOfChild(parent, child, parent.children.length - 1));
+    this.assignZ(child, zOfChild(parent, parent.children.length - 1));
 
     if (child.kind === ElementKind.Page) {
       this.showFirstPageIfNoneVisible(parent, child);
@@ -546,7 +555,7 @@ export class UIObjects {
     if (parent.scenePage === node) {
       parent.scenePage = null;
     }
-    if (parent.kind === ElementKind.Layers || parent.kind === ElementKind.ScenePage) {
+    if (parent.kind === ElementKind.Layers) {
       node.dom.style.gridArea = "";
       node.dom.style.alignSelf = "";
       node.dom.style.zIndex = "";
@@ -566,14 +575,13 @@ export class UIObjects {
    */
   private assignZ(node: UiNode, z: number): void {
     node.z = z;
-    const parentKind = node.parent?.kind;
-    if (parentKind === ElementKind.Layers || parentKind === ElementKind.ScenePage) {
+    if (node.parent?.kind === ElementKind.Layers) {
       node.dom.style.gridArea = "1 / 1";
       node.dom.style.alignSelf = "start";
       node.dom.style.zIndex = String(z);
     }
     node.children.forEach((child, index) => {
-      this.assignZ(child, zOfChild(node, child, index));
+      this.assignZ(child, zOfChild(node, index));
     });
   }
 
@@ -757,12 +765,63 @@ export class UIObjects {
       );
       return;
     }
+    // ScenePage の部分木はこの時点で組み上がっている (std は子から組み上げる) ので、
+    // 出力先が揃って子孫に置かれていることをここで確かめる。
+    this.sceneOutputsOf(scenePage);
     if (window.scenePage === scenePage) return;
     if (window.scenePage !== null) {
       this.destroy(window.scenePage);
     }
     this.attach(window, scenePage);
     window.scenePage = scenePage;
+  }
+
+  /** ScenePage の出力先を設定する (`ScenePageCanvas` / `ScenePageMessageArea`)。 */
+  private setSceneOutput(scenePage: UiNode, kind: number, targetId: number): void {
+    const isCanvas = kind === PropertyKind.ScenePageCanvas;
+    const property = isCanvas ? "canvas" : "message_area";
+    if (!expectKind(scenePage, ElementKind.ScenePage, property)) return;
+    const expected = isCanvas ? ElementKind.Canvas : ElementKind.MessageArea;
+    const target = this.nodes.get(targetId);
+    if (target === undefined || target.kind !== expected) {
+      throw new UiContractError(
+        `"${property}" of ui element ${scenePage.id} (ScenePage) must be a ` +
+        `${isCanvas ? "Canvas" : "MessageArea"}, but got ui element ${targetId}`,
+      );
+    }
+    if (isCanvas) {
+      scenePage.sceneCanvasId = targetId;
+    } else {
+      scenePage.sceneMessageAreaId = targetId;
+    }
+  }
+
+  /**
+   * ScenePage の出力先 (Canvas と MessageArea の ui_id) を返す。
+   *
+   * どちらも設定されていて、ScenePage の子孫に置かれていなければならない。
+   * std は ID を `ScenePage::new` で必ず受け取るが、実体の配置は型で担保できないので、ここで確かめる。
+   */
+  private sceneOutputsOf(scenePage: UiNode): { canvasId: number; messageAreaId: number } {
+    const resolve = (id: number | null, property: string): number => {
+      if (id === null) {
+        throw new UiContractError(
+          `ui element ${scenePage.id} (ScenePage) must have its "${property}" set`,
+        );
+      }
+      const target = this.nodes.get(id);
+      if (target === undefined || !isDescendantOf(target, scenePage)) {
+        throw new UiContractError(
+          `the "${property}" of ui element ${scenePage.id} (ScenePage) is ui element ${id}, ` +
+          "which must be placed inside the ScenePage",
+        );
+      }
+      return id;
+    };
+    return {
+      canvasId: resolve(scenePage.sceneCanvasId, "canvas"),
+      messageAreaId: resolve(scenePage.sceneMessageAreaId, "message_area"),
+    };
   }
 
   /**
@@ -789,15 +848,16 @@ export class UIObjects {
       console.error(`[biwa] ui element ${win.id} (Window) cannot start a scene`);
       return;
     }
-    const outputOf = (kind: number): number =>
-      scenePage.children.find((c) => c.kind === kind)?.id ?? 0;
-    this.startScene({
-      windowId: win.id,
-      onClick,
-      mainScene,
-      canvasId: outputOf(ElementKind.Canvas),
-      messageAreaId: outputOf(ElementKind.MessageArea),
-    });
+    // Window に結びつけたときに確かめてあるが、その後に動かされていないとも限らないので見直す。
+    // ここはイベントの中なので、誤りはゲームを止めずにログに出すに留める。
+    let outputs: { canvasId: number; messageAreaId: number };
+    try {
+      outputs = this.sceneOutputsOf(scenePage);
+    } catch (e) {
+      console.error(e);
+      return;
+    }
+    this.startScene({ windowId: win.id, onClick, mainScene, ...outputs });
   }
 }
 
@@ -819,14 +879,11 @@ function createDom(kind: number): HTMLElement {
         display: "none",
       });
     case ElementKind.ScenePage:
-      // Page と同じく Window を埋め、最初は隠れている (scene が始まるときに `enterScenePage` が見せる)。
-      // 子 (Canvas / MessageArea) は Layers と同じく 1 マスのグリッドに重ねる (`assignZ`)。
+      // Page と同じ。最初は隠れていて、scene が始まるときに `enterScenePage` が見せる。
       return styled(document.createElement("div"), {
         position: "absolute",
         inset: "0",
         display: "none",
-        gridTemplateColumns: "100%",
-        gridTemplateRows: "100%",
       });
     case ElementKind.Box:
       return styled(document.createElement("div"), {
@@ -994,21 +1051,9 @@ function sizeToCss(unit: number, value: number): string {
   }
 }
 
-/**
- * `parent` の `index` 番目の子 `child` の重なりの高さ。
- *
- * Layers の子は push された順に上に積み上がる。ScenePage の子は順番によらず
- * Canvas が下、MessageArea が上になる。
- */
-function zOfChild(parent: UiNode, child: UiNode, index: number): number {
-  switch (parent.kind) {
-    case ElementKind.Layers:
-      return parent.z + index;
-    case ElementKind.ScenePage:
-      return parent.z + (child.kind === ElementKind.MessageArea ? 1 : 0);
-    default:
-      return parent.z;
-  }
+/** `parent` の `index` 番目の子の重なりの高さ。Layers の子だけが上に積み上がる。 */
+function zOfChild(parent: UiNode, index: number): number {
+  return parent.kind === ElementKind.Layers ? parent.z + index : parent.z;
 }
 
 /** property を付けてよい Element か。違えば名指しで叱る。 */
@@ -1022,6 +1067,16 @@ function expectKind(node: UiNode, kind: number, property: string): boolean {
 
 function isVisible(node: UiNode): boolean {
   return node.dom.style.display !== "none";
+}
+
+/** `node` が `ancestor` の子孫か (自分自身は含まない)。 */
+function isDescendantOf(node: UiNode, ancestor: UiNode): boolean {
+  let cur = node.parent;
+  while (cur !== null) {
+    if (cur === ancestor) return true;
+    cur = cur.parent;
+  }
+  return false;
 }
 
 /** 祖先を辿って、自分を含む最も近い Window を探す。 */

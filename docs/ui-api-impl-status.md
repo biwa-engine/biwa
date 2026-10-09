@@ -1672,6 +1672,41 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
   - エラーメッセージは変えていない。
 - このファイルや他の docs の R7 より前の記録に出てくる `biwac_scene` は、分ける前の (両方を持っていた) crate を指す。
 
+##### R7 の後: ScenePage のレイアウトをユーザーが決められるようにした
+
+- 方針 (指示による): ScenePage は Page と同じく子 Element を自由に持ち、レイアウトはユーザーが決める。
+  scene の出力先 (Canvas / MessageArea) の存在を担保するため、その **ID** を `ScenePage::new` の必須引数で受け取り、
+  実体は子孫として自分で配置する。`GameWindow` の `Option` は将来の自由度のために残す。`CanvasId` と `GameCanvas` は分ける。
+- std:
+  - `CanvasId { ui_id }` / `MessageAreaId { ui_id }` を足した (ui_id を他の Element のものと取り違えないための包み)。
+    描画の API を持つ `GameCanvas` / `GameMessageArea` とは役割で分けた。
+  - `Canvas::new()` / `MessageArea::new()` は**その時点で `sys_ui_create` を出して ui_id を持つ**
+    (他の Element は今までどおり `show()` のときに作る。この 2 つだけの例外)。`canvas_id()` / `message_area_id()` で ID を返し、
+    `materialize()` は作らずに property を設定して積むだけ。値は参照で共有されるので、`.into()` で木に入れた後の変数からも ID を取れる。
+    (`id()` は任意の識別子のビルダーと名前がぶつかる (同名のメソッドは定義できない) ので別名にした)
+  - `ScenePage::new(canvas: CanvasId, message_area: MessageAreaId, children: Vec[UiElement[S]])` と `.push(..)` (Page と揃えた)、
+    `.id(..)`・背景。`materialize()` は出力先を数値 property `ScenePageCanvas` (16) / `ScenePageMessageArea` (17) (val_u1 に ui_id) で設定し、子を積む。
+- エンジン:
+  - ScenePage は Page と同じ扱い (子を何個でも持つ・普通の DOM)。R5 の「Canvas / MessageArea だけ・Canvas が下」の規則とグリッドは消した。
+  - `ScenePageCanvas` / `ScenePageMessageArea` は種類 (Canvas / MessageArea) を確かめて覚える。違えば `UiContractError`。
+  - **Window に ScenePage を結びつける時点** (`WindowScenePage`。ScenePage の部分木は組み上がっている) で、
+    出力先が両方設定され、ScenePage の子孫に置かれていることを確かめる。違えば `UiContractError` (ゲームが止まる)。
+    SceneStartButton が押されたときも見直す (こちらはイベントの中なのでログに出して scene を始めない)。
+  - **同じ Canvas / MessageArea を 2 か所に置く** (既に繋がっている要素を積む) と `UiContractError`。
+    std が `new()` の時点で作るので、同じ値を 2 回 materialize できてしまうため (黙って移すと先の配置から消える)。
+  - `SceneStartRequest` の出力先は、子を kind で探す代わりに ScenePage の 2 つの property から取る。
+- `~/test1`: ScenePage を `ScenePage::new(scene_canvas.canvas_id(), scene_message_area.message_area_id(), Vec::of(Layers(Canvas, MessageArea)))` に
+  (大きさ・位置は前と同じ)。
+- 分かったこと: どこにも置かない Canvas / MessageArea は、`S` がどこからも決まらず型エラー (`MessageArea[_]`) になる
+  (19.4 の「どこにも繋がらない Element」)。注釈を付ければ通り、そのときはエンジンが止める。
+- 確認:
+  - compiler (114 件) の全テスト、`npx tsc --noEmit`。
+  - `~/test1` を強制再ビルドして Playwright (fv・Link・単位・Layers・演出、ScenePage の表示の切り替え。エラー無し)。
+    ScenePage > Layers > Canvas / MessageArea の入れ子になり、Canvas (0, 0, 1280×720, z 0)・MessageArea (0, 460, 1280×260, z 1) は前と同じ。
+  - 一時的な確認 (確認後に元に戻した): MessageArea を置かない (型注釈付き) → 「the "message_area" of ui element 4 (ScenePage) is ui element 2,
+    which must be placed inside the ScenePage」、Canvas を 2 か所に置く → 「ui element 1 (Canvas) is already placed in ui element 5;
+    the same element cannot be placed twice」で、どちらもゲームが止まり UI が出ないことを確認。
+
 #### R8. scene の終わりと 2 回目以降
 
 - `main_scene` が返った後の扱い (タイトルの Page に戻るなど) と、2 回目以降の `SceneStartButton` を決めて実装する。

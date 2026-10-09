@@ -102,7 +102,7 @@ scene (generator function) を預けた場合、呼ぶ側が kernel で回す必
 SceneStartButton が押されると:
 
 1. メインスレッド (`UIObjects`) が、ボタンの `on_click` の番号・Window の `main_scene` の番号・
-   Window の ScenePage の Canvas / MessageArea の ui_id (無ければ 0) を揃え、
+   Window の ScenePage の出力先 (Canvas / MessageArea。ScenePage の子孫に置かれていることを確かめる) の ui_id を揃え、
    wasm では Worker に `{ kind: "startScene", .. }` を送る (TypeScript では `main.ts` が受け取る)。
 2. Worker が `__biwa_std_game_window_new(canvas, message_area)` で `GameWindow` を作り、
    `game = on_click(window)` で `Game[S]` を作らせる。
