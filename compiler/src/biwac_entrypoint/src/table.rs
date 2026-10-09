@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use biwac_span::ValDefId;
 
-/// そのシンボルが必須かどうか。
+/// そのエントリポイントが必須かどうか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SceneRequirement {
+pub enum EntrypointRequirement {
     /// playable package では必ず定義されていなければならない。
     RequiredInPlayable,
 
@@ -13,54 +13,38 @@ pub enum SceneRequirement {
     Optional,
 }
 
-/// ランタイムが名前を知っているシンボルの種別。
+/// エントリポイントの種別 (関数か scene か)。
 ///
-/// 引数と戻り値の型はシンボルごとに表 ([`WellKnownSymbol::args`] /
-/// [`WellKnownSymbol::ret`]) が決める。
+/// 引数と戻り値の型はエントリポイントごとに表 ([`Entrypoint::args`] /
+/// [`Entrypoint::ret`]) が決める。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WellKnownKind {
+pub enum EntrypointKind {
     /// `scene`。generator として出力される。
     Scene,
     /// 普通の関数。
     Fn,
 }
 
-/// ランタイムとの規約に現れる型。`Void` (戻り値なし) 以外は lang item である。
+/// エントリポイントのシグネチャに現れる型。
 ///
-/// ジェネリック引数に何が入るかは問わない (`Game[..]` の中身は開発者が決める)。
+/// 今のエントリポイント (`fn main()`) は引数も戻り値も持たないので `Void` しか無い。
+/// lang item の型 (`Game[..]` など) を取るエントリポイントを足すときは、ここに足して
+/// lang item を引いて照合する (以前は `Game` と `GameWindow` があった)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContractTy {
-    /// lang item `game`。
-    Game,
     /// 戻り値なし。
     Void,
 }
 
 impl ContractTy {
-    /// 対応する lang item。`Void` には無い。
-    pub fn lang_item(&self) -> Option<biwac_lang_item::LangItem> {
-        match self {
-            Self::Game => Some(biwac_lang_item::LangItem::Game),
-            Self::Void => None,
-        }
-    }
-
     pub fn describe(&self) -> &'static str {
         match self {
-            Self::Game => "`Game`",
             Self::Void => "nothing",
         }
     }
 }
 
-/// すべての scene が守るシグニチャ `(Game[..]) -> Game[..]` の引数。
-///
-/// 既知シンボルでない scene もこれに従う。
-pub const SCENE_ARGS: &[ContractTy] = &[ContractTy::Game];
-/// すべての scene が守るシグニチャの戻り値。
-pub const SCENE_RET: ContractTy = ContractTy::Game;
-
-impl WellKnownKind {
+impl EntrypointKind {
     pub fn describe(&self) -> &'static str {
         match self {
             Self::Scene => "a scene",
@@ -69,7 +53,7 @@ impl WellKnownKind {
     }
 }
 
-// ランタイムが名前を知っていて直接呼ぶシンボルの一覧。
+// エントリポイント (ランタイムが名前を知っていて直接呼ぶもの) の一覧。
 //
 // biwac_lang_item の lang_item_table! や
 // biwac_attribute の attribute_table! と同じ流儀で、
@@ -78,14 +62,14 @@ impl WellKnownKind {
 // これらはルートモジュール (playable package なら main.biwa) に定義する。
 // どのターゲット言語でどんなシンボル名になるかは codegen 側の規約であり、
 // ここでは関知しない。
-macro_rules! well_known_symbol_table {
+macro_rules! entrypoint_table {
     ( $( $variant:ident, $name:literal, $kind:expr, $args:expr, $ret:expr, $requirement:expr ; )* ) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        pub enum WellKnownSymbol {
+        pub enum Entrypoint {
             $($variant,)*
         }
 
-        impl WellKnownSymbol {
+        impl Entrypoint {
             pub const ALL: &'static [Self] = &[$(Self::$variant,)*];
 
             pub fn name(&self) -> &'static str {
@@ -101,7 +85,7 @@ macro_rules! well_known_symbol_table {
                 }
             }
 
-            pub fn kind(&self) -> WellKnownKind {
+            pub fn kind(&self) -> EntrypointKind {
                 match self {
                     $(Self::$variant => $kind,)*
                 }
@@ -121,7 +105,7 @@ macro_rules! well_known_symbol_table {
                 }
             }
 
-            pub fn requirement(&self) -> SceneRequirement {
+            pub fn requirement(&self) -> EntrypointRequirement {
                 match self {
                     $(Self::$variant => $requirement,)*
                 }
@@ -130,7 +114,7 @@ macro_rules! well_known_symbol_table {
     };
 }
 
-well_known_symbol_table!(
+entrypoint_table!(
     // ランタイムが起動時に呼ぶ唯一のエントリポイント。playable package の main.biwa に定義する。
     //
     // 中で `Window[S]` を組み立てて `show()` するのはゲーム側で、UI はすべてゲーム側が決める。
@@ -140,39 +124,39 @@ well_known_symbol_table!(
     // (ホストは単相化された型を名指しできない)。
     //
     // 表の先頭が単相化のエントリ (wasm の `__biwa_entrypoint`) になる。
-    Main, "main", WellKnownKind::Fn, &[], ContractTy::Void,
-        SceneRequirement::RequiredInPlayable;
+    Main, "main", EntrypointKind::Fn, &[], ContractTy::Void,
+        EntrypointRequirement::RequiredInPlayable;
 
     // 将来ここにイベントハンドラ的なものが増える想定:
-    // OnSave, "on_save", WellKnownKind::Fn, SceneRequirement::Optional;
+    // OnSave, "on_save", EntrypointKind::Fn, EntrypointRequirement::Optional;
 );
 
-/// 検査を通った既知シンボルの解決結果。
+/// 検査を通ったエントリポイントの解決結果。
 ///
 /// library package では空になる (エントリポイントを持つのは playable package だけ)。
 #[derive(Debug, Clone, Default)]
-pub struct WellKnownSymbols {
-    scenes: HashMap<WellKnownSymbol, ValDefId>,
+pub struct Entrypoints {
+    entries: HashMap<Entrypoint, ValDefId>,
 }
 
-impl WellKnownSymbols {
+impl Entrypoints {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn get(&self, scene: WellKnownSymbol) -> Option<ValDefId> {
-        self.scenes.get(&scene).copied()
+    pub fn get(&self, entrypoint: Entrypoint) -> Option<ValDefId> {
+        self.entries.get(&entrypoint).copied()
     }
 
-    /// この `ValDefId` が既知シンボルのいずれかであればそれを返す。
-    pub fn find(&self, def_id: &ValDefId) -> Option<WellKnownSymbol> {
-        self.scenes
+    /// この `ValDefId` がエントリポイントのいずれかであればそれを返す。
+    pub fn find(&self, def_id: &ValDefId) -> Option<Entrypoint> {
+        self.entries
             .iter()
             .find(|(_, v)| *v == def_id)
             .map(|(k, _)| *k)
     }
 
-    pub(crate) fn set(&mut self, scene: WellKnownSymbol, def_id: ValDefId) {
-        self.scenes.insert(scene, def_id);
+    pub(crate) fn set(&mut self, entrypoint: Entrypoint, def_id: ValDefId) {
+        self.entries.insert(entrypoint, def_id);
     }
 }

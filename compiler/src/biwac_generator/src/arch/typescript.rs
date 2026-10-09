@@ -20,7 +20,7 @@ use crate::arch::typescript::{
 // ランタイムとの規約: 起動時にこの名前の関数 (`fn main()`) が呼ばれる。
 //
 // これは TypeScript ターゲット固有の規約なので、
-// どの関数がエントリポイントかを決める biwac_scene 側はこの名前を知らない。
+// どの関数がエントリポイントかを決める biwac_entrypoint 側はこの名前を知らない。
 const ENTRYPOINT_NAME: &str = "__biwa_entrypoint";
 
 pub fn generate(
@@ -31,7 +31,7 @@ pub fn generate(
         biwac_base::PackageId,
         std::sync::Arc<biwac_dependency_metadata::DepMetadata>,
     )],
-    well_known: &biwac_scene::WellKnownSymbols,
+    entrypoints: &biwac_entrypoint::Entrypoints,
     host_exports: &biwac_host_export::HostExportTable,
 ) -> String {
     let allocator = oxc_allocator::Allocator::default();
@@ -241,7 +241,7 @@ pub fn generate(
     // エントリポイントは通常どおりマングル名で出力したうえで、
     // ランタイムが知っている名前へ別名 export する。
     // こうすると biwa コード内から呼ぶ経路 (マングル名参照) がそのまま動く。
-    if let Some(def_id) = well_known.get(biwac_scene::WellKnownSymbol::Main) {
+    if let Some(def_id) = entrypoints.get(biwac_entrypoint::Entrypoint::Main) {
         body.push(export_alias(
             &ctx.get_value_mangled(&def_id),
             ENTRYPOINT_NAME,

@@ -594,11 +594,23 @@ fn load_analyze_and_codegen_single_package(
     .try_resolve(interner)
     .map_err(|errs| print_errors(&errs, interner, &srcs, metadata))?;
 
-    // Scene contract check: scene のシグネチャと、
-    // playable package のエントリポイント (`fn main()`) の存在を検証する。
+    // scene のシグネチャ (`(Game[..]) -> Game[..]`) と、
+    // playable package のエントリポイント (`fn main()`) を検証する。
     // シグネチャは名前解決の時点で確定しているので型推論より前に走らせる。
-    let well_known_scenes = biwac_scene::check(&hir, &lang_items, pkg_kind, root_mod_id, interner)
-        .map_err(|errs| print_errors(&errs, interner, &srcs, metadata))?;
+    // 2 つの検査は独立しているので、両方の誤りをまとめて報告する。
+    let scene_errors = biwac_scene::check(&hir, &lang_items, interner)
+        .err()
+        .unwrap_or_default();
+    let entrypoints = biwac_entrypoint::check(&hir, pkg_kind, root_mod_id, interner);
+    let entrypoint_errors = entrypoints.as_ref().err().map_or(&[][..], Vec::as_slice);
+    let errors: Vec<&dyn biwac_base::BiwacError> = (scene_errors.iter().map(|e| e as _))
+        .chain(entrypoint_errors.iter().map(|e| e as _))
+        .collect();
+    if !errors.is_empty() {
+        print_errors(&errors, interner, &srcs, metadata);
+        return Err(());
+    }
+    let entrypoints = entrypoints.unwrap_or_default();
 
     let hir =
         biwac_type_inferrer::TyCtx::new(hir, lang_items.clone(), ext_pkgs_for_ty.clone(), interner)
@@ -654,7 +666,7 @@ fn load_analyze_and_codegen_single_package(
                 &mir,
                 &ext_pkgs_for_ty,
                 &dep_mirs,
-                &well_known_scenes,
+                &entrypoints,
                 &host_exports,
                 interner,
             )?;
@@ -723,7 +735,7 @@ fn load_analyze_and_codegen_single_package(
                 interner,
                 &srcs,
                 &ext_pkgs_for_ty,
-                &well_known_scenes,
+                &entrypoints,
                 &host_exports,
             );
 
@@ -744,7 +756,7 @@ fn load_analyze_and_codegen_single_package(
                     &mir,
                     &ext_pkgs_for_ty,
                     &dep_mirs,
-                    &well_known_scenes,
+                    &entrypoints,
                     &host_exports,
                     interner,
                 )?;
@@ -871,7 +883,7 @@ fn monomorphize_program(
     own: &biwac_mir::Mir,
     ext_pkgs: &[(PackageId, Arc<DepMetadata>)],
     dep_mirs: &[(PackageId, biwac_mir::Mir)],
-    well_known_scenes: &biwac_scene::WellKnownSymbols,
+    entrypoints: &biwac_entrypoint::Entrypoints,
     host_exports: &biwac_host_export::HostExportTable,
     interner: &mut IdentInterner,
 ) -> Result<biwac_mir::MonoMir, ()> {
@@ -881,9 +893,9 @@ fn monomorphize_program(
     // ホストから直接呼ばれうるので、除去されては困る。
     // 依存パッケージ (std 等) が host export した関数もここに含まれる
     // (名前解決が `.biwameta` から取り込んでいる)。
-    let roots: Vec<biwac_span::ValDefId> = biwac_scene::WellKnownSymbol::ALL
+    let roots: Vec<biwac_span::ValDefId> = biwac_entrypoint::Entrypoint::ALL
         .iter()
-        .filter_map(|s| well_known_scenes.get(*s))
+        .filter_map(|s| entrypoints.get(*s))
         .chain(host_exports.iter().map(|(def_id, _)| def_id))
         .collect();
 

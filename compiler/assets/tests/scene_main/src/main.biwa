@@ -1,7 +1,7 @@
 // 以前のエントリポイントの形 (`scene main` + `fn app()` + `fn on_new_game`) のままの playable package。
 //
 // エントリポイントは `fn main()` だけになり、scene は `Window` の `main_scene` として渡す。
-// `main` という名前の scene は「`main` が関数でない」として拒否されなければならない (biwac_scene)。
+// `main` という名前の scene は「`main` が関数でない」として拒否されなければならない (biwac_entrypoint)。
 //
 // 本体は型としては正しい。ビルドが失敗する理由が契約違反だけになるようにするためである。
 

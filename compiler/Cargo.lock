@@ -246,6 +246,7 @@ dependencies = [
  "biwac_base",
  "biwac_dependency_fetcher",
  "biwac_dependency_metadata",
+ "biwac_entrypoint",
  "biwac_fingerprint",
  "biwac_generator",
  "biwac_hash",
@@ -265,6 +266,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "biwac_entrypoint"
+version = "0.1.0"
+dependencies = [
+ "biwac_base",
+ "biwac_hir",
+ "biwac_span",
+]
+
+[[package]]
 name = "biwac_fingerprint"
 version = "0.1.0"
 dependencies = [
@@ -279,12 +289,12 @@ dependencies = [
  "biwac_ast",
  "biwac_base",
  "biwac_dependency_metadata",
+ "biwac_entrypoint",
  "biwac_hir",
  "biwac_host_export",
  "biwac_lang_item",
  "biwac_mir",
  "biwac_package_loader",
- "biwac_scene",
  "biwac_span",
  "oxc_allocator",
  "oxc_ast",

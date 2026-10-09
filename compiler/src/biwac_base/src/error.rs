@@ -9,6 +9,13 @@ pub trait BiwacError: std::fmt::Debug {
     fn print_error_message(&self, ctx: &ErrorContext);
 }
 
+// 種類の違うエラーを `&dyn BiwacError` の列にまとめて報告できるようにする。
+impl<T: BiwacError + ?Sized> BiwacError for &T {
+    fn print_error_message(&self, ctx: &ErrorContext) {
+        (**self).print_error_message(ctx);
+    }
+}
+
 #[derive(Debug)]
 pub struct ErrorContext<'a> {
     pub metadata: &'a MetadataHolder,

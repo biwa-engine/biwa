@@ -1657,6 +1657,21 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
 - `LangItem` の discriminant (`.biwameta` に書く番号) がずれるので、`.biwameta` のフォーマットの版を 12 → 13 に上げた。
 - 確認: compiler・LSP の全テスト、`~/test1` の強制再ビルドと Playwright。
 
+##### R7 の後: `biwac_scene` を `biwac_scene` と `biwac_entrypoint` に分けた
+
+- 規約の中心が scene の表からエントリポイント (`fn main()`) に移ったので、いったん crate を `biwac_entrypoint` に改名し、
+  型名・変数名も揃えた (`SceneError` → `EntrypointError`、`WellKnownSymbol(s)` → `Entrypoint(s)`、
+  `SceneRequirement` → `EntrypointRequirement`、`WellKnownKind` → `EntrypointKind`、`well_known_symbol_table!` → `entrypoint_table!`、
+  driver の `well_known_scenes` → `entrypoints`)。
+- そのうえで 2 つに分けた:
+  - `biwac_scene`: すべての scene が `(Game[..]) -> Game[..]` であることの検査だけ
+    (`check(hir, lang_items, interner) -> Result<(), Vec<SceneError>>`。lang item `game` を使う)。
+  - `biwac_entrypoint`: エントリポイントの表 (`fn main()`)・シグネチャ・欠落・種別の検査と解決結果 `Entrypoints`
+    (`check(hir, pkg_kind, root_mod_id, interner)`)。lang item を使わなくなった (`ContractTy` は `Void` だけ)。
+  - driver は両方を走らせ、誤りをまとめて報告する (`biwac_base` に `impl BiwacError for &T` を足し、`&dyn BiwacError` の列にする)。
+  - エラーメッセージは変えていない。
+- このファイルや他の docs の R7 より前の記録に出てくる `biwac_scene` は、分ける前の (両方を持っていた) crate を指す。
+
 #### R8. scene の終わりと 2 回目以降
 
 - `main_scene` が返った後の扱い (タイトルの Page に戻るなど) と、2 回目以降の `SceneStartButton` を決めて実装する。
