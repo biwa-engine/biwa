@@ -1,0 +1,11 @@
+// NG: private なメソッドを呼ぶ。
+
+mod a;
+
+pub fn triple(n: Int) -> Int {
+  n * 3
+}
+
+pub fn uses() -> Int {
+  a::Point::new().secret()
+}

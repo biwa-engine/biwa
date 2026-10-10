@@ -1,0 +1,5 @@
+// NG: 依存パッケージの struct の private なメソッドを呼ぶ。
+
+pub fn uses() -> Int {
+  vis_dep::Item::new().hidden_method()
+}

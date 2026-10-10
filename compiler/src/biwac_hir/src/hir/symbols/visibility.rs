@@ -92,6 +92,35 @@ impl Visibility {
     }
 }
 
+impl Visibility {
+    /// 見える範囲を「〜の中で」の形で言う (見えないことのエラーの文面)。
+    pub fn describe_scope(&self, ctx: &biwac_base::ErrorContext) -> String {
+        match self.scope {
+            VisibilityScope::Public => "everywhere".to_string(),
+            VisibilityScope::Package(pkg) if pkg.is_self() => "in this package".to_string(),
+            VisibilityScope::Package(_) => "in its own package".to_string(),
+            VisibilityScope::Module(m) => match ctx.srcs.mods.get(&m).map(|s| &s.modu) {
+                Some(biwac_base::ModPath::Mod(segs)) => {
+                    format!("in module `{}` and its submodules", segs.join("::"))
+                }
+                Some(_) => "in the root module and its submodules".to_string(),
+                // 依存パッケージのモジュールは名前を引けない。
+                None => "in a module of its own package".to_string(),
+            },
+        }
+    }
+
+    /// 書かれた可視性を言う (見えないことのエラーの文面)。
+    pub fn describe_declared(&self) -> &'static str {
+        match self.declared {
+            DeclaredVisibility::Private => "without `pub` (private to its module)",
+            DeclaredVisibility::Super => "`pub(super)`",
+            DeclaredVisibility::Package => "`pub(package)`",
+            DeclaredVisibility::Public => "`pub`",
+        }
+    }
+}
+
 impl From<&biwac_ast::Visibility> for DeclaredVisibility {
     fn from(value: &biwac_ast::Visibility) -> Self {
         match value {

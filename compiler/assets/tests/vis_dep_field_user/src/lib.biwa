@@ -1,0 +1,6 @@
+// NG: 依存パッケージの struct の private なメンバを読む (pub なメンバ `a` は読める)。
+
+pub fn uses() -> Int {
+  let item = vis_dep::Item::new();
+  item.a + item.b
+}

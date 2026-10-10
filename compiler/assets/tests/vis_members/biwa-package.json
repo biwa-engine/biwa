@@ -1,0 +1,6 @@
+{
+  "name": "vis_members",
+  "version": "0.1.0",
+  "description": "fields and methods visible from the parent module (no error)",
+  "dependencies": []
+}

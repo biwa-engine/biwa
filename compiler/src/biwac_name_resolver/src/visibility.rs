@@ -41,6 +41,11 @@ impl ModuleParents {
         )
     }
 
+    /// モジュール → 親モジュールの表そのもの。HIR に渡して、型推論の可視性の判定に使わせる。
+    pub(crate) fn to_map(&self) -> HashMap<ModId, ModId> {
+        self.parents.clone()
+    }
+
     /// 自パッケージのモジュールの可視性 (`mod` 宣言に書いたもの)。ルートモジュールは載らない。
     pub(crate) fn mod_visibilities(&self, pkg: &Pkg) -> HashMap<ModId, Visibility> {
         let mut out = HashMap::new();

@@ -1,0 +1,6 @@
+{
+  "name": "vis_field_call",
+  "version": "0.1.0",
+  "description": "rejects calling a private function-typed field",
+  "dependencies": []
+}

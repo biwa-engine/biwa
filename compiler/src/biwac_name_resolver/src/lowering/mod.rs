@@ -87,6 +87,7 @@ pub(crate) fn lower(
         traits,
         trait_scopes,
         parents.mod_visibilities(pkg),
+        parents.to_map(),
     );
 
     // Pass 5: 型 alias を右辺で置き換える。

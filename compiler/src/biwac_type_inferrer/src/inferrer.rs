@@ -9,7 +9,7 @@ use biwac_hir::{
     AssocValDefKind, BlockExpr, BlockStmt, Call, CallTarget, DefinedTy, Expr, ExprId, ExprVal,
     FnBody, FnSignature, FnTy, Hir, Ident, InferTy, Literal, MemberAccess, MethodTarget, Pattern,
     PatternFields, Primary, ResolvedVariant, Stmt, StructLiteral, TraitCond, Ty, TyDefKind, TyKind,
-    TyVar, ValDefKind, VarIdKind, VariantCtor, VariantCtorFields,
+    TyVar, ValDefKind, VarIdKind, VariantCtor, VariantCtorFields, Visibility,
 };
 use biwac_lang_item::LangItem;
 use biwac_span::{GenDefId, LocalGenDefId, Span, TraitAssocDefId, TyDefId, VarId};
@@ -1009,6 +1009,25 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
     ) -> TyResult<Ty> {
         match self.tctx.get_type_definition(def_id).unwrap() {
             TyDefKind::Struct(struct_) => {
+                // メンバがすべて見えなければ作れない (書かなかったメンバも含めて見る)。
+                // 決定論的に同じメンバを報告するよう、名前順に見る。
+                let mut fields: Vec<(&InternedIdent, &Visibility)> =
+                    struct_.member_vis.iter().collect();
+                fields.sort_by_key(|(id, _)| {
+                    self.tctx.interner.borrow().get_str(id).map(str::to_owned)
+                });
+                if let Some((field, vis)) = fields
+                    .into_iter()
+                    .find(|(_, vis)| !self.tctx.is_visible_from(vis, self.module))
+                {
+                    return Err(TyError::InvisibleFieldInLiteral {
+                        def_id: *def_id,
+                        field: *field,
+                        span: struct_literal.span.clone(),
+                        vis: *vis,
+                    });
+                }
+
                 let mut members = HashMap::<InternedIdent, (&Ident, &Expr)>::new();
                 for (ident, expr) in &struct_literal.members {
                     match members.entry(ident.id) {
@@ -1716,6 +1735,13 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
         if let Some(member_ty) = &member_ty {
             let member_ty = self.apply_ty(member_ty.clone());
             if let TyKind::Fn(_) = member_ty.kind {
+                // 関数型のメンバの値の呼び出しは、メンバを読むのと同じ。
+                if let TyKind::Defined(defined_ty) = &left.kind
+                    && let Some(TyDefKind::Struct(struct_)) =
+                        self.tctx.get_type_definition(&defined_ty.def_id)
+                {
+                    self.check_field_visible(&left, &struct_, &m.member)?;
+                }
                 set_call_target(call, CallTarget::Value);
                 let callee_ty = Ty::new(member_ty.kind, m.member.span.clone());
                 // 呼び先の式 (メンバアクセス) の型として記録する。MIR の構築がメンバの射影に使う。
@@ -1750,6 +1776,20 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
             return Err(TyError::NotAMethod {
                 ty: Box::new(left),
                 method: Box::new(m.member.clone()),
+            });
+        }
+        // 実装の決まったメソッドは、その可視性を見る。
+        // trait 越しのもの (`MethodTarget::Trait`) は、trait がスコープにあることで足りる
+        // (trait impl の項目は `pub` 扱い。`docs/symbol-visibility-impl-status.md` §8.2)。
+        if let MethodTarget::Direct(def_id) = target
+            && let Some(vis) = self.tctx.get_value_visibility(&def_id)
+            && !self.tctx.is_visible_from(&vis, self.module)
+        {
+            return Err(TyError::InvisibleMember {
+                ty: Box::new(left),
+                member: Box::new(m.member.clone()),
+                is_method: true,
+                vis,
             });
         }
         set_call_target(call, CallTarget::Method(target));
@@ -1992,6 +2032,26 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
         ))
     }
 
+    /// struct (型 `ty`) のメンバ `member` が、いま推論している関数のモジュールから見えるか。
+    fn check_field_visible(
+        &self,
+        ty: &Ty,
+        struct_: &biwac_hir::StructDef,
+        member: &Ident,
+    ) -> TyResult<()> {
+        match struct_.member_vis.get(&member.id) {
+            Some(vis) if !self.tctx.is_visible_from(vis, self.module) => {
+                Err(TyError::InvisibleMember {
+                    ty: Box::new(ty.clone()),
+                    member: Box::new(member.clone()),
+                    is_method: false,
+                    vis: *vis,
+                })
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn infer_member_access(&mut self, left_ty: Ty, member_access: &MemberAccess) -> TyResult<Ty> {
         match left_ty.kind {
             TyKind::Int | TyKind::Float | TyKind::Bool | TyKind::Fn(_) | TyKind::Void => {
@@ -2012,6 +2072,11 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
                                 access: Box::new(member_access.clone()),
                             })
                             .cloned()?;
+                        self.check_field_visible(
+                            &Ty::new(TyKind::Defined(defined_ty.clone()), left_ty.span.clone()),
+                            &struct_,
+                            &member_access.member,
+                        )?;
 
                         // NOTE: メンバの型に現れるジェネリック型 TyKind::Gen(GenDefId) を、
                         // ジェネリック引数列の位置から実際の型引数に置き換える。

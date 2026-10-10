@@ -2,7 +2,7 @@
 
 issue #8 「[feature] Visibility of symbols」の実装方針と進み具合のメモ。決まったこと・未決のこと・調べたことをここに集める。
 
-状況: **段階 3 (名前解決での検査) まで実装済み**。型推論 (フィールド・メソッド) と private-in-public はまだ検査していない。
+状況: **段階 4 (型推論での検査) まで実装済み**。private-in-public (段階 5) はまだ検査していない。
 
 ## 0. スコープ
 
@@ -442,3 +442,34 @@ issue #8 「[feature] Visibility of symbols」の実装方針と進み具合の�
   std (`library/std`。可視性は利用者が設定したもの) と `~/test1` を強制再ビルドし、ブラウザで Link と scene の開始まで動くことを確かめた。
   ただし `~/test1` の依存 `greeter` (Hub から取ったもの) は `trait Greeter` が `pub` でないため、手元の `.biwa_build/deps/greeter` だけ `pub trait` に直して確かめた
   (Hub 側の `greeter` も直して公開し直す必要がある。`self.display_name` (std の `Character` の private なメンバ) を読んでいるので、段階 4 でも引っかかる)。
+
+### 8.4 段階 4: 型推論での検査 (実装済み)
+
+- **使う側のモジュール**: いま推論している関数のモジュール (`FnTyCtx::module`。もともと trait のスコープの判定に使っていたもの)。
+  持ち上げる無名関数は、外側の関数の推論の中で推論されるので同じモジュールになる。
+- **判定**: `TyCtx::is_visible_from` (中身は `Visibility::is_visible_from`)。モジュールの親は `Hir::mod_parents` (名前解決が渡す) から引く。
+  関数・メソッドの可視性は `TyCtx::get_value_visibility` (自パッケージは HIR の定義、依存パッケージは `DepMetadata::ext_visibility`)。
+- **検査する場所** (`biwac_type_inferrer/src/inferrer.rs`):
+  - メンバを読む (`infer_member_access`)・関数型のメンバを呼ぶ (`infer_dot_call` の値の呼び出し): メンバの可視性 (`StructDef::member_vis`)。
+  - メソッドを呼ぶ (`infer_dot_call`): 実装の決まったもの (`MethodTarget::Direct`) はその可視性を見る。
+    trait 越しのもの (`MethodTarget::Trait`) は見ない (trait impl の項目は `pub` 扱い。trait がスコープにあることで足りる)。
+  - struct リテラル (`infer_struct_literal`): **メンバがすべて見えなければ作れない** (書いたメンバだけでなく全メンバを見る。Rust と同じ)。
+    どのメンバを報告するかがぶれないよう、名前順に見る。
+  - パターンは enum の variant しか分解しないので検査しない (variant とそのフィールドは enum と同じ可視性で、variant のパスは名前解決が確かめる)。
+- **エラー**:
+  - `TyError::InvisibleMember { ty, member, is_method, vis }`: 「Field `y` of `Point` is not visible here.」+「visible only in module `a` and its submodules」+「it is declared without `pub` ..」。
+    `ty` は受け手の型 (`Int` などのメソッドもあるので型そのものを持つ)。
+  - `TyError::InvisibleFieldInLiteral { def_id, field, span, vis }`: 「`Point` cannot be constructed here because field `run` is not visible.」。
+  - 文面の「どこから見えるか」「どう書かれたか」は `Visibility::describe_scope` / `describe_declared` (HIR) にまとめ、名前解決のエラーと共有した。
+  - LSP にも同じ診断を足した。
+- **見つけた既存の不具合 (今回は直していない)**: 式の `Self::foo()` は名前解決の lowering で panic する
+  (`foo` のセグメントがどこでも解決されない)。直ったら、`foo` の可視性もこの段で見る必要がある。
+- **フィクスチャ**: `vis_members` (正例: pub なメンバ、親からの `pub(super)` なメンバ、getter、子モジュールの中での private の利用) と、
+  負例 `vis_field_read` / `vis_field_call` / `vis_method` / `vis_struct_literal`、依存パッケージの `vis_dep_field_user` / `vis_dep_method_user`
+  (`vis_dep` に `Item` を足した)。型推論は最初のエラーで止まるので、負例は 1 つずつ置いた。テストはエラーの種類と名前まで確かめる。
+- **テスト**: compiler 132 件、LSP 99 件。
+- **std の違反** (std 側は直していない): 型推論の検査を入れて初めて見つかったもの (struct リテラルを他のモジュールで書いている):
+  - `game/character.biwa:62` の `Position { x = x, y = y }` (`Position` は `game::canvas`。メンバが private)
+  - `game/config.biwa:78` の `ContentSpeed { text_per_sec = 30.0 }` (`ContentSpeed` は `game::content`。メンバが private)
+  - 依存する側: Hub の `greeter` が std の `Character` の private なメンバ `display_name` を読んでいる。
+  - これらを scratch のコピーでだけ仮に開けると、std と `~/test1` (greeter を含む) は他に違反なくコンパイルできることを確かめた。

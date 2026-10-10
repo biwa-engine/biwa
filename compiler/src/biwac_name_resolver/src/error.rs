@@ -288,35 +288,6 @@ fn assoc_kind_name(kind: &AssocNameTreeItemKind) -> &'static str {
     }
 }
 
-/// 見える範囲を「〜の中で」の形で言う (`InvisibleItem` の文面)。
-fn scope_description(ctx: &ErrorContext, vis: &biwac_hir::Visibility) -> String {
-    use biwac_hir::VisibilityScope;
-    match vis.scope {
-        VisibilityScope::Public => "everywhere".to_string(),
-        VisibilityScope::Package(pkg) if pkg.is_self() => "in this package".to_string(),
-        VisibilityScope::Package(_) => "in its own package".to_string(),
-        VisibilityScope::Module(m) => match ctx.srcs.mods.get(&m).map(|s| &s.modu) {
-            Some(biwac_base::ModPath::Mod(segs)) => {
-                format!("in module `{}` and its submodules", segs.join("::"))
-            }
-            Some(_) => "in the root module and its submodules".to_string(),
-            // 依存パッケージのモジュールは名前を引けない。
-            None => "in a module of its own package".to_string(),
-        },
-    }
-}
-
-/// 書かれた可視性を言う (`InvisibleItem` の文面)。
-fn declared_description(vis: &biwac_hir::Visibility) -> &'static str {
-    use biwac_hir::DeclaredVisibility;
-    match vis.declared {
-        DeclaredVisibility::Private => "without `pub` (private to its module)",
-        DeclaredVisibility::Super => "`pub(super)`",
-        DeclaredVisibility::Package => "`pub(package)`",
-        DeclaredVisibility::Public => "`pub`",
-    }
-}
-
 fn def_id_kind_name(kind: &DefIdKind) -> &'static str {
     match kind {
         DefIdKind::Package(_) => "a package",
@@ -455,10 +426,10 @@ impl BiwacError for ResolveError {
                         format!(
                             "{} visible only {}",
                             def_id_kind_name(kind),
-                            scope_description(ctx, vis)
+                            vis.describe_scope(ctx)
                         ),
                     )
-                    .note(format!("it is declared {}", declared_description(vis)))
+                    .note(format!("it is declared {}", vis.describe_declared()))
                     .print();
             }
 

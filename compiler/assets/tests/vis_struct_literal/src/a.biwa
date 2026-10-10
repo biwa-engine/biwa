@@ -1,0 +1,33 @@
+// 型推論での可視性の検査 (issue #8 の段階 4) のための struct。
+// `vis_members` と各負例 (`vis_field_read` など) で同じ内容を使う。
+
+pub struct Point {
+  pub x: Int,
+  y: Int,
+  pub(super) z: Int,
+  run: fn(Int) -> Int,
+}
+
+impl Point {
+  // `a` の中なので private なメンバも書ける。
+  pub fn new() -> Self {
+    Point { x = 1, y = 2, z = 3, run = double }
+  }
+
+  pub fn y(self) -> Int {
+    self.y
+  }
+
+  fn secret(self) -> Int {
+    self.y
+  }
+
+  // `a` の中なので private なメソッドも関数型のメンバも呼べる。
+  pub fn open(self) -> Int {
+    self.secret() + self.run(1)
+  }
+}
+
+fn double(n: Int) -> Int {
+  n * 2
+}

@@ -1,0 +1,14 @@
+{
+  "name": "vis_dep_field_user",
+  "version": "0.1.0",
+  "description": "rejects reading a private field of a dependency's struct",
+  "dependencies": [
+    {
+      "name": "vis_dep",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

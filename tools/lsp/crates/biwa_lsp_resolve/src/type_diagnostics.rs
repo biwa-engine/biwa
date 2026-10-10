@@ -105,6 +105,42 @@ fn to_diagnostic(report: &TyErrorReport, interner: &IdentInterner) -> Option<(Sp
             ))
         }
 
+        TyError::InvisibleMember {
+            ty,
+            member,
+            is_method,
+            vis,
+        } => {
+            let name = ident_str(interner, &member.id);
+            let what = if *is_method { "Method" } else { "Field" };
+            Some((
+                member.span.clone(),
+                format!(
+                    "{what} `{name}` of `{}` is not visible here (it is declared {}).",
+                    names.render(&ty.kind),
+                    vis.describe_declared()
+                ),
+            ))
+        }
+
+        TyError::InvisibleFieldInLiteral {
+            def_id,
+            field,
+            span,
+            ..
+        } => {
+            let name = ident_str(interner, field);
+            let ty = names
+                .tys
+                .get(def_id)
+                .cloned()
+                .unwrap_or_else(|| "the struct".to_string());
+            Some((
+                span.clone(),
+                format!("`{ty}` cannot be constructed here because field `{name}` is not visible."),
+            ))
+        }
+
         TyError::ExprNotHasMember { ty, access } => {
             let name = ident_str(interner, &access.member.id);
             let ty = names.render(&ty.kind);

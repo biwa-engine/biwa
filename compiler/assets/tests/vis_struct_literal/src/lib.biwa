@@ -1,0 +1,12 @@
+// NG: private なメンバがある struct を struct リテラルで作る (書いたメンバが見えても作れない)。
+
+mod a;
+
+pub fn triple(n: Int) -> Int {
+  n * 3
+}
+
+pub fn uses() -> Int {
+  let p = a::Point { x = 1, y = 2, z = 3, run = triple };
+  p.x
+}

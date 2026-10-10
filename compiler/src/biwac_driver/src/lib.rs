@@ -1312,7 +1312,7 @@ mod tests {
             | "fn_lib"
             | "fn_value_capture" => &["std"],
             "fn_user" | "fn_user_scene" => &["std", "fn_lib"],
-            "vis_dep_user" => &["vis_dep"],
+            "vis_dep_user" | "vis_dep_field_user" | "vis_dep_method_user" => &["vis_dep"],
             _ => &[],
         };
         if deps.is_empty() {
@@ -2011,16 +2011,15 @@ mod tests {
         assert_eq!(member("hidden"), (D::Private, S::Module(root_mod)));
     }
 
-    /// 依存パッケージの項目は `pub` のものしか見えないこと (issue #8 の段階 3)。
-    ///
-    /// `vis_dep` を実際にビルドして `.biwameta` を作り、それを依存として `vis_dep_user` を名前解決する。
-    /// private・`pub(package)`・private なモジュールの中の `pub` が、それぞれ `InvisibleItem` になる。
-    #[test]
-    fn dependency_items_other_than_pub_are_invisible() {
-        ensure_fixture_deps("vis_dep_user");
+    /// 依存の無いライブラリのフィクスチャ `dep` を wasm でビルドし、依存パッケージとして返す。
+    fn built_dependency(
+        dep: &str,
+        interner: &mut biwac_base::IdentInterner,
+    ) -> biwac_dependency_metadata::ExternalPackage {
+        let root = Path::new("../../assets/tests").join(dep);
         let result = with_build_lock(|_| {
             compile(
-                Path::new("../../assets/tests/vis_dep").to_path_buf(),
+                root.clone(),
                 BuildOptions {
                     force_rebuild: true,
                     emit_mir: true,
@@ -2028,54 +2027,92 @@ mod tests {
                 },
             )
         });
-        assert!(result.is_ok(), "vis_dep must compile");
+        assert!(result.is_ok(), "{dep} must compile");
 
-        let dep_root = Path::new("../../assets/tests/vis_dep");
-        let dep_metadata =
-            biwac_metadata_loader::try_load_package_metadata(dep_root.to_path_buf()).unwrap();
+        let metadata = biwac_metadata_loader::try_load_package_metadata(root.clone()).unwrap();
         let data = std::fs::read(
-            dep_root
-                .join(biwac_base::BIWA_BUILD_DIRECTORY_NAME)
+            root.join(biwac_base::BIWA_BUILD_DIRECTORY_NAME)
                 .join(biwac_base::Target::Wasm.build_subdir())
-                .join("vis_dep.biwameta"),
+                .join(format!("{dep}.biwameta")),
         )
         .unwrap();
-
-        let mut srcs = biwac_base::SourceHolder::default();
-        let mut interner = biwac_base::IdentInterner::default();
-        let root = Path::new("../../assets/tests/vis_dep_user");
-        let metadata =
-            biwac_metadata_loader::try_load_package_metadata(root.to_path_buf()).unwrap();
-        let mut pkg =
-            biwac_package_loader::Pkg::try_load::<biwac_package_loader::BiwacSourceParser>(
-                &metadata,
-                &mut interner,
-                &mut srcs,
-                root.to_path_buf(),
-            )
-            .unwrap_or_else(|_| panic!("failed to load vis_dep_user"));
-        let dep = biwac_dependency_metadata::ExternalPackage {
-            ident: interner.get_or_insert("vis_dep"),
+        biwac_dependency_metadata::ExternalPackage {
+            ident: interner.get_or_insert(dep),
             pkg_id: biwac_span::PackageHashId::new(
-                &dep_metadata.metadata.name,
-                &dep_metadata.metadata.version,
+                &metadata.metadata.name,
+                &metadata.metadata.version,
             )
             .as_package_id(),
             meta: std::sync::Arc::new(
                 biwac_dependency_metadata::DepMetadata::decode_file(&data).unwrap(),
             ),
             direct: true,
-        };
-        let pkg_name = interner.get_or_insert("vis_dep_user");
+        }
+    }
 
-        let errors =
-            match biwac_name_resolver::NameResolver::new(&metadata, vec![dep], pkg_name, &mut pkg)
-                .unwrap()
-                .try_resolve(&mut interner)
-            {
-                Ok(_) => panic!("vis_dep_user must be rejected"),
-                Err(errors) => errors,
-            };
+    /// フィクスチャ `pkg` を読み込んで名前解決する。依存は `deps` (ビルド済みのもの) を使う。
+    fn resolve_fixture(
+        pkg: &str,
+        deps: Vec<biwac_dependency_metadata::ExternalPackage>,
+        interner: &mut biwac_base::IdentInterner,
+    ) -> Result<biwac_name_resolver::ResolveOutput, Vec<biwac_name_resolver::ResolveError>> {
+        let mut srcs = biwac_base::SourceHolder::default();
+        let root = Path::new("../../assets/tests").join(pkg);
+        let metadata = biwac_metadata_loader::try_load_package_metadata(root.clone()).unwrap();
+        let mut loaded = biwac_package_loader::Pkg::try_load::<
+            biwac_package_loader::BiwacSourceParser,
+        >(&metadata, interner, &mut srcs, root)
+        .unwrap_or_else(|_| panic!("failed to load {pkg}"));
+        let pkg_name = interner.get_or_insert(pkg);
+        biwac_name_resolver::NameResolver::new(&metadata, deps, pkg_name, &mut loaded)
+            .unwrap()
+            .try_resolve(interner)
+    }
+
+    /// フィクスチャ `pkg` を名前解決・型推論し、型推論のエラーを `check` に渡す。
+    /// 依存は `deps` の名前のフィクスチャ (依存の無いライブラリ) をビルドして使う。
+    fn check_ty_error_of(
+        pkg: &str,
+        deps: &[&str],
+        check: impl FnOnce(&biwac_type_inferrer::TyError, &biwac_base::IdentInterner),
+    ) {
+        let mut interner = biwac_base::IdentInterner::default();
+        let deps: Vec<_> = deps
+            .iter()
+            .map(|d| built_dependency(d, &mut interner))
+            .collect();
+        let ext = deps
+            .iter()
+            .map(|d| (d.pkg_id, std::sync::Arc::clone(&d.meta)))
+            .collect();
+        let resolved = resolve_fixture(pkg, deps, &mut interner)
+            .unwrap_or_else(|e| panic!("{pkg} must pass name resolution: {e:?}"));
+        let report = match biwac_type_inferrer::TyCtx::new(
+            resolved.hir,
+            resolved.lang_items,
+            ext,
+            &mut interner,
+        )
+        .infer()
+        {
+            Ok(_) => panic!("{pkg} must be rejected by type inference"),
+            Err(report) => report,
+        };
+        check(&report.error, &interner);
+    }
+
+    /// 依存パッケージの項目は `pub` のものしか見えないこと (issue #8 の段階 3)。
+    ///
+    /// `vis_dep` を実際にビルドして `.biwameta` を作り、それを依存として `vis_dep_user` を名前解決する。
+    /// private・`pub(package)`・private なモジュールの中の `pub` が、それぞれ `InvisibleItem` になる。
+    #[test]
+    fn dependency_items_other_than_pub_are_invisible() {
+        let mut interner = biwac_base::IdentInterner::default();
+        let dep = built_dependency("vis_dep", &mut interner);
+        let errors = match resolve_fixture("vis_dep_user", vec![dep], &mut interner) {
+            Ok(_) => panic!("vis_dep_user must be rejected"),
+            Err(errors) => errors,
+        };
         let mut invisible: Vec<&str> = errors
             .iter()
             .map(|e| match e {
@@ -2087,6 +2124,66 @@ mod tests {
             .collect();
         invisible.sort();
         assert_eq!(invisible, ["hidden", "in_pkg", "inner"]);
+    }
+
+    /// 型推論で、見えないフィールド・メソッドが `InvisibleMember` になること (issue #8 の段階 4)。
+    ///
+    /// フィクスチャはどれも、子モジュール `a` の `Point` (private なメンバ `y`・関数型のメンバ `run`・
+    /// private なメソッド `secret`) を親から使う。型推論は最初のエラーで止まるので、負例は 1 つずつ置いてある。
+    #[test]
+    fn invisible_members_are_rejected() {
+        use biwac_type_inferrer::TyError;
+
+        // 見えるもの (pub なメンバ、親からの pub(super) なメンバ、pub なメソッド) だけなら通る。
+        let mut interner = biwac_base::IdentInterner::default();
+        let resolved = resolve_fixture("vis_members", Vec::new(), &mut interner)
+            .unwrap_or_else(|e| panic!("vis_members must pass name resolution: {e:?}"));
+        assert!(
+            biwac_type_inferrer::TyCtx::new(
+                resolved.hir,
+                resolved.lang_items,
+                Vec::new(),
+                &mut interner
+            )
+            .infer()
+            .is_ok(),
+            "vis_members must pass type inference"
+        );
+
+        for (pkg, deps, name, method) in [
+            ("vis_field_read", &[][..], "y", false),
+            ("vis_field_call", &[][..], "run", false),
+            ("vis_method", &[][..], "secret", true),
+            ("vis_dep_field_user", &["vis_dep"][..], "b", false),
+            (
+                "vis_dep_method_user",
+                &["vis_dep"][..],
+                "hidden_method",
+                true,
+            ),
+        ] {
+            check_ty_error_of(pkg, deps, |e, interner| match e {
+                TyError::InvisibleMember {
+                    member, is_method, ..
+                } => {
+                    assert_eq!(interner.get_str(&member.id), Some(name), "{pkg}");
+                    assert_eq!(*is_method, method, "{pkg}");
+                }
+                e => panic!("{pkg}: unexpected error: {e:?}"),
+            });
+        }
+    }
+
+    /// 見えないメンバのある struct は、struct リテラルで作れないこと (書いたメンバが見えていても)。
+    #[test]
+    fn struct_literal_with_invisible_field_is_rejected() {
+        check_ty_error_of("vis_struct_literal", &[], |e, interner| match e {
+            biwac_type_inferrer::TyError::InvisibleFieldInLiteral { field, .. } => {
+                // メンバは名前順に見るので、最初に見つかるのは `run` (`y` より前)。
+                assert_eq!(interner.get_str(field), Some("run"));
+            }
+            e => panic!("unexpected error: {e:?}"),
+        });
     }
 
     /// ルートモジュールの `pub(super)` は名前解決のエラーになること (親が無いため)。

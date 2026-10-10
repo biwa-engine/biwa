@@ -95,6 +95,10 @@ pub struct Hir {
     /// ルートモジュールは宣言されないので載らない。`.biwameta` のモジュールのシンボルに書く。
     pub mod_vis: HashMap<ModId, crate::Visibility>,
 
+    /// 自パッケージのモジュール → 親モジュール (ルートモジュールは載らない)。
+    /// 型推論がフィールド・メソッドの可視性を判定するのに使う ([`crate::Visibility::is_visible_from`])。
+    pub mod_parents: HashMap<ModId, ModId>,
+
     /// 無名関数を持ち上げて作った関数。
     ///
     /// 名前で引けてはならないので、`.biwameta` ではモジュールの子に載せない。
@@ -194,6 +198,7 @@ impl Hir {
         traits: HashMap<TraitDefId, TraitDef>,
         trait_scopes: HashMap<ModId, Vec<TraitDefId>>,
         mod_vis: HashMap<ModId, crate::Visibility>,
+        mod_parents: HashMap<ModId, ModId>,
     ) -> Self {
         // 所属する型ではなく、**関連アイテム自身の `ValDefId`** で
         // このパッケージのものかを決める。
@@ -258,6 +263,7 @@ impl Hir {
             trait_assoc_owners,
             trait_scopes,
             mod_vis,
+            mod_parents,
             assoc_val_map,
             module_global_natives: native_codes,
             next_def_id: 0,
