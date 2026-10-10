@@ -2,6 +2,7 @@ mod error;
 mod lowering;
 mod name_tree;
 mod resolving;
+mod visibility;
 
 pub use name_tree::{
     AssocNameTreeItem, ModuleNameTree, ModuleNameTreeItem, NameTree, PackageNameTree, TyNameTree,
@@ -111,6 +112,12 @@ impl<'p> NameResolver<'p> {
             .map(|p| (p.pkg_id, p.ident))
             .collect::<HashMap<_, _>>();
         pkg_names.insert(PackageId::SELF_PACKAGE, self.pkg_name);
+
+        // ルートモジュールの `pub(super)` (親が無いので見える範囲が決まらない)。
+        let errors = visibility::check_super_in_root(&self.pkg);
+        if !errors.is_empty() {
+            return Err(errors);
+        }
 
         // definition collection (package internal + external package ID assignment)
         let mut def_collector = resolving::def_collector::DefCollector::new();

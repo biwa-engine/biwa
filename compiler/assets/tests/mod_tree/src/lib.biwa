@@ -10,7 +10,7 @@ pub fn top() -> Int {
 
 pub(package) struct Pair {
   pub left: Int,
-  pub(super) right: Int,
+  pub(package) right: Int,
   hidden: Int,
 }
 

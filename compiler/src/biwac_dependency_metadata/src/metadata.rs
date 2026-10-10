@@ -47,6 +47,9 @@ pub struct DepMetadata {
     /// 依存パッケージのシンボルへの参照の一覧。
     /// [`DiskTyKind::ExternalDefined`] の sym_id がここを指す。
     pub ext_syms: Vec<DiskExternalSymbol>,
+    /// シンボル → その持ち主 (子として持つモジュール・型・trait など) のシンボル番号。
+    /// 宣言の見える範囲 ([`DepMetadata::ext_visibility`]) を決めるのに使う。初回に作る。
+    symbol_owners: OnceLock<HashMap<u32, u32>>,
 }
 
 impl DepMetadata {
@@ -243,6 +246,7 @@ impl DepMetadata {
             impl_self_ty: biwac_hir::Ty,
             /// trait impl の項目なら、その trait への参照。
             trait_of: Option<biwac_hir::Ty>,
+            vis: biwac_hir::DeclaredVisibility,
         }
         let mut assoc_fn_items: Vec<AssocFnItem> = Vec::new();
         // 所属する型ではなく、**関連関数自身の ValDefId** でこのパッケージのものかを決める。
@@ -264,9 +268,9 @@ impl DepMetadata {
                     if !val_def_id.pkg().is_self() {
                         continue;
                     }
-                    let (name, sig) = match &pair.val_content {
-                        AssocValDefKind::Fn(f) => (&f.name, &f.signature),
-                        AssocValDefKind::NativeFn(f) => (&f.name, &f.signature),
+                    let (name, sig, vis) = match &pair.val_content {
+                        AssocValDefKind::Fn(f) => (&f.name, &f.signature, f.vis),
+                        AssocValDefKind::NativeFn(f) => (&f.name, &f.signature, f.vis),
                     };
                     let ig = sig.impl_genargs.as_slice();
                     assoc_fn_items.push(AssocFnItem {
@@ -277,6 +281,7 @@ impl DepMetadata {
                         parent_ty_def_id: *parent_ty_def_id,
                         impl_self_ty: impl_self_ty_of(*parent_ty_def_id, &pair.genargs, &name.span),
                         trait_of: trait_of_val.get(val_def_id).cloned(),
+                        vis: vis.declared,
                     });
                 }
             }
@@ -301,16 +306,17 @@ impl DepMetadata {
             host_export: Option<&'h str>,
             // scene か。依存元が scene を値にしようとしたら型エラーにするのに使う。
             is_scene: bool,
+            vis: biwac_hir::DeclaredVisibility,
         }
         let mut top_fn_items: Vec<TopFnItem> = hir
             .vals
             .iter()
             .filter(|(def_id, _)| def_id.pkg().is_self())
             .filter_map(|(def_id, val_kind)| {
-                let (name, sig) = match val_kind {
-                    ValDefKind::Fn(f) => (&f.name, &f.signature),
-                    ValDefKind::Native(f) => (&f.name, &f.signature),
-                    ValDefKind::NovelScene(ns) => (&ns.name, &ns.signature),
+                let (name, sig, vis) = match val_kind {
+                    ValDefKind::Fn(f) => (&f.name, &f.signature, f.vis),
+                    ValDefKind::Native(f) => (&f.name, &f.signature, f.vis),
+                    ValDefKind::NovelScene(ns) => (&ns.name, &ns.signature, ns.vis),
                 };
                 let is_scene = matches!(val_kind, ValDefKind::NovelScene(_));
                 let ig = sig.impl_genargs.as_slice();
@@ -321,6 +327,7 @@ impl DepMetadata {
                     impl_genargs: ig,
                     host_export: host_exports.get(*def_id),
                     is_scene,
+                    vis: vis.declared,
                 })
             })
             .collect();
@@ -557,6 +564,7 @@ impl DepMetadata {
                          hdrs: &mut Vec<DiskSymbolHeader>,
                          cache: &mut Vec<OnceLock<SymbolBody>>,
                          kind: DiskSymbolKind,
+                         vis: DiskVisibility,
                          body: SymbolBody| {
             let offset = builder.push(&body);
             // フラグはボディから導く。別々に渡すと食い違いうるため。
@@ -566,7 +574,7 @@ impl DepMetadata {
             };
             hdrs.push(DiskSymbolHeader {
                 kind: kind as u32,
-                vis: DiskVisibility::Public as u32,
+                vis: vis as u32,
                 offset,
                 flags,
             });
@@ -632,17 +640,25 @@ impl DepMetadata {
             // (以前は変換してから DiskStringOffset でソートしていたが、
             //  そのオフセット自体が HashMap の走査順で決まるので効いていなかった。
             //  差分ビルドはメタデータのハッシュを土台にするので、ここは崩せない)
-            let mut members_sorted: Vec<(&str, &biwac_hir::Ty)> = item
+            let mut members_sorted: Vec<(&str, &biwac_hir::Ty, DiskVisibility)> = item
                 .def
                 .members
                 .iter()
-                .map(|(ident, ty)| (interner.get_str(ident).unwrap_or(""), ty))
+                .map(|(ident, ty)| {
+                    let vis = item
+                        .def
+                        .member_vis
+                        .get(ident)
+                        .map(|v| v.declared.into())
+                        .unwrap_or(DiskVisibility::Private);
+                    (interner.get_str(ident).unwrap_or(""), ty, vis)
+                })
                 .collect();
-            members_sorted.sort_by_key(|(name, _)| *name);
+            members_sorted.sort_by_key(|(name, _, _)| *name);
 
             let members_vec: Vec<DiskStructMember> = members_sorted
                 .into_iter()
-                .map(|(mem_name, ty)| {
+                .map(|(mem_name, ty, vis)| {
                     let mem_name_off = strings.push(mem_name);
                     // メンバ名 span は HIR に存在しないので型の span で代替
                     let mem_name_span = impl_to_disk_span(&ty.span, &mod_to_file_idx);
@@ -658,6 +674,7 @@ impl DepMetadata {
                         name: mem_name_off,
                         name_span: mem_name_span,
                         ty: disk_ty,
+                        vis: vis as u32,
                     }
                 })
                 .collect();
@@ -683,6 +700,7 @@ impl DepMetadata {
                 &mut sym_hdrs,
                 &mut cache,
                 DiskSymbolKind::Struct,
+                item.def.vis.declared.into(),
                 body,
             );
         }
@@ -729,6 +747,7 @@ impl DepMetadata {
                 &mut sym_hdrs,
                 &mut cache,
                 DiskSymbolKind::NativeTypeAlias,
+                item.def.vis.declared.into(),
                 body,
             );
         }
@@ -804,6 +823,7 @@ impl DepMetadata {
                 &mut sym_hdrs,
                 &mut cache,
                 DiskSymbolKind::Enum,
+                item.def.vis.declared.into(),
                 body,
             );
         }
@@ -836,6 +856,8 @@ impl DepMetadata {
                     .map(|(ident, ty)| {
                         let field_name = strings.push(interner.get_str(&ident.id).unwrap_or(""));
                         DiskStructMember {
+                            // variant のフィールドは常に enum と同じ可視性になる。
+                            vis: DiskVisibility::from(item.def.vis.declared) as u32,
                             name: field_name,
                             name_span: impl_to_disk_span(&ident.span, &mod_to_file_idx),
                             ty: impl_encode_ty(
@@ -863,6 +885,7 @@ impl DepMetadata {
                     &mut sym_hdrs,
                     &mut cache,
                     DiskSymbolKind::Variant,
+                    item.def.vis.declared.into(),
                     body,
                 );
             }
@@ -894,6 +917,7 @@ impl DepMetadata {
                 &mut sym_hdrs,
                 &mut cache,
                 DiskSymbolKind::Fn,
+                item.vis.into(),
                 body,
             );
         }
@@ -925,11 +949,23 @@ impl DepMetadata {
                 &mut sym_hdrs,
                 &mut cache,
                 DiskSymbolKind::Fn,
+                item.vis.into(),
                 body,
             );
         }
 
         // --- mod ボディ ---
+        //
+        // ルートモジュールは宣言されないので `Public` を書く。
+        let mod_vis: HashMap<&ModPath, DiskVisibility> = self_mods
+            .iter()
+            .filter_map(|(mod_id, ms)| {
+                hir.mod_vis
+                    .get(mod_id)
+                    .map(|v| (&ms.modu, v.declared.into()))
+            })
+            .collect();
+        let mod_vis_of = |mp: &ModPath| mod_vis.get(mp).copied().unwrap_or(DiskVisibility::Public);
         for mp in &mod_paths_sorted {
             let mod_name_str = match mp {
                 ModPath::Lib => "lib",
@@ -952,6 +988,7 @@ impl DepMetadata {
                 &mut sym_hdrs,
                 &mut cache,
                 DiskSymbolKind::Mod,
+                mod_vis_of(mp),
                 body,
             );
         }
@@ -1007,6 +1044,7 @@ impl DepMetadata {
                 &mut sym_hdrs,
                 &mut cache,
                 DiskSymbolKind::Trait,
+                item.def.vis.declared.into(),
                 body,
             );
         }
@@ -1062,6 +1100,7 @@ impl DepMetadata {
                     &mut sym_hdrs,
                     &mut cache,
                     DiskSymbolKind::TraitAssoc,
+                    item.def.vis.declared.into(),
                     body,
                 );
             }
@@ -1115,6 +1154,7 @@ impl DepMetadata {
                 &mut sym_hdrs,
                 &mut cache,
                 DiskSymbolKind::TraitImpl,
+                DiskVisibility::Public,
                 body,
             );
         }
@@ -1176,6 +1216,7 @@ impl DepMetadata {
                 &mut sym_hdrs,
                 &mut cache,
                 DiskSymbolKind::TypeAlias,
+                item.def.vis.declared.into(),
                 body,
             );
         }
@@ -1239,6 +1280,7 @@ impl DepMetadata {
             svh: biwac_hash::Hash64::ZERO,
             dep_svhs: dep_svh_entries,
             ext_syms: ext_syms.finish(),
+            symbol_owners: OnceLock::new(),
         };
         // SVH は組み上がったシンボル表から計算する。
         // デコード側でも同じ関数で再計算できるので、必要なら検証もできる。
@@ -1368,6 +1410,7 @@ impl DepMetadata {
             svh: biwac_hash::Hash64::from_u64(svh),
             dep_svhs,
             ext_syms,
+            symbol_owners: OnceLock::new(),
         })
     }
 
@@ -1493,6 +1536,8 @@ impl DepMetadata {
         h.write_usize(self.sym_hdrs.len());
         for sym_idx in 0..self.sym_hdrs.len() {
             h.write_usize(sym_idx);
+            // 可視性は依存する側の名前解決の結果を変えるので、インタフェースに含める。
+            h.write_u32(self.sym_hdrs[sym_idx].vis);
 
             let Ok(body) = self.get_symbol_body(sym_idx) else {
                 // ヘッダはあるのにボディが壊れている。
@@ -1518,17 +1563,18 @@ impl DepMetadata {
                     // メンバは名前順に正準化する。
                     // .biwameta 側も名前順に書いているので実際には既に整列しているが、
                     // SVH は表現ではなく意味のハッシュなので、ここでも保証しておく。
-                    let mut members: Vec<(&str, &DiskTy)> = d
+                    let mut members: Vec<(&str, &DiskTy, u32)> = d
                         .members
                         .0
                         .iter()
-                        .map(|m| (self.get_str(m.name).unwrap_or(""), &m.ty))
+                        .map(|m| (self.get_str(m.name).unwrap_or(""), &m.ty, m.vis))
                         .collect();
-                    members.sort_by_key(|(name, _)| *name);
+                    members.sort_by_key(|(name, _, _)| *name);
                     h.write_usize(members.len());
-                    for (name, ty) in members {
+                    for (name, ty, vis) in members {
                         h.write_str(name);
                         self.svh_ty(&mut h, ty);
+                        h.write_u32(vis);
                     }
 
                     h.write_usize(d.assoc_symbols.0.len());
@@ -1873,12 +1919,109 @@ impl DepMetadata {
                         id: name_id,
                         span: Span::dummy(),
                     },
+                    vis: self.ext_visibility(pkg_id, sym_idx),
                     genargs,
                     right,
                 },
             ));
         }
         out
+    }
+
+    /// このパッケージのシンボルの可視性。
+    ///
+    /// 書かれた形はシンボルヘッダから読む。見える範囲は、何も書かなければそのシンボルが
+    /// 属するモジュール、`pub(super)` ならその親モジュールになる。
+    /// 関連 item は impl ブロックのモジュールを記録していないので、型の属するモジュールで代える
+    /// (依存する側からは `pub` 以外は見えないので、判定は変わらない)。
+    pub fn ext_visibility(
+        &self,
+        pkg_id: biwac_base::PackageId,
+        sym_idx: u32,
+    ) -> biwac_hir::Visibility {
+        let declared = self
+            .sym_hdrs
+            .get(sym_idx as usize)
+            .and_then(|h| h.vis().ok())
+            .map(biwac_hir::DeclaredVisibility::from)
+            .unwrap_or(biwac_hir::DeclaredVisibility::Public);
+        self.ext_visibility_from(pkg_id, sym_idx, declared)
+    }
+
+    /// [`Self::ext_visibility`] の、書かれた形を外から渡す版。
+    /// struct のメンバのように、ヘッダを持たないものに使う (`sym_idx` は持ち主)。
+    fn ext_visibility_from(
+        &self,
+        pkg_id: biwac_base::PackageId,
+        sym_idx: u32,
+        declared: biwac_hir::DeclaredVisibility,
+    ) -> biwac_hir::Visibility {
+        use biwac_hir::{DeclaredVisibility, VisibilityScope};
+
+        let module_id = |module_sym: u32| biwac_base::ModId::new_ext(pkg_id.value(), module_sym);
+        let home = self.home_module(sym_idx);
+        let scope = match declared {
+            DeclaredVisibility::Public => VisibilityScope::Public,
+            DeclaredVisibility::Package => VisibilityScope::Package(pkg_id),
+            DeclaredVisibility::Private => VisibilityScope::Module(module_id(home)),
+            // ルートモジュールの `pub(super)` はコンパイル時にエラーなので、親は必ずある。
+            DeclaredVisibility::Super => VisibilityScope::Module(module_id(
+                self.symbol_owners()
+                    .get(&home)
+                    .copied()
+                    .unwrap_or(self.root_sym_idx),
+            )),
+        };
+        biwac_hir::Visibility { declared, scope }
+    }
+
+    /// そのシンボルが属するモジュール (持ち主を辿って最初のモジュール)。
+    /// モジュール自身なら、それを宣言した親モジュールである。
+    fn home_module(&self, sym_idx: u32) -> u32 {
+        let owners = self.symbol_owners();
+        let mut cur = sym_idx;
+        // 持ち主の連鎖は木なので必ず止まるが、壊れたファイルで回り続けないよう上限を置く。
+        for _ in 0..self.sym_hdrs.len() {
+            let Some(&owner) = owners.get(&cur) else {
+                break;
+            };
+            if matches!(self.get_symbol_body(owner as usize), Ok(SymbolBody::Mod(_))) {
+                return owner;
+            }
+            cur = owner;
+        }
+        self.root_sym_idx
+    }
+
+    fn symbol_owners(&self) -> &HashMap<u32, u32> {
+        self.symbol_owners.get_or_init(|| {
+            let mut owners = HashMap::new();
+            for owner in 0..self.sym_hdrs.len() {
+                let Ok(body) = self.get_symbol_body(owner) else {
+                    continue;
+                };
+                let children: Vec<u32> = match body {
+                    SymbolBody::Mod(d) => d.children.0.iter().map(|c| c.0).collect(),
+                    SymbolBody::Struct(d) => d.assoc_symbols.0.iter().map(|c| c.0).collect(),
+                    SymbolBody::NativeTypeAlias(d) => {
+                        d.assoc_symbols.0.iter().map(|c| c.0).collect()
+                    }
+                    SymbolBody::Enum(d) => d
+                        .variant_symbols
+                        .0
+                        .iter()
+                        .chain(&d.assoc_symbols.0)
+                        .map(|c| c.0)
+                        .collect(),
+                    SymbolBody::Trait(d) => d.item_symbols.0.iter().map(|c| c.0).collect(),
+                    _ => Vec::new(),
+                };
+                for child in children {
+                    owners.entry(child).or_insert(owner as u32);
+                }
+            }
+            owners
+        })
     }
 
     /// そのシンボルが scene か。
@@ -2126,6 +2269,7 @@ impl DepMetadata {
                 id: name_id,
                 span: Span::dummy(),
             },
+            vis: self.ext_visibility(pkg_id, sym_idx),
             self_gen,
             items,
             genargs,
@@ -2217,6 +2361,7 @@ impl DepMetadata {
                     id: fn_name_id,
                     span: Span::dummy(),
                 },
+                vis: self.ext_visibility(pkg_id, assoc_sym_idx),
                 signature: placeholder_sig,
                 native_body: String::new(),
                 native_span: Span::dummy(),
@@ -2298,6 +2443,7 @@ impl DepMetadata {
                 id: name_id,
                 span: Span::dummy(),
             },
+            vis: self.ext_visibility(pkg_id, alias_sym_idx),
             genargs,
             native: self.get_str(alias_data.native).unwrap_or("").to_string(),
             native_span: Span::dummy(),
@@ -2336,11 +2482,20 @@ impl DepMetadata {
 
         // メンバを変換
         let mut members = std::collections::HashMap::new();
+        let mut member_vis = std::collections::HashMap::new();
         for m in &struct_data.members.0 {
             let name_str = self.get_str(m.name).unwrap_or("");
             let name_id = interner.get_or_insert(name_str);
             let ty = self.impl_disk_ty_to_ty(&m.ty, pkg_id, Some(struct_sym_idx), None);
             members.insert(name_id, ty);
+            let declared = DiskVisibility::try_from(m.vis)
+                .map(biwac_hir::DeclaredVisibility::from)
+                .unwrap_or(biwac_hir::DeclaredVisibility::Private);
+            // メンバは struct と同じモジュールに属する。
+            member_vis.insert(
+                name_id,
+                self.ext_visibility_from(pkg_id, struct_sym_idx, declared),
+            );
         }
 
         let struct_name_str = self.get_str(struct_data.name).unwrap_or("");
@@ -2350,7 +2505,9 @@ impl DepMetadata {
                 id: struct_name_id,
                 span: Span::dummy(),
             },
+            vis: self.ext_visibility(pkg_id, struct_sym_idx),
             members,
+            member_vis,
             genargs,
         };
 
@@ -2434,6 +2591,7 @@ impl DepMetadata {
                 id: enum_name_id,
                 span: Span::dummy(),
             },
+            vis: self.ext_visibility(pkg_id, enum_sym_idx),
             variants,
             genargs,
         };

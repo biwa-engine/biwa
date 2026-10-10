@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 
 use biwac_ast::{ArgDeclList, RetTypRepr, TypeDef, VariantFieldsDecl};
-use biwac_base::InternedIdent;
+use biwac_base::{InternedIdent, PackageId};
 use biwac_hir::{
-    AssocValDefKind, DefinedTy, DefinedTyImpl, EnumDef, FnArgDecl, FnBody, FnDef, FnSignature,
-    GenArgDef, Ident, NativeCode, NativeFnDef, NativeTypeAliasDef, StructDef, TraitCond, TraitDef,
-    TraitItemDef, Ty, TyDefKind, TyKind, TyValImplGenargsContentPair, TyValImplList, TypeAliasDef,
-    ValDefKind, VariantDef,
+    AssocValDefKind, DeclaredVisibility, DefinedTy, DefinedTyImpl, EnumDef, FnArgDecl, FnBody,
+    FnDef, FnSignature, GenArgDef, Ident, NativeCode, NativeFnDef, NativeTypeAliasDef, StructDef,
+    TraitCond, TraitDef, TraitItemDef, Ty, TyDefKind, TyKind, TyValImplGenargsContentPair,
+    TyValImplList, TypeAliasDef, ValDefKind, VariantDef, Visibility,
 };
 use biwac_span::{GenDefId, LocalGenDefId, Span, TraitDefId, TyDefId, ValDefId, VarId};
 
-use crate::{ResolveError, resolving::def_collector::ImplCollector};
+use crate::{ResolveError, resolving::def_collector::ImplCollector, visibility::ModuleParents};
 
 use super::{
     ExprLowerCtx, alias_expansion::expand_ty, expressions::lower_expr, statements::lower_stmt,
@@ -210,6 +210,7 @@ pub(crate) fn collect_impl_block_genargs_map(
 pub(super) fn lower_fn_def(
     fn_def: &biwac_ast::FnDef,
     impl_genargs: Vec<GenArgDef>,
+    parents: &ModuleParents,
     errors: &mut Vec<ResolveError>,
 ) -> (ValDefId, ValDefKind) {
     let val_def_id = *fn_def
@@ -239,6 +240,7 @@ pub(super) fn lower_fn_def(
         val_def_id,
         ValDefKind::Fn(Box::new(FnDef::new(
             fn_def.id.clone().into(),
+            parents.resolve(&fn_def.vis, fn_def.id.span.module()),
             signature,
             body,
         ))),
@@ -248,6 +250,7 @@ pub(super) fn lower_fn_def(
 pub(super) fn lower_native_fn_def(
     fn_def: &biwac_ast::NativeFnDef,
     impl_genargs: Vec<GenArgDef>,
+    parents: &ModuleParents,
     _errors: &mut Vec<ResolveError>,
 ) -> (ValDefId, ValDefKind) {
     let val_def_id = *fn_def
@@ -269,6 +272,7 @@ pub(super) fn lower_native_fn_def(
         val_def_id,
         ValDefKind::Native(Box::new(NativeFnDef::new(
             fn_def.id.clone().into(),
+            parents.resolve(&fn_def.vis, fn_def.id.span.module()),
             fn_def.native_span.clone(),
             fn_def.span.clone(),
             fn_def.native.clone(),
@@ -286,26 +290,28 @@ pub(crate) fn lower_type_def(
     type_def: &TypeDef,
     tys: &mut Vec<(TyDefId, DefinedTyImpl)>,
     aliases: &mut Vec<(TyDefId, TypeAliasDef)>,
+    parents: &ModuleParents,
     errors: &mut Vec<ResolveError>,
 ) {
     match type_def {
         TypeDef::Struct(s) => {
-            tys.push(lower_struct_def(s, errors));
+            tys.push(lower_struct_def(s, parents, errors));
         }
         TypeDef::Enum(e) => {
-            tys.push(lower_enum_def(e, errors));
+            tys.push(lower_enum_def(e, parents, errors));
         }
         TypeDef::NativeTypeAlias(n) => {
-            tys.push(lower_native_type_alias(n));
+            tys.push(lower_native_type_alias(n, parents));
         }
         TypeDef::TypeAlias(a) => {
-            aliases.push(lower_type_alias(a, errors));
+            aliases.push(lower_type_alias(a, parents, errors));
         }
     }
 }
 
 fn lower_struct_def(
     struct_def: &biwac_ast::StructDef,
+    parents: &ModuleParents,
     _errors: &mut Vec<ResolveError>,
 ) -> (TyDefId, DefinedTyImpl) {
     let ty_def_id = *struct_def
@@ -335,9 +341,19 @@ fn lower_struct_def(
         .map(|m| (m.id.id, ty_from_typ_repr(&m.typ, None))) // TODO: Some(self_ty)
         .collect();
 
+    // メンバは struct と同じモジュールで宣言されている。
+    let home = struct_def.id.span.module();
+    let member_vis: HashMap<InternedIdent, Visibility> = struct_def
+        .members
+        .iter()
+        .map(|m| (m.id.id, parents.resolve(&m.vis, home)))
+        .collect();
+
     let ty_content = TyDefKind::Struct(Box::new(StructDef {
         name: struct_def.id.clone().into(),
+        vis: parents.resolve(&struct_def.vis, home),
         members,
+        member_vis,
         genargs,
     }));
 
@@ -357,6 +373,7 @@ fn lower_struct_def(
 /// 名前を持つ形に揃えておけば、MIR も backend も struct と同じ経路を通れる。
 fn lower_enum_def(
     enum_def: &biwac_ast::EnumDef,
+    parents: &ModuleParents,
     _errors: &mut Vec<ResolveError>,
 ) -> (TyDefId, DefinedTyImpl) {
     let ty_def_id = *enum_def
@@ -408,6 +425,7 @@ fn lower_enum_def(
 
     let ty_content = TyDefKind::Enum(Box::new(EnumDef {
         name: enum_def.id.clone().into(),
+        vis: parents.resolve(&enum_def.vis, enum_def.id.span.module()),
         variants,
         genargs,
     }));
@@ -424,6 +442,7 @@ fn lower_enum_def(
 
 fn lower_type_alias(
     alias_def: &biwac_ast::TypeAlias,
+    parents: &ModuleParents,
     _errors: &mut Vec<ResolveError>,
 ) -> (TyDefId, TypeAliasDef) {
     let ty_def_id = *alias_def
@@ -453,13 +472,17 @@ fn lower_type_alias(
         ty_def_id,
         TypeAliasDef {
             name: alias_def.ident.clone().into(),
+            vis: parents.resolve(&alias_def.vis, alias_def.ident.span.module()),
             genargs,
             right,
         },
     )
 }
 
-fn lower_native_type_alias(native_def: &biwac_ast::NativeTypeAlias) -> (TyDefId, DefinedTyImpl) {
+fn lower_native_type_alias(
+    native_def: &biwac_ast::NativeTypeAlias,
+    parents: &ModuleParents,
+) -> (TyDefId, DefinedTyImpl) {
     let ty_def_id = *native_def
         .def_id
         .get()
@@ -478,6 +501,7 @@ fn lower_native_type_alias(native_def: &biwac_ast::NativeTypeAlias) -> (TyDefId,
 
     let ty_content = TyDefKind::NativeTypeAlias(Box::new(NativeTypeAliasDef {
         name: native_def.ident.clone().into(),
+        vis: parents.resolve(&native_def.vis, native_def.ident.span.module()),
         genargs,
         native: native_def.native.clone(),
         native_span: native_def.native_span.clone(),
@@ -498,6 +522,7 @@ pub(super) fn lower_impl_block(
     impl_block: &biwac_ast::ImplBlock,
     impl_collector: &ImplCollector,
     ty_aliases: &HashMap<TyDefId, TypeAliasDef>,
+    parents: &ModuleParents,
     errors: &mut Vec<ResolveError>,
 ) {
     let impl_id = impl_block.impl_id.get().unwrap();
@@ -528,6 +553,26 @@ pub(super) fn lower_impl_block(
     let trait_of = trait_impl_of.map(|(def_id, _)| *def_id);
     let impl_genargs = collect_impl_genargs(impl_block);
     let impl_block_genargs_map = collect_impl_block_genargs_map(impl_block);
+
+    // 項目の可視性は impl ブロックのあるモジュールを基準にする。
+    //
+    // trait impl の項目には可視性を書けず、`pub` として扱う。
+    // trait impl の項目はスコープにある trait を経由してしか引けないので、
+    // 見えるかどうかは trait 自身の可視性が決めるからである。
+    let impl_home = impl_block.span.module();
+    let item_vis = |vis: &biwac_ast::Visibility| {
+        if trait_of.is_some() {
+            Visibility::resolve(
+                DeclaredVisibility::Public,
+                PackageId::SELF_PACKAGE,
+                impl_home,
+                None,
+            )
+            .expect("`pub` always resolves")
+        } else {
+            parents.resolve(vis, impl_home)
+        }
+    };
 
     let ty_genargs: Vec<Ty> = if let TyKind::Defined(DefinedTy { ref genargs, .. }) = self_ty_kind {
         genargs.clone()
@@ -591,7 +636,12 @@ pub(super) fn lower_impl_block(
             &signature,
             errors,
         );
-        let hir_fn = FnDef::new(fn_def.id.clone().into(), signature, body);
+        let hir_fn = FnDef::new(
+            fn_def.id.clone().into(),
+            item_vis(&fn_def.vis),
+            signature,
+            body,
+        );
         register_impl_val(
             tys,
             *fn_def.def_id.get().unwrap(),
@@ -625,7 +675,12 @@ pub(super) fn lower_impl_block(
             &signature,
             errors,
         );
-        let hir_fn = FnDef::new(method_def.id.clone().into(), signature, body);
+        let hir_fn = FnDef::new(
+            method_def.id.clone().into(),
+            item_vis(&method_def.vis),
+            signature,
+            body,
+        );
         register_impl_val(
             tys,
             *method_def.def_id.get().unwrap(),
@@ -650,6 +705,7 @@ pub(super) fn lower_impl_block(
         );
         let hir_fn = NativeFnDef::new(
             fn_def.id.clone().into(),
+            item_vis(&fn_def.vis),
             fn_def.native_span.clone(),
             fn_def.span.clone(),
             fn_def.native.clone(),
@@ -683,6 +739,7 @@ pub(super) fn lower_impl_block(
         );
         let hir_fn = NativeFnDef::new(
             method_def.id.clone().into(),
+            item_vis(&method_def.vis),
             method_def.native_span.clone(),
             method_def.span.clone(),
             method_def.native.clone(),
@@ -770,7 +827,10 @@ fn register_impl_val(
 ///
 /// 項目は本体を持たないのでシグニチャだけを作る。
 /// 宣言の中の `Self` は [`TraitDef::self_gen`] の `TyKind::Gen` になる。
-pub(crate) fn lower_trait_def(trait_def: &biwac_ast::TraitDef) -> (TraitDefId, TraitDef) {
+pub(crate) fn lower_trait_def(
+    trait_def: &biwac_ast::TraitDef,
+    parents: &ModuleParents,
+) -> (TraitDefId, TraitDef) {
     let def_id = *trait_def
         .def_id
         .get()
@@ -837,6 +897,7 @@ pub(crate) fn lower_trait_def(trait_def: &biwac_ast::TraitDef) -> (TraitDefId, T
         def_id,
         TraitDef {
             name: trait_def.id.clone().into(),
+            vis: parents.resolve(&trait_def.vis, trait_def.id.span.module()),
             self_gen,
             items,
             genargs,

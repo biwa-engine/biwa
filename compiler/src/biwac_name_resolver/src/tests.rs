@@ -96,3 +96,77 @@ fn test1() {
         })
         .unwrap();
 }
+
+/// 名前の表に可視性が載ること (issue #8 の段階 2)。
+///
+/// モジュールの子は `ModuleNameTree::child_visibility`、関連 item と variant は
+/// `AssocNameTreeItem::vis` に載る。見える範囲は宣言したモジュール (関連 item は impl ブロックのモジュール)
+/// とその親から決まる。
+#[test]
+fn name_tree_carries_visibility() {
+    use biwac_base::PackageId;
+    use biwac_hir::{DeclaredVisibility as D, VisibilityScope as S};
+
+    use crate::{ModuleNameTreeItem, resolving::def_collector::DefCollector};
+
+    let mut srcs = biwac_base::SourceHolder::default();
+    let mut interner = biwac_base::IdentInterner::default();
+    let pkg_root_path = Path::new("../../assets/tests/mod_tree");
+    let metadata =
+        biwac_metadata_loader::try_load_package_metadata(pkg_root_path.to_path_buf()).unwrap();
+    let pkg = biwac_package_loader::Pkg::try_load::<biwac_package_loader::BiwacSourceParser>(
+        &metadata,
+        &mut interner,
+        &mut srcs,
+        pkg_root_path.to_path_buf(),
+    )
+    .unwrap_or_else(|_| panic!("failed to load mod_tree"));
+    let names = [
+        "mod_tree", "a", "c", "top", "Pair", "Choice", "Left", "new", "sum", "from_a",
+    ]
+    .map(|n| (n, interner.get_or_insert(n)));
+    let id = |n: &str| names.iter().find(|(k, _)| *k == n).unwrap().1;
+
+    let name_tree = DefCollector::new()
+        .collect(id("mod_tree"), &pkg, Vec::new(), &interner)
+        .unwrap_or_else(|e| panic!("def collection failed: {e:?}"));
+    let root = &name_tree.packages[&id("mod_tree")].root_module_tree;
+    let root_mod = root.mod_id;
+    let vis = |n: &str| {
+        let v = root.child_visibility(id(n)).unwrap();
+        (v.declared, v.scope)
+    };
+
+    assert_eq!(vis("a"), (D::Public, S::Public));
+    assert_eq!(vis("c"), (D::Private, S::Module(root_mod)));
+    assert_eq!(vis("top"), (D::Public, S::Public));
+    assert_eq!(
+        vis("Pair"),
+        (D::Package, S::Package(PackageId::SELF_PACKAGE))
+    );
+
+    // `a` の中の `pub(super) fn from_a` は、親 (ルート) が範囲になる。
+    let Some(ModuleNameTreeItem::Mod(a)) = root.children.get(&id("a")) else {
+        panic!("`a` is not a module")
+    };
+    let from_a = a.child_visibility(id("from_a")).unwrap();
+    assert_eq!(
+        (from_a.declared, from_a.scope),
+        (D::Super, S::Module(root_mod))
+    );
+
+    // 関連 item と variant。
+    let assoc = |ty: &str, n: &str| {
+        let Some(ModuleNameTreeItem::Ty(t)) = root.children.get(&id(ty)) else {
+            panic!("`{ty}` is not a type")
+        };
+        let v = t.children.borrow()[&id(n)].assocs[0].vis;
+        (v.declared, v.scope)
+    };
+    assert_eq!(assoc("Pair", "new"), (D::Public, S::Public));
+    assert_eq!(
+        assoc("Pair", "sum"),
+        (D::Package, S::Package(PackageId::SELF_PACKAGE))
+    );
+    assert_eq!(assoc("Choice", "Left"), (D::Public, S::Public));
+}

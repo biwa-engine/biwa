@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::HashMap, sync::Arc};
 use biwac_ast::PathSegment;
 use biwac_base::{InternedIdent, ModId, PackageId};
 use biwac_dependency_metadata::{DepMetadata, PackageModuleView};
-use biwac_hir::Ty;
+use biwac_hir::{Ty, Visibility};
 use biwac_span::{TraitDefId, TyDefId, ValDefId, VariantDefId};
 
 use crate::ResolveError;
@@ -47,7 +47,16 @@ pub struct ModuleNameTree {
     pub(crate) mod_id: ModId,
     /// 親モジュール。ルートモジュールなら `None`。`super::` の解決に使う。
     pub(crate) parent: Option<ModId>,
+    /// 子の可視性。`children` と同じ名前を持つ。子モジュールは `mod` 宣言に書いたもの。
+    pub(crate) vis: HashMap<InternedIdent, Visibility>,
     pub(crate) children: HashMap<InternedIdent, ModuleNameTreeItem>,
+}
+
+impl ModuleNameTree {
+    /// 子 (`name`) の可視性。
+    pub fn child_visibility(&self, name: InternedIdent) -> Option<Visibility> {
+        self.vis.get(&name).copied()
+    }
 }
 
 #[derive(Debug)]
@@ -81,6 +90,8 @@ pub struct AssocNameTree {
 pub struct AssocNameTreeItem {
     pub genargs: Vec<Ty>,
     pub kind: AssocNameTreeItemKind,
+    /// 可視性。関連 item は impl ブロックのあるモジュールが基準、variant は enum と同じ。
+    pub vis: Visibility,
 }
 
 #[derive(Debug, Clone)]
@@ -134,39 +145,32 @@ impl AssocNameTree {
     pub(crate) fn register_assoc(
         &mut self,
         name: InternedIdent,
-        genargs: Vec<Ty>,
-        assoc: AssocNameTreeItemKind,
+        new: AssocNameTreeItem,
     ) -> Result<(), ResolveError> {
         for item in &self.assocs {
             // バリアントは impl のジェネリック引数で分かれない。
             // 同じ名前に何かが既にあれば、それだけで衝突である
             // (`enum Foo { Bar }` と `impl Foo { fn Bar() }` など)。
             let variant_involved = matches!(item.kind, AssocNameTreeItemKind::Variant(_))
-                || matches!(assoc, AssocNameTreeItemKind::Variant(_));
+                || matches!(new.kind, AssocNameTreeItemKind::Variant(_));
 
             if variant_involved
-                || (item.genargs.len() == genargs.len()
+                || (item.genargs.len() == new.genargs.len()
                     && item
                         .genargs
                         .iter()
-                        .zip(&genargs)
+                        .zip(&new.genargs)
                         .all(|(t1, t2)| t1.kind.is_duplicated_for_impl_genarg(&t2.kind)))
             {
                 return Err(ResolveError::DuplicatedAssociatedItemForGenArgs {
                     name,
                     assoc1: item.clone(),
-                    assoc2: AssocNameTreeItem {
-                        genargs,
-                        kind: assoc,
-                    },
+                    assoc2: new,
                 });
             }
         }
 
-        self.assocs.push(AssocNameTreeItem {
-            genargs,
-            kind: assoc,
-        });
+        self.assocs.push(new);
 
         Ok(())
     }

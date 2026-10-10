@@ -9,7 +9,7 @@ use biwac_base::{IdentInterner, InternedIdent, ModId, PackageId};
 use biwac_dependency_metadata::{
     DepMetadata, DepMetadataModuleView, ExternalPackage, PackageModuleView,
 };
-use biwac_hir::{Ty, TyKind};
+use biwac_hir::{Ty, TyKind, Visibility};
 use biwac_package_loader::{LoadedModule, Pkg};
 use biwac_span::{
     DefId, DefIdKind, GenDefId, ImplId, PackageLocalDefId, Span, TraitAssocDefId, TraitDefId,
@@ -24,6 +24,7 @@ use crate::{
         ResolveCtx, impl_level::ImplResolveCtx, module_level::ModuleResolveCtx,
         ty_def_level::TyDefResolveCtx,
     },
+    visibility::resolve_in_self,
 };
 
 pub(crate) enum TyOrVal<T, V> {
@@ -152,6 +153,7 @@ impl DefCollector {
         parent: Option<ModId>,
     ) -> Result<ModuleNameTree, Vec<ResolveError>> {
         let mut children = HashMap::<InternedIdent, (ModuleNameTreeItem, Span)>::new();
+        let mut vis = HashMap::<InternedIdent, Visibility>::new();
         let mut errors = Vec::new();
         // バリアントは enum の名前ツリーの children に載せる。
         // その木は下の insert で初めて出来るので、名前だけ控えて後で回す。
@@ -162,12 +164,12 @@ impl DefCollector {
                 biwac_ast::Globals::FnDef(fn_def) => {
                     let def_id = ValDefId::new(self.alloc_def_id());
                     fn_def.def_id.set(def_id).unwrap();
-                    Some((fn_def.id.clone(), TyOrVal::Val(def_id)))
+                    Some((fn_def.id.clone(), TyOrVal::Val(def_id), &fn_def.vis))
                 }
                 biwac_ast::Globals::NativeFnDef(fn_def) => {
                     let def_id = ValDefId::new(self.alloc_def_id());
                     fn_def.def_id.set(def_id).unwrap();
-                    Some((fn_def.id.clone(), TyOrVal::Val(def_id)))
+                    Some((fn_def.id.clone(), TyOrVal::Val(def_id), &fn_def.vis))
                 }
                 biwac_ast::Globals::VarDecl(_var_decl) => {
                     // TODO:
@@ -180,7 +182,7 @@ impl DefCollector {
                     biwac_ast::TypeDef::Struct(struct_def) => {
                         let def_id = TyDefId::new(self.alloc_def_id());
                         struct_def.def_id.set(def_id).unwrap();
-                        Some((struct_def.id.clone(), TyOrVal::Ty(def_id)))
+                        Some((struct_def.id.clone(), TyOrVal::Ty(def_id), &struct_def.vis))
                     }
                     biwac_ast::TypeDef::Enum(enum_def) => {
                         let def_id = TyDefId::new(self.alloc_def_id());
@@ -195,17 +197,17 @@ impl DefCollector {
                         }
 
                         pending_variants.push(enum_def.id.id);
-                        Some((enum_def.id.clone(), TyOrVal::Ty(def_id)))
+                        Some((enum_def.id.clone(), TyOrVal::Ty(def_id), &enum_def.vis))
                     }
                     biwac_ast::TypeDef::TypeAlias(alias_def) => {
                         let def_id = TyDefId::new(self.alloc_def_id());
                         alias_def.def_id.set(def_id).unwrap();
-                        Some((alias_def.ident.clone(), TyOrVal::Ty(def_id)))
+                        Some((alias_def.ident.clone(), TyOrVal::Ty(def_id), &alias_def.vis))
                     }
                     biwac_ast::TypeDef::NativeTypeAlias(alias_def) => {
                         let def_id = TyDefId::new(self.alloc_def_id());
                         alias_def.def_id.set(def_id).unwrap();
-                        Some((alias_def.ident.clone(), TyOrVal::Ty(def_id)))
+                        Some((alias_def.ident.clone(), TyOrVal::Ty(def_id), &alias_def.vis))
                     }
                 },
                 biwac_ast::Globals::TraitDef(trait_def) => {
@@ -223,18 +225,21 @@ impl DefCollector {
                     }
                     self.trait_items.insert(def_id, items);
 
-                    Some((trait_def.id.clone(), TyOrVal::Trait(def_id)))
+                    Some((trait_def.id.clone(), TyOrVal::Trait(def_id), &trait_def.vis))
                 }
                 biwac_ast::Globals::NativeCode(_) => None,
                 biwac_ast::Globals::NovelScene(scene_def) => {
                     let def_id = ValDefId::new(self.alloc_def_id());
                     scene_def.def_id.set(def_id).unwrap();
-                    Some((scene_def.id.clone(), TyOrVal::Val(def_id)))
+                    Some((scene_def.id.clone(), TyOrVal::Val(def_id), &scene_def.vis))
                 }
                 biwac_ast::Globals::ImplBlock(_) => None,
             };
 
-            if let Some((ident, def_id)) = opt_ident_and_def_id {
+            if let Some((ident, def_id, ast_vis)) = opt_ident_and_def_id {
+                // 名前が衝突したら先に来た方が木に入るので、可視性も先に来た方を残す。
+                vis.entry(ident.id)
+                    .or_insert_with(|| resolve_in_self(ast_vis.into(), module.mod_id, parent));
                 match children.entry(ident.id) {
                     Entry::Vacant(e) => match def_id {
                         TyOrVal::Ty(def_id) => {
@@ -296,8 +301,12 @@ impl DefCollector {
 
                 if let Err(e) = assoc.register_assoc(
                     variant.id.id,
-                    Vec::new(),
-                    AssocNameTreeItemKind::Variant(def_id),
+                    AssocNameTreeItem {
+                        genargs: Vec::new(),
+                        kind: AssocNameTreeItemKind::Variant(def_id),
+                        // variant は常に enum と同じ可視性になる。
+                        vis: resolve_in_self((&enum_def.vis).into(), module.mod_id, parent),
+                    },
                 ) {
                     errors.push(e);
                 }
@@ -306,12 +315,30 @@ impl DefCollector {
 
         let module_mod_id = module.mod_id;
 
+        // 子モジュールの可視性は、このモジュールの `mod` 宣言に書いてある。
+        // 読み込まれた子モジュールには必ず宣言がある (パッケージローダーが確かめている)。
+        let mod_decl_vis: HashMap<InternedIdent, Visibility> = module
+            .ast
+            .globals
+            .iter()
+            .filter_map(|g| match g {
+                biwac_ast::Globals::Mod(decl) => Some((
+                    decl.id.id,
+                    resolve_in_self((&decl.vis).into(), module_mod_id, parent),
+                )),
+                _ => None,
+            })
+            .collect();
+
         // 子モジュールも決定論的な順序で処理する。
         // ここで DefId を採番するので、順序がぶれると .biwameta がビルドごとに変わる。
         for (interned_mod_name, module) in module.children_ordered() {
             match children.entry(*interned_mod_name) {
                 Entry::Vacant(e) => match self.collect_in_module(module, Some(module_mod_id)) {
                     Ok(module_tree) => {
+                        if let Some(v) = mod_decl_vis.get(interned_mod_name) {
+                            vis.insert(*interned_mod_name, *v);
+                        }
                         e.insert((
                             ModuleNameTreeItem::Mod(module_tree),
                             Span::new(module.mod_id, 0, 0),
@@ -335,6 +362,7 @@ impl DefCollector {
             Ok(ModuleNameTree {
                 mod_id: module.mod_id,
                 parent,
+                vis,
                 children: children
                     .into_iter()
                     .map(|(interned, (item, _))| (interned, item))
@@ -627,108 +655,47 @@ impl DefCollector {
                 //   // std のみ プリミティブ型への impl が許可されていることに注意
                 // }
 
-                for f in &impl_block.assoc_fns {
+                // 項目の可視性は impl ブロックのあるモジュールを基準にする。
+                //
+                // DefId の採番順が `.biwameta` に出るので、
+                // 関連関数・メソッド・native 関連関数・native メソッドの順のまま回す。
+                let items = impl_block
+                    .assoc_fns
+                    .iter()
+                    .map(|f| (&f.id, &f.def_id, &f.vis))
+                    .chain(
+                        impl_block
+                            .methods
+                            .iter()
+                            .map(|m| (&m.id, &m.def_id, &m.vis)),
+                    )
+                    .chain(
+                        impl_block
+                            .native_assoc_fns
+                            .iter()
+                            .map(|f| (&f.id, &f.def_id, &f.vis)),
+                    )
+                    .chain(
+                        impl_block
+                            .native_methods
+                            .iter()
+                            .map(|m| (&m.id, &m.def_id, &m.vis)),
+                    );
+                for (id, def_id_cell, vis) in items {
                     let def_id = ValDefId::new(self.alloc_def_id());
-                    if let Some(assocs) = ty_tree.children.borrow_mut().get_mut(&f.id.id) {
-                        assocs
-                            .register_assoc(
-                                f.id.id,
-                                impl_genargs.clone(),
-                                AssocNameTreeItemKind::Val(def_id),
-                            )
-                            .handle(&mut errors);
-
-                        f.def_id.set(def_id).unwrap();
-                    } else {
-                        ty_tree.children.borrow_mut().insert(
-                            f.id.id,
-                            AssocNameTree {
-                                assocs: vec![AssocNameTreeItem {
-                                    genargs: impl_genargs.clone(),
-                                    kind: AssocNameTreeItemKind::Val(def_id),
-                                }],
-                            },
-                        );
-                        f.def_id.set(def_id).unwrap();
-                    }
-                }
-
-                for m in &impl_block.methods {
-                    let def_id = ValDefId::new(self.alloc_def_id());
-                    if let Some(assocs) = ty_tree.children.borrow_mut().get_mut(&m.id.id) {
-                        assocs
-                            .register_assoc(
-                                m.id.id,
-                                impl_genargs.clone(),
-                                AssocNameTreeItemKind::Val(def_id),
-                            )
-                            .handle(&mut errors);
-
-                        m.def_id.set(def_id).unwrap();
-                    } else {
-                        ty_tree.children.borrow_mut().insert(
-                            m.id.id,
-                            AssocNameTree {
-                                assocs: vec![AssocNameTreeItem {
-                                    genargs: impl_genargs.clone(),
-                                    kind: AssocNameTreeItemKind::Val(def_id),
-                                }],
-                            },
-                        );
-                        m.def_id.set(def_id).unwrap();
-                    }
-                }
-
-                for f in &impl_block.native_assoc_fns {
-                    let def_id = ValDefId::new(self.alloc_def_id());
-                    if let Some(assocs) = ty_tree.children.borrow_mut().get_mut(&f.id.id) {
-                        assocs
-                            .register_assoc(
-                                f.id.id,
-                                impl_genargs.clone(),
-                                AssocNameTreeItemKind::Val(def_id),
-                            )
-                            .handle(&mut errors);
-
-                        f.def_id.set(def_id).unwrap();
-                    } else {
-                        ty_tree.children.borrow_mut().insert(
-                            f.id.id,
-                            AssocNameTree {
-                                assocs: vec![AssocNameTreeItem {
-                                    genargs: impl_genargs.clone(),
-                                    kind: AssocNameTreeItemKind::Val(def_id),
-                                }],
-                            },
-                        );
-                        f.def_id.set(def_id).unwrap();
-                    }
-                }
-
-                for m in &impl_block.native_methods {
-                    let def_id = ValDefId::new(self.alloc_def_id());
-                    if let Some(assocs) = ty_tree.children.borrow_mut().get_mut(&m.id.id) {
-                        assocs
-                            .register_assoc(
-                                m.id.id,
-                                impl_genargs.clone(),
-                                AssocNameTreeItemKind::Val(def_id),
-                            )
-                            .handle(&mut errors);
-
-                        m.def_id.set(def_id).unwrap();
-                    } else {
-                        ty_tree.children.borrow_mut().insert(
-                            m.id.id,
-                            AssocNameTree {
-                                assocs: vec![AssocNameTreeItem {
-                                    genargs: impl_genargs.clone(),
-                                    kind: AssocNameTreeItemKind::Val(def_id),
-                                }],
-                            },
-                        );
-                        m.def_id.set(def_id).unwrap();
-                    }
+                    let item = AssocNameTreeItem {
+                        genargs: impl_genargs.clone(),
+                        kind: AssocNameTreeItemKind::Val(def_id),
+                        vis: resolve_in_self(vis.into(), module.mod_id, module_tree.parent),
+                    };
+                    ty_tree
+                        .children
+                        .borrow_mut()
+                        .entry(id.id)
+                        .or_insert(AssocNameTree { assocs: Vec::new() })
+                        .register_assoc(id.id, item)
+                        .handle(&mut errors);
+                    def_id_cell.set(def_id).unwrap();
                 }
             }
         }

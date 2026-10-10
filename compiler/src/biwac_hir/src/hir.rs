@@ -90,6 +90,11 @@ pub struct Hir {
     /// 名前解決が振り終えた後に新しい定義を作るとき (無名関数の持ち上げ) に使う。
     pub next_def_id: u32,
 
+    /// 自パッケージのモジュールの可視性 (`mod` 宣言に書いたもの)。
+    ///
+    /// ルートモジュールは宣言されないので載らない。`.biwameta` のモジュールのシンボルに書く。
+    pub mod_vis: HashMap<ModId, crate::Visibility>,
+
     /// 無名関数を持ち上げて作った関数。
     ///
     /// 名前で引けてはならないので、`.biwameta` ではモジュールの子に載せない。
@@ -188,6 +193,7 @@ impl Hir {
         native_codes: Vec<NativeCode>,
         traits: HashMap<TraitDefId, TraitDef>,
         trait_scopes: HashMap<ModId, Vec<TraitDefId>>,
+        mod_vis: HashMap<ModId, crate::Visibility>,
     ) -> Self {
         // 所属する型ではなく、**関連アイテム自身の `ValDefId`** で
         // このパッケージのものかを決める。
@@ -251,6 +257,7 @@ impl Hir {
             traits,
             trait_assoc_owners,
             trait_scopes,
+            mod_vis,
             assoc_val_map,
             module_global_natives: native_codes,
             next_def_id: 0,

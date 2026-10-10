@@ -2,7 +2,7 @@
 
 issue #8 「[feature] Visibility of symbols」の実装方針と進み具合のメモ。決まったこと・未決のこと・調べたことをここに集める。
 
-状況: **段階 1 (構文と `mod` 宣言) まで実装済み**。可視性はまだ検査していない。
+状況: **段階 2 (可視性を HIR・名前の表・`.biwameta` に載せる) まで実装済み**。可視性はまだ検査していない。
 
 ## 0. スコープ
 
@@ -146,7 +146,7 @@ issue #8 「[feature] Visibility of symbols」の実装方針と進み具合の�
 - 警告の仕組みは今回は作らない。ad hoc な警告も足さない。後から作るときの候補:
   - (a) `WarningHolder` + `trait BiwacWarning` を別に作る (`&mut WarningHolder` を渡して push する)。
   - (b) `BiwacError` を「診断」に一般化し、深刻度を持たせる。
-  (b) の方が LSP (診断の深刻度を既に区別している) と揃えやすく、(a) は「エラーがあれば止める」という今の流れに手を入れずに済む。
+    (b) の方が LSP (診断の深刻度を既に区別している) と揃えやすく、(a) は「エラーがあれば止める」という今の流れに手を入れずに済む。
 
 ### 5.2 private-in-public → 定義側で、実効可視性を基準にエラー
 
@@ -329,4 +329,43 @@ issue #8 「[feature] Visibility of symbols」の実装方針と進み具合の�
   - compiler: 125 件 (追加分: パーサの可視性・`mod`・`super::` 4 件、ローダーの正例と 4 種のエラー 5 件、
     driver の `mod_tree` (正例。可視性の構文と `super::` を import・型・式で使う) と `super_beyond_root` 2 件)。
   - LSP: 99 件 (追加分: lowering 3 件、宣言されていないファイルがあっても解析が続くこと 2 件)。
+  - std と `~/test1` を強制再ビルドし、ブラウザで Link と scene の開始まで動くことを確かめた。
+
+### 8.2 段階 2: 可視性を HIR・名前の表・`.biwameta` に載せる (実装済み)
+
+まだ検査はしない。載せるだけである。
+
+- **型** (`biwac_hir::Visibility`):
+  - `Visibility { declared: DeclaredVisibility, scope: VisibilityScope }`。
+    書かれた形 (`Private` / `Super` / `Package` / `Public`) と、それが指す見える範囲の組。
+  - `VisibilityScope { Public, Package(PackageId), Module(ModId) }`。`Module` はそのモジュールとその子孫。
+    何も書かなければ宣言したモジュール、`pub(super)` ならその親。`ModId` はパッケージを含むので、依存パッケージの宣言も同じ形で表せる。
+  - 書かれた形も持つのは、`.biwameta` に書くため (見える範囲から逆算すると、どのモジュールを基準にしたかを取り違えうる)。
+- **見える範囲の決め方** (`biwac_name_resolver::visibility`):
+  - 宣言の span がモジュールの `ModId` を持っているので、宣言したモジュールは span から取る。親はモジュール → 親の表 (`ModuleParents`) から引く。
+  - 関連 item は impl ブロックのあるモジュールが基準。variant (とそのフィールド) と trait の項目は持ち主 (enum・trait) と同じ。
+  - **trait impl の項目は `pub`** にした。trait impl の項目はスコープにある trait を経由してしか引けないので、
+    見えるかどうかは trait 自身の可視性で決まり、項目に別の制限を持たせる意味が無いため。
+  - 持ち上げた無名関数は、書いたモジュールの中に限る (名前で引けないので意味は無い)。
+  - **ルートモジュールの `pub(super)` はエラー** (`ResolveError::SuperVisibilityInRoot`。「use `pub(package)` ..」と添える)。
+    名前解決の最初に AST を見て報告する (`check_super_in_root`)。見える範囲を決める側は、続きの解析のために何も書かなかったのと同じ扱いにする。
+- **HIR**: `vis` を持つもの: `FnDef`・`NativeFnDef`・`NovelSceneDef`・`StructDef` (メンバは `member_vis`)・`EnumDef`・`TypeAliasDef`・
+  `NativeTypeAliasDef`・`TraitDef`。`Hir::mod_vis` に自パッケージのモジュールの可視性 (`mod` 宣言のもの。ルートは載らない)。
+- **名前の表**: `ModuleNameTree::vis` (子の名前 → 可視性。子モジュールは `mod` 宣言のもの。読むのは `child_visibility`)、
+  `AssocNameTreeItem::vis`。依存パッケージは `ExternalChildRef::vis` (見えないものも表から消さずに返す)。
+  - ついでに、def collector の関連 item の登録 (関連関数・メソッド・native の 4 通りで同じことを書いていた) を 1 つのループにまとめた。
+    DefId の採番順は変えていない。
+- **`.biwameta`** (版 13 → 14):
+  - シンボルヘッダの `vis` に書かれた形を書く (今までは常に `Public`)。variant は enum、trait の項目は trait、trait impl の項目は `Public`、
+    trait impl ブロックそのもの (名前で引かれない) は `Public`、ルートモジュールは `Public`。
+  - `DiskStructMember` に `vis` を足した (variant のフィールドも同じ型を使うので、enum の可視性を書く)。
+  - SVH にシンボルの可視性とメンバの可視性を入れた (依存する側の名前解決の結果を変えるため)。
+  - 依存する側: `DepMetadata::ext_visibility` が見える範囲を組み立てる。
+    シンボルの持ち主 (それを子に持つモジュール・型・trait) の表を初回に作り、属するモジュールを辿る。
+    関連 item は impl ブロックのモジュールを記録していないので型の属するモジュールで代える
+    (依存する側からは `pub` 以外は見えないので判定は変わらない。エラーの文面に出すモジュール名が変わりうるだけ)。
+- **テスト**:
+  - compiler 128 件 (追加分: `.biwameta` を通した可視性の往復 (名前の表と型の定義の両方)、名前の表の可視性、ルートモジュールの `pub(super)` の拒否)。
+  - `mod_tree` フィクスチャのルートの `pub(super)` を `pub(package)` に直した (段階 2 からエラー)。
+  - LSP 99 件 (新しいエラーの文面を足しただけ)。
   - std と `~/test1` を強制再ビルドし、ブラウザで Link と scene の開始まで動くことを確かめた。

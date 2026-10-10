@@ -62,6 +62,10 @@ pub enum ResolveError {
     UnexpectedSelfType {
         span: Span,
     },
+    /// ルートモジュールに `pub(super)` と書いた。ルートモジュールには親が無い。
+    SuperVisibilityInRoot {
+        span: Span,
+    },
     /// `super::` がルートモジュールより上を指している。
     SuperBeyondRoot {
         span: Span,
@@ -405,6 +409,13 @@ impl BiwacError for ResolveError {
                         "`Self` refers to the type of the enclosing impl block",
                     )
                     .note("write the type name instead")
+                    .print();
+            }
+
+            Self::SuperVisibilityInRoot { span } => {
+                ctx.diagnostic("`pub(super)` is not allowed in the root module.")
+                    .label(at(span), "the root module has no parent module")
+                    .note("use `pub(package)` to make it visible in the whole package")
                     .print();
             }
 

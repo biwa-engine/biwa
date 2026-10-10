@@ -165,6 +165,12 @@ fn to_diagnostic(err: &ResolveError, interner: &IdentInterner) -> Option<RawDiag
             None
         }
 
+        E::SuperVisibilityInRoot { span } => raw(
+            span.clone(),
+            "`pub(super)` is not allowed in the root module; it has no parent module. \
+             Use `pub(package)` to make it visible in the whole package."
+                .to_string(),
+        ),
         E::SuperBeyondRoot { span } => raw(
             span.clone(),
             "`super` goes beyond the root module; the root module has no parent module."

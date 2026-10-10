@@ -18,7 +18,7 @@ use super::codec::{DiskDecode, DiskEncode, DiskVec, impl_u32_newtype_codec};
 use crate::error::DepMetadataError;
 
 pub const BIWAC_DEPENDENCY_METADATA_MAGIC: &[u8; 4] = b"bwmt";
-pub const BIWAC_DEPENDENCY_METADATA_FORMAT_VERSION: u32 = 13;
+pub const BIWAC_DEPENDENCY_METADATA_FORMAT_VERSION: u32 = 14;
 
 // --- インデックス / オフセット型 ---
 
@@ -99,6 +99,11 @@ impl TryFrom<u32> for DiskSymbolKind {
 
 // --- DiskVisibility ---
 
+/// 書かれた可視性 (`biwac_hir::DeclaredVisibility`)。
+///
+/// シンボルヘッダと struct のメンバが持つ。可視性を書けない項目は持ち主と同じものを書く
+/// (variant は enum、trait の項目と trait impl の項目は trait)。
+/// trait impl ブロックそのもの (`TraitImpl`) は名前で引かれないので `Public` を書く。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum DiskVisibility {
@@ -106,6 +111,28 @@ pub enum DiskVisibility {
     SuperModulePublic = 1, // pub(super)
     PackagePublic = 2,     // pub(package)
     Public = 3,            // pub
+}
+
+impl From<biwac_hir::DeclaredVisibility> for DiskVisibility {
+    fn from(value: biwac_hir::DeclaredVisibility) -> Self {
+        match value {
+            biwac_hir::DeclaredVisibility::Private => Self::Private,
+            biwac_hir::DeclaredVisibility::Super => Self::SuperModulePublic,
+            biwac_hir::DeclaredVisibility::Package => Self::PackagePublic,
+            biwac_hir::DeclaredVisibility::Public => Self::Public,
+        }
+    }
+}
+
+impl From<DiskVisibility> for biwac_hir::DeclaredVisibility {
+    fn from(value: DiskVisibility) -> Self {
+        match value {
+            DiskVisibility::Private => Self::Private,
+            DiskVisibility::SuperModulePublic => Self::Super,
+            DiskVisibility::PackagePublic => Self::Package,
+            DiskVisibility::Public => Self::Public,
+        }
+    }
 }
 
 impl TryFrom<u32> for DiskVisibility {
@@ -445,6 +472,8 @@ pub struct DiskStructMember {
     pub name: DiskStringOffset,
     pub name_span: DiskSpan,
     pub ty: DiskTy,
+    /// DiskVisibility として解釈
+    pub vis: u32,
 }
 
 impl DiskDecode for DiskStructMember {
@@ -456,11 +485,14 @@ impl DiskDecode for DiskStructMember {
         pos += n;
         let (ty, n) = DiskTy::decode(&bytes[pos..])?;
         pos += n;
+        let (vis, n) = u32::decode(&bytes[pos..])?;
+        pos += n;
         Ok((
             Self {
                 name,
                 name_span,
                 ty,
+                vis,
             },
             pos,
         ))
@@ -472,6 +504,7 @@ impl DiskEncode for DiskStructMember {
         self.name.encode(buf);
         self.name_span.encode(buf);
         self.ty.encode(buf);
+        self.vis.encode(buf);
     }
 }
 

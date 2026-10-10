@@ -15,7 +15,7 @@ use biwac_hir::{DefinedTy, DefinedTyImpl, Hir, Ty, TyKind, TypeAliasDef, ValDefK
 use biwac_package_loader::{LoadedModule, Pkg};
 use biwac_span::{DefIdKind, GenDefId, LocalGenDefId, TraitDefId, TyDefId, ValDefId};
 
-use crate::{ResolveError, resolving::def_collector::ImplCollector};
+use crate::{ResolveError, resolving::def_collector::ImplCollector, visibility::ModuleParents};
 
 pub(crate) fn lower(
     pkg_name: PackageName,
@@ -29,6 +29,9 @@ pub(crate) fn lower(
 ) -> Result<Hir, Vec<ResolveError>> {
     let mut errors = Vec::new();
 
+    // 宣言の可視性を見える範囲に直すのに使う。
+    let parents = ModuleParents::of(pkg);
+
     // Pass 1: register all type definitions so impl blocks can reference them.
     let mut ty_list = Vec::new();
     let mut alias_list = Vec::new();
@@ -38,6 +41,7 @@ pub(crate) fn lower(
         &mut ty_list,
         &mut alias_list,
         &mut trait_list,
+        &parents,
         &mut errors,
     );
     let mut tys: HashMap<TyDefId, DefinedTyImpl> = ty_list.into_iter().collect();
@@ -50,6 +54,7 @@ pub(crate) fn lower(
         &pkg.root_module,
         impl_collector,
         &ty_aliases,
+        &parents,
         &mut errors,
     );
 
@@ -60,7 +65,7 @@ pub(crate) fn lower(
     globals::check_trait_impls(&tys, &traits, ext_pkgs, interner, &mut errors);
 
     // Pass 3: lower all values (fns, impls, novel scenes, native code).
-    let vals = lower_module_vals(&pkg.root_module, lang_items, &mut errors)
+    let vals = lower_module_vals(&pkg.root_module, lang_items, &parents, &mut errors)
         .into_iter()
         .map(|(def_id, val)| (def_id, val))
         .collect();
@@ -81,6 +86,7 @@ pub(crate) fn lower(
         native_codes,
         traits,
         trait_scopes,
+        parents.mod_visibilities(pkg),
     );
 
     // Pass 5: 型 alias を右辺で置き換える。
@@ -109,21 +115,22 @@ fn lower_module_types(
     tys: &mut Vec<(TyDefId, DefinedTyImpl)>,
     aliases: &mut Vec<(TyDefId, TypeAliasDef)>,
     traits: &mut Vec<(TraitDefId, biwac_hir::TraitDef)>,
+    parents: &ModuleParents,
     errors: &mut Vec<ResolveError>,
 ) {
     for g in &module.ast.globals {
         match g {
             biwac_ast::Globals::TypeDef(type_def) => {
-                globals::lower_type_def(type_def, tys, aliases, errors);
+                globals::lower_type_def(type_def, tys, aliases, parents, errors);
             }
             biwac_ast::Globals::TraitDef(trait_def) => {
-                traits.push(globals::lower_trait_def(trait_def));
+                traits.push(globals::lower_trait_def(trait_def, parents));
             }
             _ => {}
         }
     }
     for (_, child) in module.children_ordered() {
-        lower_module_types(child, tys, aliases, traits, errors);
+        lower_module_types(child, tys, aliases, traits, parents, errors);
     }
 }
 
@@ -132,21 +139,23 @@ fn lower_impl_blocks(
     module: &LoadedModule,
     impl_collector: &ImplCollector,
     ty_aliases: &HashMap<TyDefId, TypeAliasDef>,
+    parents: &ModuleParents,
     errors: &mut Vec<ResolveError>,
 ) {
     for g in &module.ast.globals {
         if let biwac_ast::Globals::ImplBlock(impl_block) = g {
-            globals::lower_impl_block(tys, impl_block, impl_collector, ty_aliases, errors);
+            globals::lower_impl_block(tys, impl_block, impl_collector, ty_aliases, parents, errors);
         }
     }
     for (_, child) in module.children_ordered() {
-        lower_impl_blocks(tys, child, impl_collector, ty_aliases, errors);
+        lower_impl_blocks(tys, child, impl_collector, ty_aliases, parents, errors);
     }
 }
 
 fn lower_module_vals(
     module: &LoadedModule,
     lang_items: &biwac_lang_item::LangItemTable,
+    parents: &ModuleParents,
     errors: &mut Vec<ResolveError>,
 ) -> Vec<(ValDefId, ValDefKind)> {
     let mut vals = Vec::new();
@@ -154,13 +163,20 @@ fn lower_module_vals(
     for g in &module.ast.globals {
         match g {
             biwac_ast::Globals::FnDef(fn_def) => {
-                vals.push(globals::lower_fn_def(fn_def, vec![], errors));
+                vals.push(globals::lower_fn_def(fn_def, vec![], parents, errors));
             }
             biwac_ast::Globals::NativeFnDef(fn_def) => {
-                vals.push(globals::lower_native_fn_def(fn_def, vec![], errors));
+                vals.push(globals::lower_native_fn_def(
+                    fn_def,
+                    vec![],
+                    parents,
+                    errors,
+                ));
             }
             biwac_ast::Globals::NovelScene(scene_def) => {
-                vals.push(novel::lower_novel_scene(scene_def, lang_items, errors));
+                vals.push(novel::lower_novel_scene(
+                    scene_def, lang_items, parents, errors,
+                ));
             }
             // trait の項目は本体を持たないので値にはならない。
             biwac_ast::Globals::TypeDef(_)
@@ -173,7 +189,7 @@ fn lower_module_vals(
         }
     }
     for (_, child) in module.children_ordered() {
-        vals.extend(lower_module_vals(child, lang_items, errors));
+        vals.extend(lower_module_vals(child, lang_items, parents, errors));
     }
 
     vals

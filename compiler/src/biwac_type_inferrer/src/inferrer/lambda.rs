@@ -11,9 +11,11 @@
 
 use std::collections::HashMap;
 
+use biwac_base::PackageId;
 use biwac_hir::{
-    BlockExpr, BlockStmt, Expr, ExprId, ExprVal, FnArgDecl, FnBody, FnDef, FnSignature, Ident,
-    Lambda, Literal, Primary, Stmt, Ty, TyKind, ValDefKind, VariantCtorFields,
+    BlockExpr, BlockStmt, DeclaredVisibility, Expr, ExprId, ExprVal, FnArgDecl, FnBody, FnDef,
+    FnSignature, Ident, Lambda, Literal, Primary, Stmt, Ty, TyKind, ValDefKind, VariantCtorFields,
+    Visibility,
 };
 use biwac_span::{DefId, LocalGenDefId, PackageLocalDefId, ValDefId, VarId};
 
@@ -141,11 +143,21 @@ impl TyCtx<'_> {
             vars: enc.body.vars.clone(),
         };
 
+        // 名前で引けないので可視性は意味を持たないが、何も書かなかった関数と同じく
+        // 書いたモジュールの中に限っておく。
+        let vis = Visibility::resolve(
+            DeclaredVisibility::Private,
+            PackageId::SELF_PACKAGE,
+            lambda.span.module(),
+            None,
+        )
+        .expect("private always resolves");
         let mut f = FnDef::new(
             Ident {
                 id: name_id,
                 span: lambda.span.clone(),
             },
+            vis,
             signature,
             body,
         );
