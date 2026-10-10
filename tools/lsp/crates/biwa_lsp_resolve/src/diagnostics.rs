@@ -178,6 +178,17 @@ fn to_diagnostic(err: &ResolveError, interner: &IdentInterner) -> Option<RawDiag
                 format!("`{n}` is not visible here (it is declared {declared})."),
             )
         }
+        E::PrivateInPublic {
+            item, used, span, ..
+        } => raw(
+            span.clone(),
+            format!(
+                "`{}` is less visible than `{}`; types and traits in the signature or members \
+                 of an item must be at least as visible as the item.",
+                name(interner, &used.id),
+                name(interner, &item.id),
+            ),
+        ),
         E::SuperVisibilityInRoot { span } => raw(
             span.clone(),
             "`pub(super)` is not allowed in the root module; it has no parent module. \

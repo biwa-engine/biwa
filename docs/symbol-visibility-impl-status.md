@@ -2,7 +2,7 @@
 
 issue #8 「[feature] Visibility of symbols」の実装方針と進み具合のメモ。決まったこと・未決のこと・調べたことをここに集める。
 
-状況: **段階 4 (型推論での検査) まで実装済み**。private-in-public (段階 5) はまだ検査していない。
+状況: **段階 5 (private-in-public) まで、§7 の全段階を実装済み**。
 
 ## 0. スコープ
 
@@ -473,3 +473,33 @@ issue #8 「[feature] Visibility of symbols」の実装方針と進み具合の�
   - `game/config.biwa:78` の `ContentSpeed { text_per_sec = 30.0 }` (`ContentSpeed` は `game::content`。メンバが private)
   - 依存する側: Hub の `greeter` が std の `Character` の private なメンバ `display_name` を読んでいる。
   - これらを scratch のコピーでだけ仮に開けると、std と `~/test1` (greeter を含む) は他に違反なくコンパイルできることを確かめた。
+
+### 8.5 段階 5: private-in-public (実装済み)
+
+- **場所**: 名前解決の最後 (`biwac_name_resolver::interface_check`)。パスが解決済みの AST の上で行う。
+  HIR では型エイリアスが右辺に展開されていて、`pub fn f() -> PrivAlias` の `PrivAlias` が見えなくなるためである。
+  違反はまとめて報告する (型推論と違い、最初の 1 つで止まらない)。
+- **実効可視性** (`EffectiveVisibility`): 経路ごとの見える範囲の和として持つ (§5.2。`pub import` を入れたら範囲を足す)。
+  今は経路が定義の場所の 1 本なので、範囲は 1 つ (か空)。
+  - モジュール: ルートは `pub`。子は `mod` 宣言の可視性と親の共通部分。
+  - 型・trait・関数: 宣言の可視性とモジュールの共通部分。
+  - struct のメンバ: メンバの可視性と struct の共通部分。enum の variant のフィールド・trait の項目: 持ち主 (enum・trait) と同じ。
+  - inherent impl の項目: 項目の可視性 (impl ブロックのモジュールが基準) と型の共通部分。
+    trait impl の項目: trait と型の共通部分 (impl の実効可視性)。
+  - 範囲どうしの共通部分は、部分木なので入れ子なら狭い方、交わらなければ空。含むかどうかは §5.3 と同じ部分木の判定。
+  - 依存パッケージ・組み込みの型と trait は `pub` として扱う (シグネチャに書けたなら、名前解決がその場所から見えることを確かめてある)。
+- **インターフェース** (§5.2 の一覧のうち今ある構文): fn・native fn・scene の引数・戻り値・ジェネリック引数の制限、
+  struct のメンバの型、enum の variant のフィールドの型、型エイリアスの右辺、trait のジェネリック引数の制限と項目のシグネチャ、
+  impl の項目のシグネチャ (impl のジェネリック引数の制限も含む)。型引数・関数型の引数と戻り値の中まで辿る。
+  - 型定義 (struct・enum) のジェネリック引数の制限はまだ構文として扱っていない (`.biwameta` にも書いていない) ので見ない。
+  - 新しい項目の種類を足したら、`Checker::check_module` の `match` (網羅) にインターフェースを足すこと。
+- **エラー**: `ResolveError::PrivateInPublic`。「`Priv` is less visible than `ng_ret`.」で、型の位置に「`Priv` is visible only in module `a` ..」、
+  項目の名前に「`ng_ret` is visible in the root module ..」を付ける。LSP にも足した。
+- **フィクスチャ**: `vis_interface`。違反 8 つ (戻り値・引数・関数型の中・型エイリアス・trait の制限・pub なメンバ・variant のフィールド・pub なメソッド) と、
+  通るもの (private 同士、private なメンバ・メソッド、祖先による頭打ちで通る `ok_capped`) を並べ、報告される (項目, 型) の組を確かめる。
+  `mod_tree` の `pub fn make() -> Pair` (`Pair` は `pub(package)`) が違反になったので `pub(package) fn` に直した。
+- **テスト**: compiler 133 件、LSP 99 件。
+- **std の違反** (std 側は直していない): `game/config.biwa` の `pub fn DeveloperConfig::new(.., default_content_size: Size, ..)`
+  (`Size` は `pub(super)` で、見えるのは `game` の中だけ)。
+  これと段階 4 の 3 件を scratch のコピーでだけ仮に開けると、std と `~/test1` (greeter を含む) は他に違反なくコンパイルできることを確かめた。
+

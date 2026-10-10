@@ -212,3 +212,59 @@ fn reports_invisible_items() {
     invisible.sort();
     assert_eq!(invisible, ["Secret", "b", "hidden_fn", "secret"]);
 }
+
+/// private-in-public: 項目のインターフェースに項目より見えない型・trait があれば
+/// `PrivateInPublic` になること (issue #8 の段階 5)。
+///
+/// `vis_interface` には違反 (`// NG`) と通るもの (`// OK`) を並べてある。
+/// 型エイリアス (HIR では右辺に展開されて消える) とジェネリック引数の制限 (trait) も見ること、
+/// 祖先のモジュールによる頭打ち (`ok_capped`) を数えることを確かめる。
+#[test]
+fn reports_private_in_public() {
+    let mut srcs = biwac_base::SourceHolder::default();
+    let mut interner = biwac_base::IdentInterner::default();
+    let pkg_root_path = Path::new("../../assets/tests/vis_interface");
+    let metadata =
+        biwac_metadata_loader::try_load_package_metadata(pkg_root_path.to_path_buf()).unwrap();
+    let mut pkg = biwac_package_loader::Pkg::try_load::<biwac_package_loader::BiwacSourceParser>(
+        &metadata,
+        &mut interner,
+        &mut srcs,
+        pkg_root_path.to_path_buf(),
+    )
+    .unwrap_or_else(|_| panic!("failed to load vis_interface"));
+    let pkg_name = interner.get_or_insert("vis_interface");
+
+    let errors = match NameResolver::new(&metadata, Vec::new(), pkg_name, &mut pkg)
+        .unwrap()
+        .try_resolve(&mut interner)
+    {
+        Ok(_) => panic!("vis_interface must be rejected"),
+        Err(errors) => errors,
+    };
+
+    let mut pairs: Vec<(&str, &str)> = errors
+        .iter()
+        .map(|e| match e {
+            crate::ResolveError::PrivateInPublic { item, used, .. } => (
+                interner.get_str(&item.id).unwrap(),
+                interner.get_str(&used.id).unwrap(),
+            ),
+            e => panic!("unexpected error: {e:?}"),
+        })
+        .collect();
+    pairs.sort();
+    assert_eq!(
+        pairs,
+        [
+            ("Choice", "Priv"),
+            ("field", "Priv"),
+            ("ng_alias", "PrivAlias"),
+            ("ng_arg", "Priv"),
+            ("ng_bound", "PrivTrait"),
+            ("ng_method", "Priv"),
+            ("ng_nested", "Priv"),
+            ("ng_ret", "Priv"),
+        ]
+    );
+}

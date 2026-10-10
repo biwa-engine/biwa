@@ -68,6 +68,20 @@ pub enum ResolveError {
         kind: DefIdKind,
         vis: biwac_hir::Visibility,
     },
+    /// 項目のインターフェース (シグネチャ・メンバの型など) に、項目より見えない型・trait が現れた
+    /// (private-in-public。`docs/symbol-visibility-impl-status.md` §5.2)。
+    PrivateInPublic {
+        /// インターフェースの持ち主 (関数・メンバ・型など)。
+        item: biwac_ast::Ident,
+        /// 持ち主の見える範囲 (の最も広いもの)。
+        item_scope: Option<biwac_hir::VisibilityScope>,
+        /// 現れた型・trait の名前。
+        used: biwac_ast::Ident,
+        /// 現れた型・trait の見える範囲 (の最も広いもの)。空なら `None`。
+        used_scope: Option<biwac_hir::VisibilityScope>,
+        /// 型が書かれた場所。
+        span: Span,
+    },
     /// ルートモジュールに `pub(super)` と書いた。ルートモジュールには親が無い。
     SuperVisibilityInRoot {
         span: Span,
@@ -430,6 +444,35 @@ impl BiwacError for ResolveError {
                         ),
                     )
                     .note(format!("it is declared {}", vis.describe_declared()))
+                    .print();
+            }
+
+            Self::PrivateInPublic {
+                item,
+                item_scope,
+                used,
+                used_scope,
+                span,
+            } => {
+                let item_name = ident_str(ctx, &item.id);
+                let used_name = ident_str(ctx, &used.id);
+                let describe = |scope: &Option<biwac_hir::VisibilityScope>| match scope {
+                    Some(s) => s.describe(ctx),
+                    None => "nowhere".to_string(),
+                };
+                ctx.diagnostic(format!("`{used_name}` is less visible than `{item_name}`."))
+                    .label(
+                        at(span),
+                        format!("`{used_name}` is visible only {}", describe(used_scope)),
+                    )
+                    .sub_label(
+                        at(&item.span),
+                        format!("`{item_name}` is visible {}", describe(item_scope)),
+                    )
+                    .note(
+                        "types and traits in the signature or members of an item \
+                         must be at least as visible as the item",
+                    )
                     .print();
             }
 

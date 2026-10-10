@@ -1,4 +1,5 @@
 mod error;
+mod interface_check;
 mod lowering;
 mod name_tree;
 mod resolving;
@@ -154,6 +155,13 @@ impl<'p> NameResolver<'p> {
         // symbol resolution (package internal)
         let trait_scopes =
             resolve_in_self_package(&self.pkg, &name_tree, &mut def_collector, interner)?;
+
+        // private-in-public (項目のインターフェースに、項目より見えない型・trait が現れていないか)。
+        // パスが解決済みの AST の上で行う (HIR では型エイリアスが展開されてしまうため)。
+        let errors = interface_check::check(&self.pkg);
+        if !errors.is_empty() {
+            return Err(errors);
+        }
 
         // TODO: cache on disk
         // symbol signature

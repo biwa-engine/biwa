@@ -95,7 +95,24 @@ impl Visibility {
 impl Visibility {
     /// 見える範囲を「〜の中で」の形で言う (見えないことのエラーの文面)。
     pub fn describe_scope(&self, ctx: &biwac_base::ErrorContext) -> String {
-        match self.scope {
+        self.scope.describe(ctx)
+    }
+
+    /// 書かれた可視性を言う (見えないことのエラーの文面)。
+    pub fn describe_declared(&self) -> &'static str {
+        match self.declared {
+            DeclaredVisibility::Private => "without `pub` (private to its module)",
+            DeclaredVisibility::Super => "`pub(super)`",
+            DeclaredVisibility::Package => "`pub(package)`",
+            DeclaredVisibility::Public => "`pub`",
+        }
+    }
+}
+
+impl VisibilityScope {
+    /// 見える範囲を「〜の中で」の形で言う (エラーの文面)。
+    pub fn describe(&self, ctx: &biwac_base::ErrorContext) -> String {
+        match *self {
             VisibilityScope::Public => "everywhere".to_string(),
             VisibilityScope::Package(pkg) if pkg.is_self() => "in this package".to_string(),
             VisibilityScope::Package(_) => "in its own package".to_string(),
@@ -107,16 +124,6 @@ impl Visibility {
                 // 依存パッケージのモジュールは名前を引けない。
                 None => "in a module of its own package".to_string(),
             },
-        }
-    }
-
-    /// 書かれた可視性を言う (見えないことのエラーの文面)。
-    pub fn describe_declared(&self) -> &'static str {
-        match self.declared {
-            DeclaredVisibility::Private => "without `pub` (private to its module)",
-            DeclaredVisibility::Super => "`pub(super)`",
-            DeclaredVisibility::Package => "`pub(package)`",
-            DeclaredVisibility::Public => "`pub`",
         }
     }
 }
