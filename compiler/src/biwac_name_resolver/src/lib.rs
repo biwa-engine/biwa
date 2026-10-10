@@ -158,7 +158,7 @@ impl<'p> NameResolver<'p> {
 
         // private-in-public (項目のインターフェースに、項目より見えない型・trait が現れていないか)。
         // パスが解決済みの AST の上で行う (HIR では型エイリアスが展開されてしまうため)。
-        let errors = interface_check::check(&self.pkg);
+        let errors = interface_check::check(&self.pkg, &name_tree.imports);
         if !errors.is_empty() {
             return Err(errors);
         }
@@ -179,6 +179,33 @@ impl<'p> NameResolver<'p> {
         )?;
         // 型推論の後で無名関数を持ち上げるときに、ここから番号を振る。
         hir.next_def_id = def_collector.next_def_id();
+
+        // re-export (可視性を書いた import が作った名前) を `.biwameta` に書けるよう HIR に渡す。
+        // `pub` でない re-export も書く。依存する側が「見つからない」ではなく「見えない」と言えるようにするため
+        // (定義のシンボルと同じ方針)。可視性を書かない import は re-export ではないので書かない
+        // (書くと private な import を変えただけで SVH が変わり、依存する側が作り直しになる)。
+        for (mod_id, table) in &name_tree.imports {
+            // 明示した import と glob が同じ名前 (同じものを指す) なら、明示した方だけを書く。
+            let reexports: Vec<biwac_hir::Reexport> = table
+                .explicit
+                .iter()
+                .chain(
+                    table
+                        .glob
+                        .iter()
+                        .filter(|(name, _)| !table.explicit.contains_key(name)),
+                )
+                .filter(|(_, e)| e.vis.declared != biwac_hir::DeclaredVisibility::Private)
+                .map(|(name, e)| biwac_hir::Reexport {
+                    name: *name,
+                    kind: e.kind.clone(),
+                    vis: e.vis,
+                })
+                .collect();
+            if !reexports.is_empty() {
+                hir.reexports.insert(*mod_id, reexports);
+            }
+        }
 
         Ok(ResolveOutput {
             hir,

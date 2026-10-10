@@ -1,0 +1,8 @@
+// 親の見えるものをすべて取り込む。
+import super::*;
+
+pub struct Deep {}
+
+pub fn deep_value() -> Int {
+  area(Circle::new(1))
+}

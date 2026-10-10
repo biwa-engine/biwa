@@ -189,6 +189,45 @@ fn to_diagnostic(err: &ResolveError, interner: &IdentInterner) -> Option<RawDiag
                 name(interner, &item.id),
             ),
         ),
+        E::ReexportBeyondVisibility {
+            name: n,
+            span,
+            target,
+            ..
+        } => raw(
+            span.clone(),
+            format!(
+                "`{}` cannot be re-exported beyond its own visibility (it is declared {}).",
+                name(interner, &n.id),
+                target.describe_declared()
+            ),
+        ),
+        E::GlobReexportsNothing { span, .. } => raw(
+            span.clone(),
+            "This glob re-export re-exports nothing: no imported item can be made as visible \
+             as written here."
+                .to_string(),
+        ),
+        E::GlobImportOfNonContainer { span } => raw(
+            span.clone(),
+            "Only a module or an enum can be glob-imported.".to_string(),
+        ),
+        E::ImportedNameConflict { name: n, span2, .. } => raw(
+            span2.clone(),
+            format!(
+                "`{}` is imported twice by glob imports, as different items.",
+                name(interner, n)
+            ),
+        ),
+        E::GlobImportShadowed {
+            name: n, glob_span, ..
+        } => raw(
+            glob_span.clone(),
+            format!(
+                "`{}` imported by this glob conflicts with another name in this module.",
+                name(interner, n)
+            ),
+        ),
         E::SuperVisibilityInRoot { span } => raw(
             span.clone(),
             "`pub(super)` is not allowed in the root module; it has no parent module. \

@@ -282,18 +282,19 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
         if let Some(t) = self.peek() {
             match t.kind {
                 TkKind::KwImport => {
-                    // "import" <qualified-identifier> ";"
-                    // `pub import` (再 export) はまだ無い。
-                    reject_visibility(&vis, "an import (`pub import` is not supported yet)")?;
-                    let begin = t.span.clone();
+                    // <visibility>? "import" <qualified-identifier> ( "::" "*" )? ";"
+                    // 可視性を書けば re-export になる (`docs/useful-import-patterns-impl-status.md`)。
+                    let begin = vis.span().cloned().unwrap_or_else(|| t.span.clone());
                     self.next();
-                    let path = self.consume_qualified_identifier()?;
+                    let (path, glob) = self.consume_import_path()?;
 
                     // ";"
                     let end = self.must_consume_semicolon()?.span.clone();
 
                     Ok(Some(Globals::Import(ImportDecl {
+                        vis,
                         path,
+                        glob,
                         span: Span::merge(&begin, &end),
                     })))
                 }

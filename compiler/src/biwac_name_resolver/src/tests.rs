@@ -128,7 +128,7 @@ fn name_tree_carries_visibility() {
     let id = |n: &str| names.iter().find(|(k, _)| *k == n).unwrap().1;
 
     let name_tree = DefCollector::new()
-        .collect(id("mod_tree"), &pkg, Vec::new(), &interner)
+        .collect(id("mod_tree"), &pkg, Vec::new(), &mut interner)
         .unwrap_or_else(|e| panic!("def collection failed: {e:?}"));
     let root = &name_tree.packages[&id("mod_tree")].root_module_tree;
     let root_mod = root.mod_id;
@@ -267,4 +267,96 @@ fn reports_private_in_public() {
             ("ng_ret", "Priv"),
         ]
     );
+}
+
+/// 依存の無いフィクスチャを読み込んで名前解決し、エラーを `check` に渡す (成功なら空)。
+fn resolve_errors_of(
+    name: &str,
+    check: impl FnOnce(&[crate::ResolveError], &biwac_base::IdentInterner),
+) {
+    let mut srcs = biwac_base::SourceHolder::default();
+    let mut interner = biwac_base::IdentInterner::default();
+    let pkg_root_path = Path::new("../../assets/tests").join(name);
+    let metadata = biwac_metadata_loader::try_load_package_metadata(pkg_root_path.clone()).unwrap();
+    let mut pkg = biwac_package_loader::Pkg::try_load::<biwac_package_loader::BiwacSourceParser>(
+        &metadata,
+        &mut interner,
+        &mut srcs,
+        pkg_root_path,
+    )
+    .unwrap_or_else(|_| panic!("failed to load {name}"));
+    let pkg_name = interner.get_or_insert(name);
+    let errors = match NameResolver::new(&metadata, Vec::new(), pkg_name, &mut pkg)
+        .unwrap()
+        .try_resolve(&mut interner)
+    {
+        Ok(_) => Vec::new(),
+        Err(errors) => errors,
+    };
+    check(&errors, &interner);
+}
+
+/// glob import と re-export の正例が名前解決を通ること (issue #18)。
+///
+/// private なモジュールの中のものの re-export、`pub` と `pub(package)` の混ざった glob の re-export、
+/// 明示した import と glob の重なり (同じものを指す)、re-export の連鎖、enum の glob、`super::*`、
+/// 他のモジュールの re-export をパスの途中で引くこと、re-export の経路を数えた private-in-public。
+#[test]
+fn glob_and_reexport_resolve() {
+    resolve_errors_of("imp_ok", |errors, _| {
+        assert!(errors.is_empty(), "{errors:?}");
+    });
+}
+
+/// glob import と re-export の誤りがそれぞれ報告されること (issue #18)。
+#[test]
+fn reports_import_pattern_errors() {
+    use crate::ResolveError as E;
+    resolve_errors_of("imp_errors", |errors, interner| {
+        let name = |id| interner.get_str(id).unwrap();
+        let mut kinds: Vec<String> = errors
+            .iter()
+            .map(|e| match e {
+                E::ReexportBeyondVisibility { name: n, .. } => {
+                    format!("beyond {}", name(&n.id))
+                }
+                E::GlobReexportsNothing { .. } => "nothing".to_string(),
+                E::GlobImportOfNonContainer { .. } => "non-container".to_string(),
+                E::ImportedNameConflict { name: n, .. } => format!("conflict {}", name(n)),
+                E::GlobImportShadowed { name: n, .. } => format!("shadowed {}", name(n)),
+                e => panic!("unexpected error: {e:?}"),
+            })
+            .collect();
+        kinds.sort();
+        assert_eq!(
+            kinds,
+            [
+                "beyond pkg_only",
+                "conflict value",
+                "non-container",
+                "nothing",
+                "shadowed local"
+            ]
+        );
+    });
+}
+
+/// import が作った名前は、その import の可視性で他のモジュールから見える (private な import は見えない)。
+/// glob import のパスの途中も、見えるかを確かめる。
+#[test]
+fn private_import_is_invisible_from_other_modules() {
+    resolve_errors_of("imp_invisible", |errors, interner| {
+        let names: Vec<&str> = errors
+            .iter()
+            .map(|e| match e {
+                crate::ResolveError::InvisibleItem { segment, .. } => {
+                    interner.get_str(&segment.ident.id).unwrap()
+                }
+                e => panic!("unexpected error: {e:?}"),
+            })
+            .collect();
+        let mut names = names;
+        names.sort();
+        assert_eq!(names, ["kept", "secret"]);
+    });
 }

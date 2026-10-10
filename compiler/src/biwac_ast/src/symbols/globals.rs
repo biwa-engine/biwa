@@ -208,9 +208,21 @@ pub enum Globals {
     NovelScene(NovelScene),
 }
 
+//  import
+//  ```biwa
+//  import a::b;          // `b` を import する
+//  pub import a::b;      // `b` を re-export する (可視性は `b` の可視性を超えられない)
+//  import a::*;          // `a` の見える子をすべて import する (glob)
+//  pub import a::*;      // glob の re-export (各々を元の可視性との狭い方で)
+//  ```
+//  `docs/useful-import-patterns-impl-status.md`
 #[derive(Debug, Clone)]
 pub struct ImportDecl {
+    /// 何も書かなければ `Private` (ただの import)。書けば re-export になる。
+    pub vis: Visibility,
+    /// glob (`*`) なら、`path` は `*` の手前まで (`super::*` ならセグメントの無いパス)。
     pub path: Path,
+    pub glob: bool,
     pub span: Span,
 }
 

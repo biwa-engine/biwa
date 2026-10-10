@@ -1,0 +1,3 @@
+pub(package) fn pkg_only() {}
+
+pub(package) fn also_pkg() {}

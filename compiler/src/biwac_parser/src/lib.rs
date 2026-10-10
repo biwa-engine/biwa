@@ -178,16 +178,38 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
     }
 
     pub(crate) fn consume_qualified_identifier(&mut self) -> Result<Path, ParseError<'src>> {
+        self.consume_path(false).map(|(path, _)| path)
+    }
+
+    /// import のパス。最後に `::*` (glob) を書ける。`*` があれば 2 つ目が `true` で、
+    /// パスは `*` の手前まで (`super::*` ならセグメントの無いパス) になる。
+    pub(crate) fn consume_import_path(&mut self) -> Result<(Path, bool), ParseError<'src>> {
+        self.consume_path(true)
+    }
+
+    /// `::` の直後が `*` (glob) なら読む。`allow_glob` でなければ読まない。
+    fn consume_glob_after_double_colon(&mut self, allow_glob: bool) -> bool {
+        allow_glob
+            && self
+                .consume_next_if_match(vec![TkKindName::MarkAsterisk])
+                .is_some()
+    }
+
+    fn consume_path(&mut self, allow_glob: bool) -> Result<(Path, bool), ParseError<'src>> {
         let mut segments = vec![];
         let abs_header = if let Some(t) = self.peek().cloned()
             && matches!(t.kind, TkKind::KwPackage)
         {
             self.next();
             self.must_consume_next(vec![TkKindName::MarkDoubleColon])?;
+            let header = AbsolutePathHeader::Package(t.span.clone());
+            if self.consume_glob_after_double_colon(allow_glob) {
+                return Ok((Path::new(Some(header), segments), true));
+            }
 
             segments.push(self.consume_identifier()?.into());
 
-            Some(AbsolutePathHeader::Package(t.span.clone()))
+            Some(header)
         } else if let Some(t) = self.peek().cloned()
             && matches!(t.kind, TkKind::KwSuper)
         {
@@ -202,13 +224,17 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                 depth += 1;
                 end = t.span.clone();
             }
+            let header = AbsolutePathHeader::Super {
+                depth,
+                span: Span::merge(&t.span, &end),
+            };
+            if self.consume_glob_after_double_colon(allow_glob) {
+                return Ok((Path::new(Some(header), segments), true));
+            }
 
             segments.push(self.consume_identifier()?.into());
 
-            Some(AbsolutePathHeader::Super {
-                depth,
-                span: Span::merge(&t.span, &end),
-            })
+            Some(header)
         } else {
             let ident = self.consume_identifier()?;
             segments.push(ident.into());
@@ -217,16 +243,17 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
         };
 
         loop {
-            if let Some(t) = self.peek() {
-                if let TkKind::MarkDoubleColon = t.kind {
-                    self.next();
-                    let ident = self.consume_identifier()?;
-                    segments.push(ident.into());
-                } else {
-                    return Ok(Path::new(abs_header, segments));
+            if let Some(t) = self.peek()
+                && let TkKind::MarkDoubleColon = t.kind
+            {
+                self.next();
+                if self.consume_glob_after_double_colon(allow_glob) {
+                    return Ok((Path::new(abs_header, segments), true));
                 }
+                let ident = self.consume_identifier()?;
+                segments.push(ident.into());
             } else {
-                return Ok(Path::new(abs_header, segments));
+                return Ok((Path::new(abs_header, segments), false));
             }
         }
     }

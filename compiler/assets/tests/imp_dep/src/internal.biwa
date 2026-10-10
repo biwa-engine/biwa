@@ -1,0 +1,2 @@
+// 定義は pub だが、`internal` が private なので外からは直接届かない (re-export の経路で届く)。
+pub mod imp;

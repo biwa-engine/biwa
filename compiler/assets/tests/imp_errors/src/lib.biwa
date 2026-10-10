@@ -1,0 +1,16 @@
+// glob import と re-export (issue #18) の負例。違反には `// NG` を付けてある。
+
+mod narrow;
+mod one;
+mod two;
+mod shapes;
+mod clash;
+
+pub import narrow::pkg_only;  // NG: pub(package) なものは pub で re-export できない
+pub import narrow::*;         // NG: 書いた可視性 (pub) まで広げられるものが 1 つも無い
+import shapes::Circle::*;     // NG: glob にできるのはモジュールと enum だけ
+import one::*;                // `value` を持ち込む
+import two::*;                // NG: 別の `value` を持ち込む (glob どうしの衝突)
+import clash::*;              // NG: `local` はこのモジュールの定義と重なる
+
+fn local() {}

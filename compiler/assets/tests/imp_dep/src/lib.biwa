@@ -1,0 +1,10 @@
+// re-export を依存する側 (`imp_dep_user`) から使う (issue #18)。`.biwameta` に re-export を書く。
+
+mod internal;
+pub mod facade;
+
+// private なモジュール `internal` の中のものを公開する (祖先による頭打ちは超えられる)。
+// `pkg_fn` (pub(package)) は pub(package) のまま re-export される。
+pub import internal::imp::*;
+// 別のパッケージのものも re-export できる。
+pub import vis_dep::open;

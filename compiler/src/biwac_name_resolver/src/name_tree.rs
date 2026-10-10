@@ -6,7 +6,7 @@ use biwac_dependency_metadata::{DepMetadata, PackageModuleView};
 use biwac_hir::{Ty, Visibility};
 use biwac_span::{TraitDefId, TyDefId, ValDefId, VariantDefId};
 
-use crate::ResolveError;
+use crate::{ResolveError, resolving::import_table::ModuleImports};
 
 pub struct NameTree {
     pub(crate) self_pkg_name: InternedIdent,
@@ -17,6 +17,9 @@ pub struct NameTree {
     pub(crate) ext_pkg_views: HashMap<InternedIdent, Arc<dyn PackageModuleView>>,
     /// PackageId → DepMetadata (型情報の lazy アクセス用)。
     pub(crate) ext_pkg_data: HashMap<PackageId, Arc<DepMetadata>>,
+    /// 自パッケージのモジュールごとの import の表 (明示した import・glob・re-export)。
+    /// def collection の Step 1 の直後に作る (`resolving::import_table`)。
+    pub(crate) imports: HashMap<ModId, ModuleImports>,
 }
 
 impl std::fmt::Debug for NameTree {

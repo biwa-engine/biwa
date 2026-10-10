@@ -1,0 +1,6 @@
+{
+  "name": "imp_invisible",
+  "version": "0.1.0",
+  "description": "names made by a non-pub import are not visible from other modules",
+  "dependencies": []
+}

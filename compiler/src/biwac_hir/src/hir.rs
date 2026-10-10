@@ -95,6 +95,10 @@ pub struct Hir {
     /// ルートモジュールは宣言されないので載らない。`.biwameta` のモジュールのシンボルに書く。
     pub mod_vis: HashMap<ModId, crate::Visibility>,
 
+    /// 自パッケージのモジュールの re-export (可視性を書いた import が作った名前。可視性は import に書いたもの、glob なら狭い方)。
+    /// `.biwameta` のモジュールのシンボルに書き、依存する側がそのモジュールの子として引く。
+    pub reexports: HashMap<ModId, Vec<Reexport>>,
+
     /// 自パッケージのモジュール → 親モジュール (ルートモジュールは載らない)。
     /// 型推論がフィールド・メソッドの可視性を判定するのに使う ([`crate::Visibility::is_visible_from`])。
     pub mod_parents: HashMap<ModId, ModId>,
@@ -103,6 +107,14 @@ pub struct Hir {
     ///
     /// 名前で引けてはならないので、`.biwameta` ではモジュールの子に載せない。
     pub lambdas: HashSet<ValDefId>,
+}
+
+/// re-export 1 つ (`pub import a::b;`、glob で入ったものも)。
+#[derive(Debug, Clone)]
+pub struct Reexport {
+    pub name: InternedIdent,
+    pub kind: biwac_span::DefIdKind,
+    pub vis: crate::Visibility,
 }
 
 #[derive(Debug, Clone)]
@@ -264,6 +276,7 @@ impl Hir {
             trait_scopes,
             mod_vis,
             mod_parents,
+            reexports: HashMap::new(),
             assoc_val_map,
             module_global_natives: native_codes,
             next_def_id: 0,

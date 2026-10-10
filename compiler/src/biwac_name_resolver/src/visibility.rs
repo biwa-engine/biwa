@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use biwac_ast::Globals;
 use biwac_base::{ModId, PackageId};
-use biwac_hir::{DeclaredVisibility, Visibility};
+use biwac_hir::{DeclaredVisibility, Visibility, VisibilityScope};
 use biwac_package_loader::{LoadedModule, Pkg};
 use biwac_span::Span;
 
@@ -118,4 +118,51 @@ pub(crate) fn check_super_in_root(pkg: &Pkg) -> Vec<ResolveError> {
         .into_iter()
         .map(|span| ResolveError::SuperVisibilityInRoot { span })
         .collect()
+}
+
+/// モジュールの親子関係の上での、見える範囲 (部分木) どうしの演算。
+pub(crate) struct ScopeOps<'a> {
+    /// モジュール → 親モジュール。
+    pub(crate) parents: &'a HashMap<ModId, ModId>,
+}
+
+impl ScopeOps<'_> {
+    /// `m` が `ancestor` そのものかその子孫か。
+    pub(crate) fn is_within(&self, m: ModId, ancestor: ModId) -> bool {
+        let mut cur = Some(m);
+        while let Some(c) = cur {
+            if c == ancestor {
+                return true;
+            }
+            cur = self.parents.get(&c).copied();
+        }
+        false
+    }
+
+    /// 範囲 `outer` が範囲 `inner` を含むか。
+    pub(crate) fn covers(&self, outer: VisibilityScope, inner: VisibilityScope) -> bool {
+        use VisibilityScope::*;
+        match (outer, inner) {
+            (Public, _) => true,
+            (_, Public) => false,
+            (Package(p), Package(q)) => p == q,
+            (Package(p), Module(m)) => PackageId::new(m.pkg_id_bits()) == p,
+            // 自パッケージのルートモジュールの部分木は、パッケージ全体と同じ範囲である。
+            (Module(a), Package(p)) => {
+                a.is_self_pkg() && p.is_self() && !self.parents.contains_key(&a)
+            }
+            (Module(a), Module(b)) => self.is_within(b, a),
+        }
+    }
+
+    /// 2 つの範囲の共通部分。部分木どうしなので、入れ子なら狭い方、交わらなければ空。
+    pub(crate) fn meet(&self, a: VisibilityScope, b: VisibilityScope) -> Option<VisibilityScope> {
+        if self.covers(a, b) {
+            Some(b)
+        } else if self.covers(b, a) {
+            Some(a)
+        } else {
+            None
+        }
+    }
 }

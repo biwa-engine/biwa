@@ -1,0 +1,2 @@
+// モジュールそのものも re-export できる (`imp_dep::facade::imp::value`)。
+pub import super::internal::imp;

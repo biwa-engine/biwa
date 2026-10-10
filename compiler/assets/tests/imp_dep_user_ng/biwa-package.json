@@ -1,0 +1,14 @@
+{
+  "name": "imp_dep_user_ng",
+  "version": "0.1.0",
+  "description": "rejects using a pub(package) re-export of imp_dep",
+  "dependencies": [
+    {
+      "name": "imp_dep",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

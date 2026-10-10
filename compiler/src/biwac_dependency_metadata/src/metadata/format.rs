@@ -18,7 +18,7 @@ use super::codec::{DiskDecode, DiskEncode, DiskVec, impl_u32_newtype_codec};
 use crate::error::DepMetadataError;
 
 pub const BIWAC_DEPENDENCY_METADATA_MAGIC: &[u8; 4] = b"bwmt";
-pub const BIWAC_DEPENDENCY_METADATA_FORMAT_VERSION: u32 = 14;
+pub const BIWAC_DEPENDENCY_METADATA_FORMAT_VERSION: u32 = 15;
 
 // --- インデックス / オフセット型 ---
 
@@ -1057,6 +1057,8 @@ pub struct DiskModData {
     pub name_span: DiskSpan,
     /// 子シンボル (子モジュール、型、関数など) のインデックスリスト
     pub children: DiskVec<DiskSymbolIndex>,
+    /// このモジュールの re-export (可視性を書いた import が作った名前)。`pub` でないものも書く。名前順。
+    pub reexports: DiskVec<DiskReexport>,
 }
 
 impl DiskDecode for DiskModData {
@@ -1068,11 +1070,14 @@ impl DiskDecode for DiskModData {
         pos += n;
         let (children, n) = DiskVec::<DiskSymbolIndex>::decode(&bytes[pos..])?;
         pos += n;
+        let (reexports, n) = DiskVec::<DiskReexport>::decode(&bytes[pos..])?;
+        pos += n;
         Ok((
             Self {
                 name,
                 name_span,
                 children,
+                reexports,
             },
             pos,
         ))
@@ -1084,6 +1089,67 @@ impl DiskEncode for DiskModData {
         self.name.encode(buf);
         self.name_span.encode(buf);
         self.children.encode(buf);
+        self.reexports.encode(buf);
+    }
+}
+
+// --- DiskReexport (固定長 20B): モジュールの re-export 1 つ ---
+//
+// `pub import a::b;` (glob で入ったものも) が作った名前。指すシンボルは別のパッケージのものでもよいので、
+// 型の参照 (`DiskTyKind::ExternalDefined`) と同じく、外部なら `ext_syms` の番号で指す。
+
+/// re-export が指すシンボルの種類 (`module_view::ExternalChildKind` と同じ並び)。
+pub const REEXPORT_KIND_MOD: u32 = 0;
+pub const REEXPORT_KIND_TY: u32 = 1;
+pub const REEXPORT_KIND_VAL: u32 = 2;
+pub const REEXPORT_KIND_VARIANT: u32 = 3;
+pub const REEXPORT_KIND_TRAIT: u32 = 4;
+
+#[derive(Debug, Clone)]
+pub struct DiskReexport {
+    pub name: DiskStringOffset,
+    /// `REEXPORT_KIND_*`
+    pub kind: u32,
+    /// 0 なら `target` はこのパッケージのシンボル番号、1 なら `ext_syms` の番号。
+    pub external: u32,
+    pub target: u32,
+    /// DiskVisibility として解釈 (re-export に書いた可視性)
+    pub vis: u32,
+}
+
+impl DiskDecode for DiskReexport {
+    fn decode(bytes: &[u8]) -> Result<(Self, usize), DepMetadataError> {
+        let mut pos = 0;
+        let (name, n) = DiskStringOffset::decode(&bytes[pos..])?;
+        pos += n;
+        let (kind, n) = u32::decode(&bytes[pos..])?;
+        pos += n;
+        let (external, n) = u32::decode(&bytes[pos..])?;
+        pos += n;
+        let (target, n) = u32::decode(&bytes[pos..])?;
+        pos += n;
+        let (vis, n) = u32::decode(&bytes[pos..])?;
+        pos += n;
+        Ok((
+            Self {
+                name,
+                kind,
+                external,
+                target,
+                vis,
+            },
+            pos,
+        ))
+    }
+}
+
+impl DiskEncode for DiskReexport {
+    fn encode(&self, buf: &mut Vec<u8>) {
+        self.name.encode(buf);
+        self.kind.encode(buf);
+        self.external.encode(buf);
+        self.target.encode(buf);
+        self.vis.encode(buf);
     }
 }
 

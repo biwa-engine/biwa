@@ -15,8 +15,9 @@ use biwac_trait_solver::{Solved, TraitEnv, TraitSolveError};
 
 use crate::{
     ModuleNameTree, ModuleNameTreeItem, NameTree, ResolveError, TyNameTree,
-    lowering::def_id_kind_from_path, name_tree::AssocNameTreeItemKind,
-    resolving::context::ResolveCtx,
+    lowering::def_id_kind_from_path,
+    name_tree::AssocNameTreeItemKind,
+    resolving::{context::ResolveCtx, import_table::ModuleImports},
 };
 
 #[derive(Debug)]
@@ -25,6 +26,9 @@ pub struct ModuleResolveCtx<'t> {
     self_pkg_name: InternedIdent,
     module: &'t ModuleNameTree,
     imports: HashMap<InternedIdent, &'t Path>,
+    /// glob import のパス (`*` の手前まで)。名前は作らない (入る名前は import の表にある) が、
+    /// パス自体は解決して、途中のセグメントが見えるかを確かめる。
+    glob_imports: Vec<&'t Path>,
     ty_index: &'t HashMap<TyDefId, &'t TyNameTree>,
     mod_index: &'t HashMap<ModId, &'t ModuleNameTree>,
     interner: &'t IdentInterner,
@@ -52,9 +56,19 @@ impl<'t> ModuleResolveCtx<'t> {
         interner: &'t IdentInterner,
     ) -> Result<Self, Vec<ResolveError>> {
         let mut imports = HashMap::new();
+        let mut glob_imports = Vec::new();
         let mut errors = Vec::new();
         for g in &module_ast.globals {
-            if let Globals::Import(import_decl) = g {
+            if let Globals::Import(import_decl) = g
+                && import_decl.glob
+                && !import_decl.path.segments.is_empty()
+            {
+                glob_imports.push(&import_decl.path);
+            }
+            // glob import は名前を作らない (入る名前は import の表にある)。
+            if let Globals::Import(import_decl) = g
+                && !import_decl.glob
+            {
                 let imported_ident = &import_decl.path.segments.last().unwrap().ident;
                 match imports.entry(imported_ident.id) {
                     Entry::Vacant(e) => {
@@ -91,6 +105,7 @@ impl<'t> ModuleResolveCtx<'t> {
                 self_pkg_name,
                 module: module_tree,
                 imports,
+                glob_imports,
                 ty_index,
                 mod_index,
                 interner,
@@ -147,6 +162,22 @@ impl<'t> ModuleResolveCtx<'t> {
             }
         }
 
+        // glob import で入った trait。
+        if let Some(table) = self.global_tree.imports.get(&self.module.mod_id) {
+            for entry in table.glob.values() {
+                if let DefIdKind::Trait(def_id) = entry.kind {
+                    scope.push(def_id);
+                }
+            }
+        }
+
+        // glob import のパス。入る名前は import の表にあるが、パスの途中が見えるかはここで確かめる。
+        for path in &self.glob_imports {
+            if let Err(e) = self.resolve_path(path) {
+                errors.push(e);
+            }
+        }
+
         // import された trait。
         for path in self.imports.values() {
             match self.resolve_path(path) {
@@ -171,6 +202,7 @@ impl ModuleResolveCtx<'_> {
         LocalTreeCtx {
             from: self.module.mod_id,
             mod_index: self.mod_index,
+            imports: &self.global_tree.imports,
             ty_index: self.ty_index,
             ext_pkg_data: &self.global_tree.ext_pkg_data,
             interner: self.interner,
@@ -308,122 +340,8 @@ impl ResolveCtx for ModuleResolveCtx<'_> {
                                     return Ok(());
                                 }
 
-                                // Dispatch segment[1..] based on what the import resolved to.
-                                match imported_kind {
-                                    DefIdKind::Ty(ty_id) => {
-                                        if ty_id.pkg().is_self() {
-                                            match self.ty_index.get(&ty_id) {
-                                                Some(ty_tree) => resolve_path_in_ty(
-                                                    path,
-                                                    1,
-                                                    ty_tree,
-                                                    &self.local_tree_ctx(),
-                                                ),
-                                                None => {
-                                                    path.segments[1]
-                                                        .resolved_id
-                                                        .set(PathSegmentResolution::Err)
-                                                        .unwrap();
-                                                    Err(ResolveError::PathResolutionFailed {
-                                                        path: Box::new(path.clone()),
-                                                    })
-                                                }
-                                            }
-                                        } else {
-                                            // 外部パッケージの型: assoc アイテム解決
-                                            let pkg_id = ty_id.pkg();
-                                            match self.global_tree.ext_pkg_data.get(&pkg_id) {
-                                                Some(dep_arc) => {
-                                                    let view =
-                                                        DepMetadataModuleView::new_for_sym_idx(
-                                                            Arc::clone(dep_arc),
-                                                            ty_id.local_idx(),
-                                                            pkg_id,
-                                                        );
-                                                    resolve_path_in_ext_ty(
-                                                        path,
-                                                        1,
-                                                        ty_id.local_idx(),
-                                                        &view,
-                                                        pkg_id,
-                                                        self.interner,
-                                                        &self.local_tree_ctx(),
-                                                    )
-                                                }
-                                                None => {
-                                                    path.segments[1]
-                                                        .resolved_id
-                                                        .set(PathSegmentResolution::Err)
-                                                        .unwrap();
-                                                    Err(ResolveError::PathResolutionFailed {
-                                                        path: Box::new(path.clone()),
-                                                    })
-                                                }
-                                            }
-                                        }
-                                    }
-                                    DefIdKind::Mod(mod_id) => {
-                                        if mod_id.is_self_pkg() {
-                                            match self.mod_index.get(&mod_id) {
-                                                Some(mod_tree) => resolve_path_in_module(
-                                                    path,
-                                                    1,
-                                                    mod_tree,
-                                                    &self.local_tree_ctx(),
-                                                ),
-                                                None => {
-                                                    path.segments[1]
-                                                        .resolved_id
-                                                        .set(PathSegmentResolution::Err)
-                                                        .unwrap();
-                                                    Err(ResolveError::PathResolutionFailed {
-                                                        path: Box::new(path.clone()),
-                                                    })
-                                                }
-                                            }
-                                        } else {
-                                            // 外部パッケージのモジュール: PackageModuleView 経由で解決
-                                            let pkg_id = PackageId::new(mod_id.pkg_id_bits());
-                                            let sym_idx = mod_id.sym_idx();
-                                            match self.global_tree.ext_pkg_data.get(&pkg_id) {
-                                                Some(dep_arc) => {
-                                                    let sub_view =
-                                                        DepMetadataModuleView::new_for_sym_idx(
-                                                            Arc::clone(dep_arc),
-                                                            sym_idx,
-                                                            pkg_id,
-                                                        );
-                                                    resolve_path_in_ext_pkg(
-                                                        path,
-                                                        1,
-                                                        &sub_view,
-                                                        pkg_id,
-                                                        self.interner,
-                                                        &self.local_tree_ctx(),
-                                                    )
-                                                }
-                                                None => {
-                                                    path.segments[1]
-                                                        .resolved_id
-                                                        .set(PathSegmentResolution::Err)
-                                                        .unwrap();
-                                                    Err(ResolveError::PathResolutionFailed {
-                                                        path: Box::new(path.clone()),
-                                                    })
-                                                }
-                                            }
-                                        }
-                                    }
-                                    _ => {
-                                        path.segments[1]
-                                            .resolved_id
-                                            .set(PathSegmentResolution::Err)
-                                            .unwrap();
-                                        Err(ResolveError::PathResolutionFailed {
-                                            path: Box::new(path.clone()),
-                                        })
-                                    }
-                                }
+                                // 2 つ目以降のセグメントは、import が指すものの中を辿る。
+                                resolve_rest(path, 1, &imported_kind, &self.local_tree_ctx())
                             }
                             Err(e) => {
                                 path.segments[0]
@@ -434,6 +352,23 @@ impl ResolveCtx for ModuleResolveCtx<'_> {
                                 Err(e)
                             }
                         },
+                        None if let Some(entry) = self
+                            .global_tree
+                            .imports
+                            .get(&self.module.mod_id)
+                            .and_then(|t| t.glob.get(&first_segment_ident.id)) =>
+                        {
+                            // glob import で入った名前。表は名前解決の前に作ってある。
+                            path.segments[0]
+                                .resolved_id
+                                .set(PathSegmentResolution::Ok(entry.kind.clone()))
+                                .unwrap();
+                            if path.segments.len() == 1 {
+                                Ok(())
+                            } else {
+                                resolve_rest(path, 1, &entry.kind, &self.local_tree_ctx())
+                            }
+                        }
                         None => {
                             if let Some(package) =
                                 self.global_tree.packages.get(&first_segment_ident.id)
@@ -470,7 +405,6 @@ impl ResolveCtx for ModuleResolveCtx<'_> {
                                         path,
                                         1,
                                         view.as_ref(),
-                                        pkg_id,
                                         self.interner,
                                         &self.local_tree_ctx(),
                                     )
@@ -504,6 +438,8 @@ struct LocalTreeCtx<'t> {
     from: ModId,
     /// モジュールの親を辿るのに使う (可視性の判定)。
     mod_index: &'t HashMap<ModId, &'t ModuleNameTree>,
+    /// モジュールごとの import の表。子が無い名前は、そのモジュールの表 (re-export・glob) を引く。
+    imports: &'t HashMap<ModId, ModuleImports>,
     ty_index: &'t HashMap<TyDefId, &'t TyNameTree>,
     ext_pkg_data: &'t HashMap<PackageId, Arc<DepMetadata>>,
     interner: &'t IdentInterner,
@@ -668,12 +604,99 @@ fn resolve_path_in_module(
             };
             with_visibility_error(result, vis_err)
         }
-        None => {
-            segment.resolved_id.set(PathSegmentResolution::Err).unwrap();
-            Err(ResolveError::PathResolutionFailed {
-                path: Box::new(path.clone()),
-            })
+        None => match ctx
+            .imports
+            .get(&module.mod_id)
+            .and_then(|t| t.get(segment.ident.id))
+        {
+            // そのモジュールの import が作った名前 (re-export や glob)。
+            // 見えるかは import の表の可視性で判定する。
+            Some(entry) => {
+                let vis_err = ctx.check_visible(entry.vis, segment, entry.kind.clone());
+                segment
+                    .resolved_id
+                    .set(PathSegmentResolution::Ok(entry.kind.clone()))
+                    .unwrap();
+                let result = if path.segments.len() == depth + 1 {
+                    Ok(())
+                } else {
+                    resolve_rest(path, depth + 1, &entry.kind, ctx)
+                };
+                with_visibility_error(result, vis_err)
+            }
+            None => {
+                segment.resolved_id.set(PathSegmentResolution::Err).unwrap();
+                Err(ResolveError::PathResolutionFailed {
+                    path: Box::new(path.clone()),
+                })
+            }
+        },
+    }
+}
+
+/// パスの `depth` 番目以降を、`kind` (その手前のセグメントが指すもの) の中で解決する。
+///
+/// import・re-export・glob で入った名前の先を辿るのに使う。
+fn resolve_rest(
+    path: &Path,
+    depth: usize,
+    kind: &DefIdKind,
+    ctx: &LocalTreeCtx<'_>,
+) -> Result<(), ResolveError> {
+    let fail = || {
+        path.segments[depth]
+            .resolved_id
+            .set(PathSegmentResolution::Err)
+            .unwrap();
+        Err(ResolveError::PathResolutionFailed {
+            path: Box::new(path.clone()),
+        })
+    };
+    match kind {
+        DefIdKind::Ty(ty_id) if ty_id.pkg().is_self() => match ctx.ty_index.get(ty_id) {
+            Some(ty_tree) => resolve_path_in_ty(path, depth, ty_tree, ctx),
+            None => fail(),
+        },
+        // 外部パッケージの型: assoc アイテム解決
+        DefIdKind::Ty(ty_id) => match ctx.ext_pkg_data.get(&ty_id.pkg()) {
+            Some(dep_arc) => {
+                let view = DepMetadataModuleView::new_for_sym_idx(
+                    Arc::clone(dep_arc),
+                    ty_id.local_idx(),
+                    ty_id.pkg(),
+                );
+                resolve_path_in_ext_ty(
+                    path,
+                    depth,
+                    ty_id.local_idx(),
+                    &view,
+                    ty_id.pkg(),
+                    ctx.interner,
+                    ctx,
+                )
+            }
+            None => fail(),
+        },
+        DefIdKind::Mod(mod_id) if mod_id.is_self_pkg() => match ctx.mod_index.get(mod_id) {
+            Some(mod_tree) => resolve_path_in_module(path, depth, mod_tree, ctx),
+            None => fail(),
+        },
+        // 外部パッケージのモジュール: PackageModuleView 経由で解決
+        DefIdKind::Mod(mod_id) => {
+            let pkg_id = PackageId::new(mod_id.pkg_id_bits());
+            match ctx.ext_pkg_data.get(&pkg_id) {
+                Some(dep_arc) => {
+                    let sub_view = DepMetadataModuleView::new_for_sym_idx(
+                        Arc::clone(dep_arc),
+                        mod_id.sym_idx(),
+                        pkg_id,
+                    );
+                    resolve_path_in_ext_pkg(path, depth, &sub_view, ctx.interner, ctx)
+                }
+                None => fail(),
+            }
         }
+        _ => fail(),
     }
 }
 
@@ -797,7 +820,7 @@ fn resolve_path_in_ty(
     }
 }
 
-fn module_item_to_def_id_kind(item: &ModuleNameTreeItem) -> DefIdKind {
+pub(crate) fn module_item_to_def_id_kind(item: &ModuleNameTreeItem) -> DefIdKind {
     match item {
         ModuleNameTreeItem::Mod(module) => DefIdKind::Mod(module.mod_id),
         // 型の位置では alias を canonical な型に潰さない。
@@ -826,7 +849,6 @@ fn resolve_path_in_ext_pkg(
     path: &Path,
     depth: usize,
     view: &dyn PackageModuleView,
-    pkg_id: PackageId,
     interner: &IdentInterner,
     trait_ctx: &LocalTreeCtx<'_>,
 ) -> Result<(), ResolveError> {
@@ -839,51 +861,20 @@ fn resolve_path_in_ext_pkg(
             })
         }
         Some(child_ref) => {
-            let def_id_kind = ext_child_ref_to_def_id_kind(&child_ref, pkg_id);
+            let def_id_kind = ext_child_ref_to_def_id_kind(&child_ref);
             let vis_err = trait_ctx.check_visible(child_ref.vis, segment, def_id_kind.clone());
             segment
                 .resolved_id
-                .set(PathSegmentResolution::Ok(def_id_kind))
+                .set(PathSegmentResolution::Ok(def_id_kind.clone()))
                 .unwrap();
 
+            // その先は、指すもの (モジュール・型) の中を辿る。
+            // re-export は別のパッケージのシンボルを指しうるので、view はそのパッケージのものを作り直す
+            // (`resolve_rest`)。値・バリアント・trait の先にセグメントがあれば解決できない。
             let result = if path.segments.len() == depth + 1 {
                 Ok(())
             } else {
-                match child_ref.kind {
-                    ExternalChildKind::Mod => {
-                        let sub_view = view.get_module_view(child_ref.sym_idx);
-                        resolve_path_in_ext_pkg(
-                            path,
-                            depth + 1,
-                            sub_view.as_ref(),
-                            pkg_id,
-                            interner,
-                            trait_ctx,
-                        )
-                    }
-                    ExternalChildKind::Ty => resolve_path_in_ext_ty(
-                        path,
-                        depth + 1,
-                        child_ref.sym_idx,
-                        view,
-                        pkg_id,
-                        interner,
-                        trait_ctx,
-                    ),
-                    // 値・バリアント・trait はどれもここで終端である。
-                    // その先にセグメントがあれば解決できない。
-                    ExternalChildKind::Val
-                    | ExternalChildKind::Variant
-                    | ExternalChildKind::Trait => {
-                        path.segments[depth + 1]
-                            .resolved_id
-                            .set(PathSegmentResolution::Err)
-                            .unwrap();
-                        Err(ResolveError::PathResolutionFailed {
-                            path: Box::new(path.clone()),
-                        })
-                    }
-                }
+                resolve_rest(path, depth + 1, &def_id_kind, trait_ctx)
             };
             with_visibility_error(result, vis_err)
         }
@@ -934,7 +925,7 @@ fn resolve_path_in_ext_ty(
             }
         }
         Some(child_ref) => {
-            let def_id_kind = ext_child_ref_to_def_id_kind(&child_ref, pkg_id);
+            let def_id_kind = ext_child_ref_to_def_id_kind(&child_ref);
             let vis_err = trait_ctx.check_visible(child_ref.vis, segment, def_id_kind.clone());
             segment
                 .resolved_id
@@ -960,12 +951,14 @@ fn resolve_path_in_ext_ty(
 
 /// `ExternalChildRef` を `DefIdKind` に変換する。
 /// 外部モジュール (`Mod`) は `ModId::new_ext` でエンコードした `DefIdKind::Mod` として記録する。
-fn ext_child_ref_to_def_id_kind(child_ref: &ExternalChildRef, pkg_id: PackageId) -> DefIdKind {
+pub(crate) fn ext_child_ref_to_def_id_kind(child_ref: &ExternalChildRef) -> DefIdKind {
     match child_ref.kind {
-        ExternalChildKind::Ty => DefIdKind::Ty(child_ref.as_ty_def_id(pkg_id)),
-        ExternalChildKind::Val => DefIdKind::Val(child_ref.as_val_def_id(pkg_id)),
-        ExternalChildKind::Variant => DefIdKind::Variant(child_ref.as_variant_def_id(pkg_id)),
-        ExternalChildKind::Trait => DefIdKind::Trait(child_ref.as_trait_def_id(pkg_id)),
-        ExternalChildKind::Mod => DefIdKind::Mod(ModId::new_ext(pkg_id.value(), child_ref.sym_idx)),
+        ExternalChildKind::Ty => DefIdKind::Ty(child_ref.as_ty_def_id()),
+        ExternalChildKind::Val => DefIdKind::Val(child_ref.as_val_def_id()),
+        ExternalChildKind::Variant => DefIdKind::Variant(child_ref.as_variant_def_id()),
+        ExternalChildKind::Trait => DefIdKind::Trait(child_ref.as_trait_def_id()),
+        ExternalChildKind::Mod => {
+            DefIdKind::Mod(ModId::new_ext(child_ref.pkg_id.value(), child_ref.sym_idx))
+        }
     }
 }

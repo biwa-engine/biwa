@@ -1,0 +1,12 @@
+// import が作った名前も、可視性を持つ項目として他のモジュールから引ける (issue #18)。
+
+mod a;
+mod b;
+
+// NG: `secret` は `b` の private なモジュールなので、glob のパスの途中で見えない。
+import b::secret::*;
+
+pub fn uses() -> Int {
+  a::shared()    // OK: `a` が pub(super) で import したもの (ここは `a` の親)
+    + a::kept()  // NG: `a` が private に import したもの (`a` の中でしか見えない)
+}

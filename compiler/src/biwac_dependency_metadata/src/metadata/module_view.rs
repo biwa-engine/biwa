@@ -6,7 +6,14 @@ use std::{
 use biwac_base::{IdentInterner, InternedIdent, PackageId};
 use biwac_span::{DefId, PackageLocalDefId, TyDefId, ValDefId, VariantDefId};
 
-use super::{DepMetadata, body::SymbolBody};
+use super::{
+    DepMetadata,
+    body::SymbolBody,
+    format::{
+        DiskVisibility, REEXPORT_KIND_MOD, REEXPORT_KIND_TRAIT, REEXPORT_KIND_TY,
+        REEXPORT_KIND_VAL, REEXPORT_KIND_VARIANT,
+    },
+};
 
 /// 外部パッケージのモジュールのシンボルを名前で検索する統一インタフェース。
 ///
@@ -38,12 +45,28 @@ pub trait PackageModuleView: Send + Sync {
 
     /// この view のパッケージ ID。
     fn pkg_id(&self) -> PackageId;
+
+    /// 子シンボルをすべて返す (glob import 用)。見えないものも含む。
+    fn list_children(&self, interner: &mut IdentInterner)
+    -> Vec<(InternedIdent, ExternalChildRef)>;
+
+    /// 型シンボルが enum ならそのバリアントをすべて返す (glob import 用)。enum でなければ `None`。
+    fn list_variants(
+        &self,
+        local_ty_idx: u32,
+        interner: &mut IdentInterner,
+    ) -> Option<Vec<(InternedIdent, ExternalChildRef)>>;
 }
 
 /// 外部パッケージのシンボルへの参照。
 #[derive(Debug, Clone, Copy)]
 pub struct ExternalChildRef {
-    /// このパッケージ内でのシンボルインデックス (DiskSymbolIndex の値)。
+    /// シンボルを定義しているパッケージ。
+    ///
+    /// ふつうは引いた view のパッケージだが、re-export (`pub import`) は
+    /// 別のパッケージのシンボルを指しうる。
+    pub pkg_id: PackageId,
+    /// `pkg_id` のパッケージ内でのシンボルインデックス (DiskSymbolIndex の値)。
     pub sym_idx: u32,
     pub kind: ExternalChildKind,
     /// 宣言の可視性。見えないものも表から消さずに返す
@@ -61,20 +84,24 @@ pub enum ExternalChildKind {
 }
 
 impl ExternalChildRef {
-    pub fn as_ty_def_id(&self, pkg_id: PackageId) -> TyDefId {
-        TyDefId::new(DefId::new(pkg_id, PackageLocalDefId::new(self.sym_idx)))
+    fn def_id(&self) -> DefId {
+        DefId::new(self.pkg_id, PackageLocalDefId::new(self.sym_idx))
     }
 
-    pub fn as_trait_def_id(&self, pkg_id: PackageId) -> biwac_span::TraitDefId {
-        biwac_span::TraitDefId::new(DefId::new(pkg_id, PackageLocalDefId::new(self.sym_idx)))
+    pub fn as_ty_def_id(&self) -> TyDefId {
+        TyDefId::new(self.def_id())
     }
 
-    pub fn as_val_def_id(&self, pkg_id: PackageId) -> ValDefId {
-        ValDefId::new(DefId::new(pkg_id, PackageLocalDefId::new(self.sym_idx)))
+    pub fn as_trait_def_id(&self) -> biwac_span::TraitDefId {
+        biwac_span::TraitDefId::new(self.def_id())
     }
 
-    pub fn as_variant_def_id(&self, pkg_id: PackageId) -> VariantDefId {
-        VariantDefId::new(DefId::new(pkg_id, PackageLocalDefId::new(self.sym_idx)))
+    pub fn as_val_def_id(&self) -> ValDefId {
+        ValDefId::new(self.def_id())
+    }
+
+    pub fn as_variant_def_id(&self) -> VariantDefId {
+        VariantDefId::new(self.def_id())
     }
 }
 
@@ -87,8 +114,8 @@ pub struct DepMetadataModuleView {
     dep: Arc<DepMetadata>,
     module_sym_idx: u32,
     pkg_id: PackageId,
-    /// 遅延構築: 子シンボル名 (raw string) → (sym_idx, kind)
-    name_index: OnceLock<HashMap<String, (u32, ExternalChildKind)>>,
+    /// 遅延構築: 子シンボル名 (raw string) → 参照 (re-export を含む)
+    name_index: OnceLock<HashMap<String, ExternalChildRef>>,
 }
 
 impl DepMetadataModuleView {
@@ -124,7 +151,7 @@ impl DepMetadataModuleView {
 
     /// モジュールの子シンボル名索引を構築する。
     /// 各子シンボルのボディを lazy decode して名前文字列を取得する。
-    fn build_name_index(&self) -> HashMap<String, (u32, ExternalChildKind)> {
+    fn build_name_index(&self) -> HashMap<String, ExternalChildRef> {
         let mut map = HashMap::new();
 
         let body = match self.dep.get_symbol_body(self.module_sym_idx as usize) {
@@ -162,7 +189,51 @@ impl DepMetadataModuleView {
                 Ok(s) => s.to_string(),
                 Err(_) => continue,
             };
-            map.insert(name_str, (child_idx.0, kind));
+            map.insert(
+                name_str,
+                ExternalChildRef {
+                    pkg_id: self.pkg_id,
+                    sym_idx: child_idx.0,
+                    kind,
+                    vis: self.dep.ext_visibility(self.pkg_id, child_idx.0),
+                },
+            );
+        }
+
+        // re-export。名前は定義と重ならない (名前解決が検査している) が、念のため定義を優先する。
+        for r in &mod_data.reexports.0 {
+            let Ok(name) = self.dep.strings.get(r.name) else {
+                continue;
+            };
+            let kind = match r.kind {
+                REEXPORT_KIND_MOD => ExternalChildKind::Mod,
+                REEXPORT_KIND_TY => ExternalChildKind::Ty,
+                REEXPORT_KIND_VAL => ExternalChildKind::Val,
+                REEXPORT_KIND_VARIANT => ExternalChildKind::Variant,
+                REEXPORT_KIND_TRAIT => ExternalChildKind::Trait,
+                _ => continue,
+            };
+            let (pkg_id, sym_idx) = if r.external == 0 {
+                (self.pkg_id, r.target)
+            } else {
+                match self.dep.resolve_ext_sym(r.target) {
+                    Some(t) => t,
+                    None => continue,
+                }
+            };
+            // 見える範囲は re-export したモジュール (このモジュール) が基準である。
+            let declared = DiskVisibility::try_from(r.vis)
+                .map(biwac_hir::DeclaredVisibility::from)
+                .unwrap_or(biwac_hir::DeclaredVisibility::Private);
+            let vis = self
+                .dep
+                .visibility_in_module(self.pkg_id, self.module_sym_idx, declared);
+            map.entry(name.to_string()).or_insert(ExternalChildRef {
+                pkg_id,
+                sym_idx,
+                kind,
+                vis,
+            });
         }
         map
     }
@@ -176,13 +247,7 @@ impl PackageModuleView for DepMetadataModuleView {
     ) -> Option<ExternalChildRef> {
         let name_str = interner.get_str(&name)?;
         let index = self.name_index.get_or_init(|| self.build_name_index());
-        index
-            .get(name_str)
-            .map(|&(sym_idx, kind)| ExternalChildRef {
-                sym_idx,
-                kind,
-                vis: self.dep.ext_visibility(self.pkg_id, sym_idx),
-            })
+        index.get(name_str).copied()
     }
 
     fn get_module_view(&self, module_sym_idx: u32) -> Box<dyn PackageModuleView> {
@@ -219,6 +284,7 @@ impl PackageModuleView for DepMetadataModuleView {
                 };
                 if self.dep.strings.get(variant_data.name).unwrap_or("") == name_str {
                     return Some(ExternalChildRef {
+                        pkg_id: self.pkg_id,
                         sym_idx: variant_sym_idx.0,
                         kind: ExternalChildKind::Variant,
                         vis: self.dep.ext_visibility(self.pkg_id, variant_sym_idx.0),
@@ -246,6 +312,7 @@ impl PackageModuleView for DepMetadataModuleView {
             let assoc_name = self.dep.strings.get(fn_data.name).unwrap_or("");
             if assoc_name == name_str {
                 return Some(ExternalChildRef {
+                    pkg_id: self.pkg_id,
                     sym_idx: assoc_sym_idx.0,
                     kind: ExternalChildKind::Val,
                     vis: self.dep.ext_visibility(self.pkg_id, assoc_sym_idx.0),
@@ -257,5 +324,54 @@ impl PackageModuleView for DepMetadataModuleView {
 
     fn pkg_id(&self) -> PackageId {
         self.pkg_id
+    }
+
+    fn list_children(
+        &self,
+        interner: &mut IdentInterner,
+    ) -> Vec<(InternedIdent, ExternalChildRef)> {
+        let index = self.name_index.get_or_init(|| self.build_name_index());
+        // 名前順に並べる (glob の結果を決定論的にするため)。
+        let mut names: Vec<(&String, &ExternalChildRef)> = index.iter().collect();
+        names.sort_by(|a, b| a.0.cmp(b.0));
+        names
+            .into_iter()
+            .map(|(name, r)| (interner.get_or_insert(name), *r))
+            .collect()
+    }
+
+    fn list_variants(
+        &self,
+        local_ty_idx: u32,
+        interner: &mut IdentInterner,
+    ) -> Option<Vec<(InternedIdent, ExternalChildRef)>> {
+        let hdr = self.dep.sym_hdrs.get(local_ty_idx as usize)?;
+        let body = self.dep.sym_bodies.get(local_ty_idx as usize, hdr).ok()?;
+        let SymbolBody::Enum(ref enum_data) = *body else {
+            return None;
+        };
+        let mut out = Vec::new();
+        for &variant_sym_idx in &enum_data.variant_symbols.0 {
+            let variant_hdr = self.dep.sym_hdrs.get(variant_sym_idx.0 as usize)?;
+            let variant_body = self
+                .dep
+                .sym_bodies
+                .get(variant_sym_idx.0 as usize, variant_hdr)
+                .ok()?;
+            let SymbolBody::Variant(ref variant_data) = *variant_body else {
+                continue;
+            };
+            let name = self.dep.strings.get(variant_data.name).unwrap_or("");
+            out.push((
+                interner.get_or_insert(name),
+                ExternalChildRef {
+                    pkg_id: self.pkg_id,
+                    sym_idx: variant_sym_idx.0,
+                    kind: ExternalChildKind::Variant,
+                    vis: self.dep.ext_visibility(self.pkg_id, variant_sym_idx.0),
+                },
+            ));
+        }
+        Some(out)
     }
 }
