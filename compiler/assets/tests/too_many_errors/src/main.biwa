@@ -1,3 +1,6 @@
+mod collections;
+mod math;
+
 import math::pos::Pos;
 import math::pos::Pos::new;
 import collections::Pair;

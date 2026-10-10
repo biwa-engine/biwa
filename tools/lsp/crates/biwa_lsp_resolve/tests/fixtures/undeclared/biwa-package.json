@@ -1,0 +1,7 @@
+{
+  "name": "undeclared",
+  "version": "0.1.0",
+  "description": "biwa_lsp_resolve tests only: `src/stray.biwa` is not declared with `mod`.",
+  "dependencies": [],
+  "no_std": true
+}

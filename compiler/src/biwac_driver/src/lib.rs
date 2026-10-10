@@ -1883,6 +1883,44 @@ mod tests {
         );
     }
 
+    /// `mod` 宣言・可視性の構文・`super::` パスを使ったパッケージがコンパイルできること
+    /// (issue #8 の段階 1。可視性はまだ検査しない)。
+    ///
+    /// `super::` は import・型・式のどこにも書け、`super::super::` で 2 つ上を指す。
+    #[test]
+    fn compiles_mod_tree_with_super_paths() {
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/mod_tree").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(result.is_ok(), "mod_tree must compile");
+    }
+
+    /// ルートモジュールで `super::` を使うと名前解決のエラーになること。
+    #[test]
+    fn rejects_super_beyond_root() {
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/super_beyond_root").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(
+            result.is_err(),
+            "`super::` in the root module must be rejected"
+        );
+    }
+
     /// 型がどこからも決まらない式は、コンパイラの panic ではなく型エラーになること。
     ///
     /// ペイロードを持たないジェネリックなバリアントは型引数が決まらないことがある。

@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use biwac_base::{BiwacError, IdentInterner, MetadataHolder, ModId, ModPath, Target};
 use biwac_dependency_metadata::{DepMetadata, ExternalPackage};
-use biwac_package_loader::{LoadedModule, Pkg, SourceParser};
+use biwac_package_loader::{LoadedModule, Pkg, PkgLoadError, SourceParser};
+
+use crate::Diagnostic;
 
 /// [`biwac_package_loader::Pkg::try_load`] に差し込む、biwa-lsp 自身の
 /// lossless / エラー耐性パーサ。
@@ -172,6 +174,67 @@ fn replace_ast(
     ast
 }
 
+/// 開いているファイルが `mod` 宣言されていないときの診断の文面。
+/// そのファイルについての [`PkgLoadError::UndeclaredModuleFile`] が無ければ `None`。
+pub(crate) fn undeclared_message(
+    pkg_root: &Path,
+    doc_path: &Path,
+    load_errors: &[PkgLoadError<'static>],
+) -> Option<String> {
+    let rel = doc_path
+        .strip_prefix(pkg_root)
+        .ok()?
+        .to_str()?
+        .replace('\\', "/");
+    load_errors.iter().find_map(|e| match e {
+        PkgLoadError::UndeclaredModuleFile { path, declare_in } if *path == rel => {
+            Some(match declare_in {
+                Some(parent) => format!(
+                    "This file is not declared as a module. Declare it with `mod <name>;` in `{parent}`."
+                ),
+                None => "This file is not declared as a module, and its directory has no module \
+                         file of the same name to declare it."
+                    .to_string(),
+            })
+        }
+        _ => None,
+    })
+}
+
+/// モジュール木の形の誤りのうち、開いているファイル (`doc_mod_id`) の中を指すものを診断にする。
+pub(crate) fn loader_diagnostics(
+    load_errors: &[PkgLoadError<'static>],
+    doc_mod_id: ModId,
+) -> Vec<Diagnostic> {
+    load_errors
+        .iter()
+        .filter_map(|e| match e {
+            PkgLoadError::ModuleFileNotFound {
+                name,
+                expected,
+                span,
+            } => Some((
+                span,
+                format!("File for module `{name}` not found: `{expected}` is expected."),
+            )),
+            PkgLoadError::DuplicatedModDecl { name, second, .. } => {
+                Some((second, format!("Module `{name}` is declared twice.")))
+            }
+            PkgLoadError::RootModuleNameDeclared { name, span } => Some((
+                span,
+                format!("Module `{name}` cannot be declared in the root module."),
+            )),
+            _ => None,
+        })
+        .filter(|(span, _)| span.module() == doc_mod_id)
+        .map(|(span, message)| Diagnostic {
+            start: span.begin(),
+            end: span.end(),
+            message,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,11 +268,11 @@ mod tests {
             vec!["Lib".to_string(), "Mod([\"broken\"])".to_string()]
         );
 
-        // root module は `lib.biwa` 自身。`fn add` 1 つがちゃんと読めている。
+        // root module は `lib.biwa` 自身。`mod broken;` と `fn add` の 2 つがちゃんと読めている。
         assert_eq!(
             pkg.root_module.ast.globals.len(),
-            1,
-            "expected lib.biwa's single `fn add` to survive lowering"
+            2,
+            "expected lib.biwa's `mod broken;` and `fn add` to survive lowering"
         );
     }
 }

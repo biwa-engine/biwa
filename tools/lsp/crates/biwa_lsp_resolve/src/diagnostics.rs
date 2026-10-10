@@ -165,6 +165,11 @@ fn to_diagnostic(err: &ResolveError, interner: &IdentInterner) -> Option<RawDiag
             None
         }
 
+        E::SuperBeyondRoot { span } => raw(
+            span.clone(),
+            "`super` goes beyond the root module; the root module has no parent module."
+                .to_string(),
+        ),
         E::UnexpectedSelfType { span } => raw(
             span.clone(),
             "`Self` is not usable here; write the type name instead.".to_string(),

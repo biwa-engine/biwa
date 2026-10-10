@@ -1,0 +1,332 @@
+# シンボルの可視性 (issue #8) 実装方針・状況
+
+issue #8 「[feature] Visibility of symbols」の実装方針と進み具合のメモ。決まったこと・未決のこと・調べたことをここに集める。
+
+状況: **段階 1 (構文と `mod` 宣言) まで実装済み**。可視性はまだ検査していない。
+
+## 0. スコープ
+
+- **含む**:
+  - 可視性 `pub` / `pub(package)` / `pub(super)` / 無印 (module private)。おおむね Rust と同じにする。
+  - Rust 風の子モジュール宣言 `mod foo;` / `pub mod foo;` (issue のコメントで導入を決定)。
+  - パスの先頭の `super::` (`super::super::..` も)。
+  - 名前解決・型推論で「シンボルは見つかったが見えない」ときの専用のエラー。
+  - std・フィクスチャ・`~/test1` への可視性の付与。
+- **今回は範囲外**: `pub import` (再 export)、`self::` パス。
+- **導入しない可能性がある**: `pub(in path)`、インラインの `mod foo { .. }`。
+
+## 1. 決まったこと
+
+1. **enum の variant には可視性を書けない。** 常に enum と同じ可視性になる (Rust と同じ)。variant のフィールドも同じ。
+   書かれていたら「ここには書けない」とエラーにする。
+2. **private は「定義したモジュールとその子孫」から見える** (Rust と同じ)。
+   - std の ui のように、struct を `ui.biwa` で定義し impl を子モジュール (`ui/box.biwa` など) に置く構成がそのまま成り立つ。
+3. **`pub import` と `self::` は今回は扱わない。** `pub(in path)` とインライン `mod` は導入しない可能性がある。
+   ただし `pub import` は将来の導入が確定しているので、今回の設計はそれを前提にする (§5)。
+4. **ファイルがあるのに `mod` 宣言されていないものはエラーにする。** 警告の仕組みは今回は導入しない (§5.1)。
+5. **private-in-public は、実効可視性を正しく判定して定義側でエラーにする** (§5.2)。
+   - 実効可視性は module tree の祖先の可視性で頭打ちになるので、Voldemort 型 (§4.2) は作れない。一旦はそれでよい。
+   - sealed trait (§4.3) も作れない。必要になったら別の手段で表す。
+
+## 2. 未決のこと
+
+- (今は無い)
+- 警告の仕組みは今回は作らない。作るときの候補は §5.1 に残した。
+
+## 3. 今のコードの状態 (調査)
+
+- **構文**: `pub` / `super` / `mod` はどれもキーワードではない (`biwac_lexer/src/lib.rs`)。
+  パスの先頭に書けるのは `package::` (自パッケージの根)、依存パッケージ名、今いるモジュールの子、import した名前だけ
+  (`AbsolutePathHeader` は `Package` / `SelfTyp` のみ)。
+- **モジュール**: `biwac_package_loader` がディレクトリを走査し、見つけた `.biwa` をすべてモジュールにしている
+  (`foo.biwa` + `foo/` を子として)。`mod` 宣言の仕組みは無い。
+- **名前解決**: `NameTree` を `resolve_path_in_module` / `resolve_path_in_ty` / `resolve_path_in_ext_pkg`
+  (`biwac_name_resolver/src/resolving/context/module_level.rs`) が 1 セグメントずつ辿る。
+  表の項目 (`ModuleNameTreeItem` / `AssocNameTreeItem`) に可視性の情報は無い。
+- **メンバとメソッド**: 型推論 (`biwac_type_inferrer/src/inferrer.rs`) が解決する。
+  フィールドアクセスは `infer_member_access`、struct リテラルは `infer_struct_literal`、
+  メソッド呼び出しは `CallTarget::Method` を決めるところ。
+- **`.biwameta`**: シンボルヘッダに `vis` 欄と
+  `DiskVisibility { Private, SuperModulePublic, PackagePublic, Public }` が既にある
+  (`biwac_dependency_metadata/src/metadata/format.rs`)。ただし書き出しは常に `Public` (`metadata.rs`)。
+  struct のメンバと関連 item には可視性の欄が無い。
+- **import は再 export されない**: import した名前は `imports` に入るだけで、モジュールの子にはならない。
+- **std**: 可視性を前提にしたコメント (`// pub(super)` など) が 56 か所ある。
+  `game/ui.biwa` には「`pub import` も visibility も無いので型定義を同じファイルに集めている」という注記がある。
+- **エラーの仕組み**: `ErrorHolder<'c, E: BiwacError> { errs, ctx }` (`biwac_base/src/error.rs`)。警告の仕組みは無い。
+
+## 4. Rust ではどうなっているか (調査)
+
+### 4.1 可視性を書ける場所と意味
+
+- enum の variant には書けない (E0449: visibility qualifiers are not permitted here)。常に enum と同じ。
+  variant のフィールドも同じ。外からの構築や網羅的な match を制限したいときは `#[non_exhaustive]` (crate 単位) を使う。
+- trait の項目と trait impl の項目にも書けない (E0449)。trait と同じ可視性になる。
+  可視性を書けるのは inherent impl (`impl Foo { .. }`) の項目だけ。
+- struct のフィールドはフィールドごとに書け、既定は private。
+  見えないフィールドが 1 つでもあると、外からは struct リテラルで作れない。
+  パターンでは見えるフィールドしか書けない (残りは `..`)。
+- private は「定義したモジュールとその子孫」、`pub(super)` は「親モジュールとその子孫」、`pub(crate)` は crate 内。
+- `pub` は「祖先が許す範囲」で見える。実際には、パスの各セグメントがその場所から見えるかを 1 つずつ確かめる。
+  そのため private なモジュールの中の `pub` 項目は、そのモジュールが見える範囲からしか届かない。
+- 関連 item の可視性の基準は impl ブロックのあるモジュール (型の定義場所ではない)。
+
+### 4.2 private-in-public: なぜ「警告だがコンパイルは通る」のか
+
+前提の訂正: `private_interfaces` は clippy ではなく rustc 自身の lint (既定で warn)。
+
+**経緯** (RFC 136 → RFC 2145 "type privacy and private-in-public lints"。lint 化は Rust 1.74):
+
+- **RFC 136 (旧規則) は定義側のエラーだった** (E0445 / E0446)。
+  「`vis_interface > vis_type` なら、その型を item のインターフェースに使ってはならない」という規則。これには 2 つの問題があった。
+  1. **厳しすぎた (誤検出)**。判定が実際の到達可能性ではなく、その場の `pub` という字面に基づいていた。
+     private なモジュールの中の `pub fn` が private な型を返すと、どちらも外から届かないのにエラーになった。
+     回避するために型を `pub` にする (private なモジュールに置いたまま) 書き方が広まり、規則の意味が薄れた。
+  2. **足りなかった (漏れ)**。RFC の言葉では「型推論が賢いので、private-in-public 規則では type privacy を保証するのに不十分だった」。
+     ジェネリクス・trait の関連型・impl などを経由すると、private な型の値が規則をすり抜けて外に出られた。
+- **RFC 2145 で、本当の保証を使用側の検査 ("type privacy") に移した。**
+  private な型は、それが見えない場所で名前を書くことも、その型の値を得ること (式の型に現れること) もエラーになる。
+  使用側で塞いだので、定義側の規則は健全性のためには要らなくなった。
+- **それでも定義側の指摘は人間にとって有用なので、lint として残した。**
+  lint ならヒューリスティクスを使え、字面の `pub` ではなく到達可能性 (effective visibility) で判定できるので、直感に近くなる。
+  - `private_interfaces`: インターフェースの private な型 (warn)
+  - `private_bounds`: where 節などの境界の private な型・trait (warn)
+  - `unnameable_types`: 外から到達できるが名前を書けない型 (allow)
+- **わざと残した柔軟性** (RFC の動機の例):
+  - sealed trait: `pub fn f<T: PrivateTrait>(..)` で、外から impl できない trait を作る。
+  - Voldemort 型: private なモジュールの中の `pub struct` を返す関数。外からその型の名前は書けないが、値は使える (メソッドを呼べる)。
+
+**手元の rustc 1.98.1 での確認**:
+
+- `mod m { struct Priv; .. pub fn make() -> Priv }` は定義側が警告
+  (`type Priv is more private than the item make`) で、コンパイルは通る。
+- 外から `m::make()` を呼ぶと、`let _ = m::make();` だけでも使用側が**エラー** (`type Priv is private`)。
+  つまり Rust でも「名前は知らないが値は使える」は**本当に private な型では許されない**。
+- 許されるのは、名前を書けないが可視性は `pub` の型 (Voldemort 型) だけ。
+  `mod inner { pub struct Unnameable; .. }` を `pub fn` で返すと、外から `.hello()` を呼べた (既定では警告も無し)。
+
+**まとめ**:
+
+- 今の Rust では、権限の境界は使用側の type privacy (エラー) が守り、定義側は lint (警告) で指摘するという二重の形になっている。
+- この形は設計として選ばれたというより、当初の定義側の規則 (RFC 136) が誤検出と漏れの両方を抱えて失敗し、
+  使用側の検査を後から足して、定義側を lint に格下げしたという歴史的経緯の産物である。
+  定義側では通るのに使うと必ずエラーになる関数が書ける、という意味でちぐはぐさは残っている。
+- 型の名前を知らずに値を使う柔軟性は、Rust では「`pub` だが名前を書けない型」(Voldemort 型) で実現している。
+  private な型を通して実現しているのではない。
+- Biwa は歴史を持たないので、最初から実効可視性で判定する定義側の規則に一本化する (§5.2)。
+
+### 4.3 sealed trait
+
+- 「外から**使える** (境界に書ける・メソッドを呼べる) が、外から**実装はできない**」trait を作る Rust の慣用句。
+- 書き方: 外から名前を書けない supertrait を付ける。
+
+  ```rust
+  mod private { pub trait Sealed {} }      // 外から名前を書けない (Voldemort な trait)
+  pub trait Shape: private::Sealed {       // 外から使えるが、Sealed を impl できないので Shape も impl できない
+      fn area(&self) -> f64;
+  }
+  impl private::Sealed for Circle {}       // 実装はこの crate の中だけ
+  impl Shape for Circle { .. }
+  ```
+
+- 目的:
+  - **後方互換を保ったまま trait を育てられる**: 外に実装が無いので、既定実装の無いメソッドを後から足しても誰も壊れない。
+  - **実装する型の集合を閉じられる**: ライブラリ側が「この型たちだけ」を前提にできる (enum に近い使い方)。
+  - 例: std の `SliceIndex` (`slice[..]` に渡せる型は std が決めた範囲・整数などに限る)。
+- Biwa では: 実効可視性で頭打ちにするので「`pub` だが名前を書けない trait」は作れず、
+  private な supertrait を付けると private-in-public でエラーになる。つまり今の規則では sealed trait は書けない。
+  必要になったら、慣用句ではなく言語機能として直接表す (例: `#[sealed]` 属性で「定義したパッケージの中でしか impl できない」とする) 方が意図が明確。
+
+## 5. 方針
+
+### 5.1 `mod` 宣言の無いファイル → エラー
+
+- 宣言の無いファイルは、ほぼ確実に書き忘れか消し忘れ。直し方も明らか (宣言を足すか、ファイルを消す) なので、エラーにしても困らない。
+  Rust の「黙って無視」は、よく知られた落とし穴である。
+- 警告の仕組みは今回は作らない。ad hoc な警告も足さない。後から作るときの候補:
+  - (a) `WarningHolder` + `trait BiwacWarning` を別に作る (`&mut WarningHolder` を渡して push する)。
+  - (b) `BiwacError` を「診断」に一般化し、深刻度を持たせる。
+  (b) の方が LSP (診断の深刻度を既に区別している) と揃えやすく、(a) は「エラーがあれば止める」という今の流れに手を入れずに済む。
+
+### 5.2 private-in-public → 定義側で、実効可視性を基準にエラー
+
+**実効可視性**
+
+- 項目に届くパスごとに、パス上の各段 (モジュール・項目) の可視性の交わりを取る。その中で最も広いものが実効可視性。
+  - 今は届くパスが定義の場所の 1 本しか無い。
+    たとえば private なモジュールの中の `pub fn` の実効可視性は、そのモジュールの private と同じ。
+  - **`pub import` を入れると、再 export ごとに届くパスが増える**。
+    再 export は依存の向きが循環しうるので、実効可視性はモジュール木と再 export の辺を合わせたグラフ上の不動点として求める
+    (rustc の `EffectiveVisibilities` と同じ考え方)。
+    再 export は元の項目の宣言した可視性より広くはできない (Rust の E0364 / E0365 と同じ) ものとする。
+  - したがって実効可視性の計算は、最初から「パスの集合」を扱う形で作る (パスが 1 本の今は自明に解ける)。
+    「祖先を辿って交わりを取る」だけの実装にすると、`pub import` を入れたときに作り直しになる。
+- 関連 item (inherent impl の項目): 項目の可視性 ∩ 型の実効可視性。
+- impl ブロック (trait impl): trait の実効可視性 ∩ 型の実効可視性 ∩ impl の型引数・境界に現れる型の実効可視性 (Rust と同じ)。
+
+**規則**
+
+- item の実効可視性を V とすると、その**インターフェース**に現れる型・trait はすべて、実効可視性が V 以上でなければならない。
+  型引数の中まで辿る (`Vec[Priv]` も違反)。
+
+**インターフェース** (今ある構文):
+
+- fn・native fn・scene の引数・戻り値・ジェネリック境界
+- struct のメンバの型 (メンバの可視性 ∩ struct の可視性で判定)
+- enum の variant のフィールドの型 (enum の可視性で判定)
+- type alias・native type alias の右辺
+- trait の項目のシグネチャ・ジェネリック境界
+- inherent impl の項目のシグネチャ
+- trait impl の項目のシグネチャ (impl の実効可視性で判定)
+
+**将来の言語機能** (「今は無いから漏れない」とは考えない。入れるときに必ずインターフェースを定めること):
+
+- `pub import`: 実効可視性の計算に辺を足す (上記)。再 export そのものはインターフェースを持たない。
+- 関連型: trait 内の宣言の境界と、**impl 側の `type Out = T` の右辺**の両方をインターフェースに含める
+  (impl の実効可視性で判定)。Rust の旧規則の漏れの典型はここだった。
+- supertrait: インターフェースに含める (private な supertrait はエラー。sealed trait は §4.3 の別手段で)。
+- `impl Trait` (戻り値の存在型)・trait object: 境界 (trait) はインターフェースに含める。
+  隠れた具体型を含めるかは、「名前を出さずに private な型の値を外に出す」ことを許すかどうかの判断になるので、入れるときに決める。
+- そのほか型が現れる構文 (const・static・既定の型引数など) を足すときも同じ。
+
+**規則を守らせる仕組み**
+
+- インターフェースの列挙を個々の検査に散らさず、「item → そのインターフェースに現れる型の列」を返す 1 つの関数にまとめる。
+  item の種類を `match` で網羅させ、新しい item の種類を足したらコンパイルが通らないようにする。
+- 負例のフィクスチャを item の種類ごとに置く。
+
+**この方針で失うもの**: Voldemort 型 (§4.2) と sealed trait (§4.3)。一旦はそれでよい。
+
+## 6. 実装方針 (案)
+
+### 6.1 構文 (lexer / parser / AST)
+
+- キーワード `pub` / `super` / `mod` を足す。
+- `Visibility { Private, Super, Package, Public }` を AST に足す (`pub(super)` / `pub(package)` は `pub` の後の括弧で読む)。
+- 書ける場所: モジュール宣言、fn / native fn / scene、struct / enum / type alias / native type alias、trait、
+  struct のメンバ、inherent impl の項目。
+- 書けない場所 (書いたらエラー): enum の variant とそのフィールド、trait の項目、trait impl の項目。
+- パスの先頭に `super::` を足す (`AbsolutePathHeader::Super(n)`)。ルートモジュールより上に出たらエラー。
+- `mod foo;` / `pub mod foo;` を `Globals::Mod` として足す。
+
+### 6.2 モジュール宣言とローダー
+
+- ローダーを「ディレクトリにあるものを全部読む」から「宣言されたものだけを読む」に変える。
+  親を構文解析してから子を辿る順になり、`try_load` の作りが変わる。
+- 宣言があるのにファイルが無い → エラー。ファイルがあるのに宣言が無い → エラー (§5.1)。
+- `ModId` の採番は決定論的に保つ (今の「ファイル名順」の考え方を維持。SVH が毎回変わらないように)。
+- LSP も同じローダーを使う (`SourceParser`) ので、宣言の無いファイルを開いたときの扱いを決める。
+
+### 6.3 可視性を「見える範囲」に直して表に載せる
+
+- 宣言の可視性を「見える範囲のモジュール」に直す。
+  - private → 定義したモジュール
+  - `pub(super)` → その親モジュール (ルートモジュールでの `pub(super)` はエラー)
+  - `pub(package)` → このパッケージのルート
+  - `pub` → どこからでも
+  - 関連 item は impl ブロックのあるモジュールを基準にする。
+- 判定は「利用する側のモジュールが、範囲のモジュールそのものかその子孫か」。`ModId` から親を辿れるようにする。
+- `ModuleNameTreeItem` と `AssocNameTreeItem` に範囲を持たせる。
+  HIR の定義 (ValDef / TyDef / struct のメンバ) にも持たせる (型推論で使うため)。
+
+### 6.4 検査する場所とエラー
+
+「見つからない」ではなく、それ専用のエラーにする。
+
+- **名前解決**: `resolve_path_in_module` / `resolve_path_in_ty` / `resolve_path_in_ext_pkg` で、
+  セグメントを 1 つ辿るたびに見えるかを確かめる。
+  import、型の注釈、関連関数のパス、途中のモジュールの可視性 (「祖先が許す範囲」) がまとめて効く。
+  - 例: `ResolveError::PrivateItem { segment, kind, visible_in }` →
+    「function `sys_ui_create` is private to module `std::game::base_engine`」
+- **型推論**:
+  - `infer_member_access`: 見えないフィールド → 「field `x` of struct `Foo` is private」。関数型のメンバを呼ぶ `self.run(x)` も同じ経路。
+  - `infer_struct_literal`: 見えないフィールドが 1 つでもあれば作れない → 「cannot construct `Foo` here: field `x` is private」。
+  - パターン: 見えないフィールドを書いたらエラー。
+  - メソッド呼び出し: 見つかったメソッドが見えなければエラー (Rust と同じく、ほかの候補へは逃げない)。
+  - 利用する側のモジュールは、推論中の関数から取る。持ち上げた無名関数は元の関数のモジュールを使う。
+- **private-in-public** (§5.2): インターフェースの検査。名前解決の後 (型が引ける時点) に、実効可視性を求めてから走らせる。
+- **検査しない経路**: lang item (novel statement の展開先 `content_push` など)、host export、エントリポイント。
+  コンパイラやホストが DefId や名前で直接呼ぶので、パスを辿らない。これで正しい。
+
+### 6.5 `.biwameta`
+
+- シンボルヘッダの `vis` に本当の値を書く。struct のメンバと関連 item にも可視性を足し、版を上げる。
+- 依存パッケージの項目は、表から消さずに可視性を持ったまま読み込む。
+  「見つからない」ではなく「private です」と言えるようにするため。
+- 可視性は依存する側の解決結果を変えるので、SVH に入れる (書き出しに載せれば自然に入る)。
+- 単相化と生成コードには影響しない。依存の private な関数も、ジェネリックな関数の中身から呼ばれれば実体化される。
+
+### 6.6 std・フィクスチャ・`~/test1`
+
+- 既定が private になるので、std には全面的に `pub` を付ける。
+  兄弟モジュールから呼ぶもの (`materialize_into` など) は `pub(super)` で、既存の `// pub(super)` コメントと一致する。
+- std の約 30 ファイルに `mod` 宣言を足す。
+
+### 6.7 LSP
+
+- `tools/lsp` は自前の文法 (`biwa_lsp_parser`) を持っているので、`pub` / `super` / `mod` を読めるようにし、新しいエラーの表示もつなぐ。
+
+## 7. 段階
+
+1. 構文と `mod` 宣言。全部受理するが、可視性はまだ検査しない。std・フィクスチャ・`~/test1` に `mod` 宣言を足す。LSP の文法も対応する。
+2. 可視性を HIR・名前の表・`.biwameta` に載せる (版を上げる)。まだ検査しない。
+3. 名前解決での検査。同時に std に `pub` を付け、負例のフィクスチャ
+   (private な関数・型、private なモジュール越し、依存パッケージの private、`super::`) を足す。
+4. 型推論での検査 (フィールド・struct リテラル・パターン・メソッド) と負例。
+5. private-in-public の検査 (§5.2) と負例。
+
+3 以降で既定が実際に private になるので、std の書き換えは 3 にまとめる。
+
+## 8. 進み具合
+
+### 8.1 段階 1: 構文と `mod` 宣言 (実装済み)
+
+可視性は構文として受理し AST に載せるだけで、まだ何も検査しない。
+
+- **字句**: `pub` / `super` / `mod` をキーワードにした (`biwac_lexer`)。ノベル DSL の字句 (`biwac_novel_parser`) には `super` だけを足した
+  (`$` / `#` の中に書けるのはパスまでなので)。どれも既存のコードで識別子として使われていないことを確かめた。
+- **AST** (`biwac_ast`):
+  - `Visibility { Private, Super(Span), Package(Span), Public(Span) }`。
+  - `vis` を持つもの: fn・native fn・メソッド・native メソッド・struct・struct のメンバ (`StructMemberDecl { vis, id, typ }`。
+    以前の `(Ident, TypRepr)` を置き換えた)・enum・type alias・native type alias・trait・scene・`ModDecl`。
+  - `Globals::Mod(ModDecl { vis, id, span })`。
+  - `AbsolutePathHeader::Super { depth, span }` (`depth` は `super` の数)。
+- **構文** (`biwac_parser`):
+  - 書く順は属性 → 可視性 → 宣言 (`[[native]] pub fn ..`)。
+  - `<visibility> ::= "pub" ( "(" ( "super" | "package" ) ")" )?`。
+  - 書けない場所 (enum の variant とそのフィールド、trait の項目、trait impl の項目、impl ブロック、import、native code) は
+    読んだうえで `ParseError::NotAllowedHere` にする (「a visibility is not allowed on an enum variant (it has the same visibility as the enum).」など)。
+    `pub import` も「not supported yet」としてここで拒否する。
+  - `mod` 宣言には属性を付けられない (同じく `NotAllowedHere`)。
+  - `super::` (`super::super::..`) はパスの先頭ならどこでも書ける (import・型・式・パターン、ノベル DSL の式も)。後には必ず識別子が要る。
+- **パッケージローダー** (`biwac_package_loader`):
+  - 今までどおり最初に `src/` 以下の `.biwa` をすべて読み、`ModId` をファイル名順に振る
+    (採番が宣言の書き方で変わらないように。`.biwameta` の SVH が安定する)。
+  - そのあとルートから構文解析し、`mod` 宣言を辿って**宣言されたものだけ**をモジュール木に入れる。
+    子のファイルはそのモジュールのディレクトリ (`src/` または `src/a/` など) の `<name>.biwa`。
+  - エラー:
+    - `ModuleFileNotFound`: 宣言されたのにファイルが無い (「File for module `nowhere` not found.」+ 期待したパス)。
+    - `UndeclaredModuleFile`: ファイルがあるのにどこからも宣言されていない。宣言を書くべきファイルを添える。
+      対応するモジュールファイルの無いディレクトリの中の `.biwa` (`src/lost/inner.biwa` で `src/lost.biwa` が無い) もこれになる。
+    - `DuplicatedModDecl`: 同じ名前の宣言が 2 つ。
+    - `RootModuleNameDeclared`: ルートモジュールで `mod main;` / `mod lib;` (ルートモジュールそのものなので子にできない)。
+  - 構文エラーのあるモジュールは、どの子が宣言されているか分からないので子を見ない。
+  - `Pkg::try_load_tolerant`: 上のモジュール木の形の誤りでは失敗せず、読めた分の木と誤りの一覧を返す (LSP 用。下記)。
+    コンパイラは今までどおり `Pkg::try_load` (誤りがあれば失敗)。
+- **名前解決**: `ModuleNameTree` に親モジュール (`parent`) を持たせ、`super::` は `depth` だけ親を辿ってからの相対パスとして解決する。
+  ルートより上を指せば `ResolveError::SuperBeyondRoot`。
+- **既存のパッケージに `mod` 宣言を足した**: std (`library/std`)、フィクスチャ (`compiler/assets/tests` の std・test1・too_many_errors、
+  LSP の minipkg)。可視性はまだ書いていない (すべて `mod`)。std のどれを `pub mod` にするかは段階 3 で決める。
+  `~/test1` は 1 ファイルなので変更なし。
+- **LSP** (`tools/lsp`):
+  - 字句・文法・lowering・ハイライトを `pub` / `super` / `mod` に対応させた。可視性は宣言ノードの先頭の `Visibility` ノード、
+    `mod` 宣言は `ModDecl` ノード。書けない場所の可視性は biwac_parser と同じ文面で構文エラーにする。
+  - ロードを `try_load_tolerant` にした。新しいファイルを作ってから `mod` を書くまでの間にパッケージ全体の解析が止まらないようにするため。
+    - 宣言されていないファイルを開くと、そのことだけを診断に出す (「This file is not declared as a module. Declare it with `mod <name>;` in `src/lib.biwa`.」)。
+    - ファイルの無い宣言・重複した宣言は、宣言を書いたファイルを開いているとき、その宣言の位置に診断を出す。
+    - ディスク上のファイルを読むので、保存していない `mod` 宣言の追加はまだ反映されない (既知の制約と同じ)。
+- **テスト**:
+  - compiler: 125 件 (追加分: パーサの可視性・`mod`・`super::` 4 件、ローダーの正例と 4 種のエラー 5 件、
+    driver の `mod_tree` (正例。可視性の構文と `super::` を import・型・式で使う) と `super_beyond_root` 2 件)。
+  - LSP: 99 件 (追加分: lowering 3 件、宣言されていないファイルがあっても解析が続くこと 2 件)。
+  - std と `~/test1` を強制再ビルドし、ブラウザで Link と scene の開始まで動くことを確かめた。

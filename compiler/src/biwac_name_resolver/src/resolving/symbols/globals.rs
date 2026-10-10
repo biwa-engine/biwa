@@ -125,7 +125,7 @@ impl NameResolve<ModuleResolveCtx<'_>> for biwac_ast::StructDef {
         let mut members = HashMap::new();
         let mut errors = Vec::new();
 
-        for (ident, typ) in &self.members {
+        for biwac_ast::StructMemberDecl { id: ident, typ, .. } in &self.members {
             match members.entry(ident.id) {
                 Entry::Vacant(e) => {
                     e.insert(&ident.span);

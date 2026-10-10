@@ -1,0 +1,44 @@
+// モジュール宣言 (`mod`)・可視性の構文・`super::` パスの正例。
+// 段階 1 では可視性は受理するだけで検査しない。
+
+pub mod a;
+mod c;
+
+pub fn top() -> Int {
+  2
+}
+
+pub(package) struct Pair {
+  pub left: Int,
+  pub(super) right: Int,
+  hidden: Int,
+}
+
+pub enum Choice {
+  Left,
+  Right(Int),
+}
+
+pub trait Measure {
+  fn measure(self) -> Int;
+}
+
+impl Pair: Measure {
+  fn measure(self) -> Int {
+    self.left + self.right + self.hidden
+  }
+}
+
+impl Pair {
+  pub fn new(left: Int, right: Int) -> Self {
+    Pair { left = left, right = right, hidden = 0 }
+  }
+
+  pub(package) fn sum(self) -> Int {
+    self.measure()
+  }
+}
+
+pub fn total() -> Int {
+  a::b::from_b() + c::from_c()
+}

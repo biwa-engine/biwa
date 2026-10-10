@@ -209,7 +209,7 @@ fn lowers_fn_type() {
     let Globals::TypeDef(TypeDef::Struct(s)) = &ast.globals[0] else {
         panic!("expected struct def, got {:?}", ast.globals[0]);
     };
-    let fn_typ = |i: usize| match &s.members[i].1.val {
+    let fn_typ = |i: usize| match &s.members[i].typ.val {
         biwac_ast::TypReprVal::Fn(f) => f.clone(),
         other => panic!("expected a fn type, got {other:?}"),
     };
@@ -637,4 +637,102 @@ fn bare_self_type_used_as_a_value_is_dropped_not_panicking() {
     // パニックしうるので、lowering の時点で安全に落とさなければならない。
     let (_ast, errors) = lower("fn f() -> Bool { Self }");
     assert!(!errors.is_empty(), "expected a lowering error, got none");
+}
+
+// ── 可視性・`mod` 宣言・`super::` (issue #8 の段階 1) ───────────────────────────
+
+fn parse_errors(src: &str) -> Vec<String> {
+    parse(src).errors.into_iter().map(|e| e.message).collect()
+}
+
+#[test]
+fn lowers_visibility_and_mod_decl() {
+    use biwac_ast::Visibility;
+    let src = r#"
+pub mod a;
+mod b;
+pub(super) fn f() {}
+pub(package) struct S { pub x: Int, y: Int }
+impl S {
+  pub fn new() -> S { S { x = 0, y = 0 } }
+  pub(super) fn get(self) -> Int { self.x }
+}
+"#;
+    let (ast, errors) = lower(src);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    assert!(parse_errors(src).is_empty(), "{:?}", parse_errors(src));
+
+    let Globals::Mod(a) = &ast.globals[0] else {
+        panic!("{:?}", ast.globals[0])
+    };
+    assert!(matches!(a.vis, Visibility::Public(_)));
+    let Globals::Mod(b) = &ast.globals[1] else {
+        panic!("{:?}", ast.globals[1])
+    };
+    assert!(matches!(b.vis, Visibility::Private));
+    let Globals::FnDef(f) = &ast.globals[2] else {
+        panic!("{:?}", ast.globals[2])
+    };
+    assert!(matches!(f.vis, Visibility::Super(_)));
+    let Globals::TypeDef(TypeDef::Struct(s)) = &ast.globals[3] else {
+        panic!()
+    };
+    assert!(matches!(s.vis, Visibility::Package(_)));
+    assert!(matches!(s.members[0].vis, Visibility::Public(_)));
+    assert!(matches!(s.members[1].vis, Visibility::Private));
+    let Globals::ImplBlock(i) = &ast.globals[4] else {
+        panic!()
+    };
+    assert!(matches!(i.assoc_fns[0].vis, Visibility::Public(_)));
+    assert!(matches!(i.methods[0].vis, Visibility::Super(_)));
+}
+
+#[test]
+fn rejects_visibility_where_not_allowed() {
+    for (src, place) in [
+        ("enum E { pub A }", "enum variant"),
+        ("enum E { A(pub Int) }", "field of an enum variant"),
+        ("trait T { pub fn t(self); }", "item of a trait"),
+        (
+            "trait T { fn t(self); } impl Int: T { pub fn t(self) {} }",
+            "item of a trait impl",
+        ),
+        ("pub impl Int {}", "impl block"),
+        ("pub import a::b;", "import"),
+    ] {
+        let errors = parse_errors(src);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("visibility is not allowed") && e.contains(place)),
+            "{src}: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn lowers_super_path() {
+    let (ast, errors) = lower("import super::super::a::B;\nfn f() -> super::T { super::g() }");
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Globals::Import(i) = &ast.globals[0] else {
+        panic!()
+    };
+    assert!(matches!(
+        i.path.abs_header,
+        Some(biwac_ast::AbsolutePathHeader::Super { depth: 2, .. })
+    ));
+    assert_eq!(i.path.segments.len(), 2);
+    let Globals::FnDef(f) = &ast.globals[1] else {
+        panic!()
+    };
+    let biwac_ast::RetTypRepr::Typ(t) = &f.rtype else {
+        panic!()
+    };
+    let biwac_ast::TypReprVal::Defined(d) = &t.val else {
+        panic!()
+    };
+    assert!(matches!(
+        d.path.abs_header,
+        Some(biwac_ast::AbsolutePathHeader::Super { depth: 1, .. })
+    ));
 }

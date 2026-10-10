@@ -1,0 +1,2 @@
+// どこからも `mod stray;` と宣言されていない。
+fn sub(x: Int, y: Int) -> Int { x - y }

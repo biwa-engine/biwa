@@ -55,6 +55,9 @@ pub fn lex<'src>(
                         "Self" => TkKind::KwSelfTyp,
                         "self" => TkKind::KwSelfVar,
                         "scene" => TkKind::KwScene,
+                        "pub" => TkKind::KwPub,
+                        "super" => TkKind::KwSuper,
+                        "mod" => TkKind::KwMod,
                         // 数値リテラルは pre_lex が読み切っているので、
                         // ここに来る語は必ず識別子である
                         // (biwa の識別子は数字始まりになりえない)。

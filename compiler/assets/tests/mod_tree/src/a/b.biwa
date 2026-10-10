@@ -1,0 +1,11 @@
+import super::from_a;
+import super::super::Pair;
+
+// `super::` は親モジュール、`super::super::` はその親 (ここではルート) を指す。
+pub fn from_b() -> Int {
+  from_a() + super::from_a() + super::super::top() + Pair::new(1, 2).sum()
+}
+
+pub fn make() -> super::super::Pair {
+  Pair::new(0, 0)
+}

@@ -67,7 +67,7 @@ impl<'src> NovelSourceStream<'src> {
                         span: path.span(),
                         val: TypReprVal::Defined(DefTyp { path, genargs }),
                     })
-                } else if let NCodeTkKind::KwPackage = t.kind {
+                } else if let NCodeTkKind::KwPackage | NCodeTkKind::KwSuper = t.kind {
                     let path = self.consume_qualified_identifier()?;
                     let genargs = self.opt_consume_generic_args()?;
 

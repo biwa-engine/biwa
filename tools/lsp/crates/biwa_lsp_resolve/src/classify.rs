@@ -191,6 +191,8 @@ fn classify_method_arg_decl_list(args: &MethodArgDeclList, out: &mut Vec<Classif
 fn classify_global(g: &Globals, out: &mut Vec<Classification>) {
     match g {
         Globals::Import(i) => classify_path(&i.path, &HashSet::new(), out),
+        // 子モジュールの名前は宣言しているだけで、何かを参照してはいない。
+        Globals::Mod(_) => {}
         Globals::FnDef(f) => classify_fn_def(f, out),
         Globals::VarDecl(v) => {
             classify_typ_decl(&v.typ, out);
@@ -268,8 +270,8 @@ fn classify_impl_block(b: &ImplBlock, out: &mut Vec<Classification>) {
 fn classify_type_def(t: &TypeDef, out: &mut Vec<Classification>) {
     match t {
         TypeDef::Struct(s) => {
-            for (_, typ) in &s.members {
-                classify_typ_repr(typ, out);
+            for m in &s.members {
+                classify_typ_repr(&m.typ, out);
             }
             classify_genargs_decl(&s.genargs, out);
         }

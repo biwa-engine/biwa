@@ -110,6 +110,11 @@ impl Children {
         }
     }
 
+    /// 残りの要素の kind を並べる (trivia は既に除いてある)。
+    pub(crate) fn into_kinds(self) -> Vec<SyntaxKind> {
+        self.items.map(|e| elem_kind(&e)).collect()
+    }
+
     /// 次の要素が何であれノードなら消費して返す (kind は問わない)。
     /// 式・型のように複数の kind を取りうる位置で使う。
     pub(crate) fn next_node(&mut self) -> Option<SyntaxNode> {

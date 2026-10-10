@@ -1,0 +1,6 @@
+// `src/nowhere.biwa` は無い。
+mod nowhere;
+
+fn f() -> Int {
+  1
+}

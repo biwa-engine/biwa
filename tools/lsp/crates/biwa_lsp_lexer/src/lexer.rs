@@ -82,6 +82,12 @@ enum CodeToken {
     KwEndScene,
     #[token("package")]
     KwPackage,
+    #[token("pub")]
+    KwPub,
+    #[token("super")]
+    KwSuper,
+    #[token("mod")]
+    KwMod,
     #[token("enum")]
     KwEnum,
     #[token("match")]
@@ -221,6 +227,9 @@ fn code_token_to_syntax_kind(t: &CodeToken) -> SyntaxKind {
         CodeToken::KwReturn => SyntaxKind::KwReturn,
         CodeToken::KwEndScene => SyntaxKind::KwEndScene,
         CodeToken::KwPackage => SyntaxKind::KwPackage,
+        CodeToken::KwPub => SyntaxKind::KwPub,
+        CodeToken::KwSuper => SyntaxKind::KwSuper,
+        CodeToken::KwMod => SyntaxKind::KwMod,
         CodeToken::KwEnum => SyntaxKind::KwEnum,
         CodeToken::KwMatch => SyntaxKind::KwMatch,
         CodeToken::KwTrait => SyntaxKind::KwTrait,

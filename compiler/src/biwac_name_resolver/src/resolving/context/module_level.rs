@@ -264,6 +264,25 @@ impl ResolveCtx for ModuleResolveCtx<'_> {
                 )
             }
 
+            Some(AbsolutePathHeader::Super { depth, span }) => {
+                // `super` の数だけ親を辿り、そこからの相対パスとして解決する。
+                let mut module = self.module;
+                for _ in 0..*depth {
+                    let Some(parent) = module.parent else {
+                        path.segments[0]
+                            .resolved_id
+                            .set(PathSegmentResolution::Err)
+                            .unwrap();
+                        return Err(ResolveError::SuperBeyondRoot { span: span.clone() });
+                    };
+                    module = self
+                        .mod_index
+                        .get(&parent)
+                        .expect("compiler bug: parent module is not indexed");
+                }
+                resolve_path_in_module(path, 0, module, &self.local_tree_ctx())
+            }
+
             Some(AbsolutePathHeader::SelfTyp(self_typ)) => Err(ResolveError::UnexpectedSelfType {
                 span: self_typ.span.clone(),
             }),

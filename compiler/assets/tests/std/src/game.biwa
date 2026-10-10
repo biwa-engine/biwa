@@ -1,3 +1,12 @@
+mod base_engine;
+mod character;
+mod color;
+mod config;
+mod content;
+mod font;
+mod image;
+mod window;
+
 import package::string::String;
 import package::option::Option;
 import image::Image;

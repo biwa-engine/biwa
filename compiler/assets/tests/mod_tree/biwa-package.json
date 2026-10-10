@@ -1,0 +1,6 @@
+{
+  "name": "mod_tree",
+  "version": "0.1.0",
+  "description": "module declarations (`mod`), visibility syntax and `super::` paths",
+  "dependencies": []
+}

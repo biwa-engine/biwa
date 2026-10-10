@@ -243,7 +243,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                 self.next();
                 Ok(Pattern::Wildcard(span))
             }
-            TkKind::Ident(_) | TkKind::KwPackage => {
+            TkKind::Ident(_) | TkKind::KwPackage | TkKind::KwSuper => {
                 let begin = t.span.clone();
                 let path = self.consume_qualified_identifier()?;
 

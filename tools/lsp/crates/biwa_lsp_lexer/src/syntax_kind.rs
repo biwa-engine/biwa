@@ -37,6 +37,12 @@ pub enum SyntaxKind {
     /// `endscene` (novel モードの `#endscene <expr>` 専用)。
     KwEndScene,
     KwPackage,
+    /// `pub` (可視性。`pub(super)` / `pub(package)` も)。
+    KwPub,
+    /// `super` (パスの先頭の親モジュール、`pub(super)`)。
+    KwSuper,
+    /// `mod` (子モジュールの宣言 `mod foo;`)。
+    KwMod,
     KwEnum,
     KwMatch,
     KwTrait,
@@ -103,6 +109,10 @@ pub enum SyntaxKind {
     // parser が使用する。lexer は生成しない。
     Root,
     ImportDecl,
+    /// 子モジュールの宣言 `<visibility>? mod <ident> ;`。
+    ModDecl,
+    /// 可視性 `pub` / `pub(super)` / `pub(package)`。宣言ノードの先頭の子になる。
+    Visibility,
     FunctionDef,
     MethodDef,
     StructDef,

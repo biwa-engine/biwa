@@ -332,7 +332,7 @@ fn lower_struct_def(
     let members: HashMap<InternedIdent, Ty> = struct_def
         .members
         .iter()
-        .map(|(ident, typ)| (ident.id, ty_from_typ_repr(typ, None))) // TODO: Some(self_ty)
+        .map(|m| (m.id.id, ty_from_typ_repr(&m.typ, None))) // TODO: Some(self_ty)
         .collect();
 
     let ty_content = TyDefKind::Struct(Box::new(StructDef {

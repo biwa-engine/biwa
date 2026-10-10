@@ -45,6 +45,8 @@ pub struct PackageNameTree {
 #[derive(Debug)]
 pub struct ModuleNameTree {
     pub(crate) mod_id: ModId,
+    /// 親モジュール。ルートモジュールなら `None`。`super::` の解決に使う。
+    pub(crate) parent: Option<ModId>,
     pub(crate) children: HashMap<InternedIdent, ModuleNameTreeItem>,
 }
 

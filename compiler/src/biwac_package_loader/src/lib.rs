@@ -14,7 +14,7 @@ use std::{
 pub use error::PkgLoadError;
 pub use source_parser::{BiwacSourceParser, SourceParser};
 
-use biwac_ast::ModAst;
+use biwac_ast::{Globals, ModAst, ModDecl};
 use biwac_base::{
     BIWA_BINARY_PACKAGE_ROOT_MODULE_NAME, BIWA_EXTENSION, BIWA_LIBRARY_PACKAGE_ROOT_MODULE_NAME,
     ErrorContext, ErrorHolder, IdentInterner, InternedIdent, MetadataHolder, ModId, ModPath,
@@ -97,6 +97,33 @@ impl Pkg {
         srcs: &'a mut SourceHolder, // 空の SourceHolder を受け取る
         pkg_root_path: PathBuf,
     ) -> Result<Self, ErrorHolder<'a, PkgLoadError<'a>>> {
+        Self::load::<P>(metadata, interner, srcs, pkg_root_path, false).map(|(pkg, _)| pkg)
+    }
+
+    /// [`Self::try_load`] と同じだが、モジュール木の形の誤り
+    /// (宣言されていないファイル・ファイルの無い宣言・重複した宣言) では失敗しない。
+    ///
+    /// そうした誤りは 2 つ目の値として返し、読めたモジュールだけで木を作る
+    /// (誤りのある宣言・ファイルは木に入らない)。
+    /// エディタ (biwa-lsp) 向け。宣言前の新しいファイルが 1 つあるだけで
+    /// パッケージ全体の解析が止まらないようにするため。
+    /// ルートモジュールの欠落・構文エラーでは [`Self::try_load`] と同じく失敗する。
+    pub fn try_load_tolerant<'a, P: SourceParser>(
+        metadata: &'a MetadataHolder,
+        interner: &'a mut IdentInterner,
+        srcs: &'a mut SourceHolder, // 空の SourceHolder を受け取る
+        pkg_root_path: PathBuf,
+    ) -> Result<(Self, Vec<PkgLoadError<'static>>), ErrorHolder<'a, PkgLoadError<'a>>> {
+        Self::load::<P>(metadata, interner, srcs, pkg_root_path, true)
+    }
+
+    fn load<'a, P: SourceParser>(
+        metadata: &'a MetadataHolder,
+        interner: &'a mut IdentInterner,
+        srcs: &'a mut SourceHolder,
+        pkg_root_path: PathBuf,
+        tolerant: bool,
+    ) -> Result<(Self, Vec<PkgLoadError<'static>>), ErrorHolder<'a, PkgLoadError<'a>>> {
         let srcpath = pkg_root_path.join(Path::new("src"));
 
         let mut ctx = ModuleTreeCtx::new();
@@ -148,6 +175,10 @@ impl Pkg {
             }
         };
 
+        // 対応するモジュールファイルの無いディレクトリの中の `.biwa`。
+        // どの `mod` 宣言からも届かないので、必ず「宣言されていないファイル」である。
+        let mut orphan_files = Vec::new();
+
         let module_tree = ModuleTree {
             mod_id: root_mod_id,
             path: Box::new(root_path),
@@ -163,6 +194,7 @@ impl Pkg {
                 &srcpath,
                 ModPath::Main,
                 interner,
+                &mut orphan_files,
             ) {
                 Ok(children) => children,
                 Err(e) => {
@@ -180,23 +212,48 @@ impl Pkg {
 
         read_module_files(srcs, &module_tree);
 
-        let root_module = load_module::<P>(interner, srcs, module_tree);
+        // モジュール木の形の誤り。`tolerant` なら失敗にせず返す。
+        let mut structural: Vec<PkgLoadError<'static>> = orphan_files
+            .into_iter()
+            .map(|path| PkgLoadError::UndeclaredModuleFile {
+                path: display_path(&srcpath, &path),
+                declare_in: None,
+            })
+            .collect();
+
+        let root_module =
+            load_module::<P>(interner, srcs, module_tree, &srcpath, true, &mut structural);
 
         match root_module {
-            Ok(root_module) => Ok(Self {
-                pkg_kind,
-                root_module,
-            }),
-            Err(errs) => Err(ErrorHolder {
-                errs,
-                ctx: ErrorContext {
-                    interner,
-                    srcs,
-                    metadata,
+            Ok(root_module) if tolerant || structural.is_empty() => Ok((
+                Self {
+                    pkg_kind,
+                    root_module,
                 },
-            }),
+                structural,
+            )),
+            root_module => {
+                let mut errs: Vec<PkgLoadError<'a>> = structural;
+                if let Err(e) = root_module {
+                    errs.extend(e);
+                }
+                Err(ErrorHolder {
+                    errs,
+                    ctx: ErrorContext {
+                        interner,
+                        srcs,
+                        metadata,
+                    },
+                })
+            }
         }
     }
+}
+
+/// エラーに出すファイルの位置。`src/` からの相対パスにする。
+fn display_path(srcpath: &Path, path: &Path) -> String {
+    let rel = path.strip_prefix(srcpath).unwrap_or(path);
+    format!("src/{}", rel.to_string_lossy())
 }
 
 fn read_module_files(srcs: &mut SourceHolder, module_tree: &ModuleTree) {
@@ -219,26 +276,26 @@ fn read_module_files(srcs: &mut SourceHolder, module_tree: &ModuleTree) {
     );
 }
 
+/// モジュールを構文解析し、`mod` 宣言された子モジュールを辿って読み込む。
+///
+/// ディレクトリにあるファイルは [`map_module_tree_children_from_dir`] がすべて拾ってある
+/// (`ModId` の採番をファイル名順に保つため)。ここでは宣言と突き合わせ、
+/// 宣言されたものだけを読む。
+/// - 宣言されたのにファイルが無い → [`PkgLoadError::ModuleFileNotFound`]
+/// - ファイルがあるのに宣言されていない → [`PkgLoadError::UndeclaredModuleFile`]
+///
+/// 自分の構文解析に失敗した場合は、どの子が宣言されているか分からないので子を見ない。
+///
+/// 構文エラーは戻り値の `Err`、モジュール木の形の誤りは `structural` に積む
+/// (呼び出し側が失敗にするかを決める。[`Pkg::try_load_tolerant`])。
 fn load_module<'a, P: SourceParser>(
     interner: &mut IdentInterner,
     srcs: &'a SourceHolder,
     module_tree: ModuleTree,
+    srcpath: &Path,
+    is_root: bool,
+    structural: &mut Vec<PkgLoadError<'static>>,
 ) -> Result<LoadedModule, Vec<PkgLoadError<'a>>> {
-    let mut errs = Vec::new();
-
-    // load children modules
-    let mut children = HashMap::new();
-    for (interned_mod_name, module_tree) in module_tree.children {
-        match load_module::<P>(interner, srcs, module_tree) {
-            Ok(module) => {
-                children.insert(interned_mod_name, module);
-            }
-            Err(e) => {
-                errs.extend(e);
-            }
-        }
-    }
-
     let ast = match P::parse(
         module_tree.mod_id,
         module_tree.mod_path.clone(),
@@ -247,13 +304,79 @@ fn load_module<'a, P: SourceParser>(
     ) {
         Ok(ast) => ast,
         Err(e) => {
-            errs.push(PkgLoadError::ParseError {
+            return Err(vec![PkgLoadError::ParseError {
                 modpath: module_tree.mod_path.clone(),
                 err: e,
-            });
-            return Err(errs);
+            }]);
         }
     };
+
+    // 宣言を集める。同じ名前の宣言が 2 つあればエラー。
+    let mut declared: Vec<&ModDecl> = Vec::new();
+    for g in &ast.globals {
+        let Globals::Mod(decl) = g else { continue };
+        if let Some(first) = declared.iter().find(|d| d.id.id == decl.id.id) {
+            structural.push(PkgLoadError::DuplicatedModDecl {
+                name: ident_str(interner, decl.id.id),
+                first: first.span.clone(),
+                second: decl.span.clone(),
+            });
+            continue;
+        }
+        declared.push(decl);
+    }
+
+    let mut files: HashMap<InternedIdent, ModuleTree> = module_tree.children.into_iter().collect();
+
+    // 宣言の順ではなくファイル名順 (= ModId 順) に読む。
+    // 識別子の intern 順などを宣言の並べ替えで変えないため。
+    let mut to_load = Vec::new();
+    for decl in &declared {
+        let name = ident_str(interner, decl.id.id);
+        match files.remove(&decl.id.id) {
+            Some(child) => to_load.push((decl.id.id, child)),
+            None if is_root
+                && (name == BIWA_BINARY_PACKAGE_ROOT_MODULE_NAME
+                    || name == BIWA_LIBRARY_PACKAGE_ROOT_MODULE_NAME) =>
+            {
+                structural.push(PkgLoadError::RootModuleNameDeclared {
+                    name,
+                    span: decl.span.clone(),
+                });
+            }
+            None => structural.push(PkgLoadError::ModuleFileNotFound {
+                expected: display_path(
+                    srcpath,
+                    &module_dir(srcpath, &module_tree.mod_path)
+                        .join(format!("{name}.{BIWA_EXTENSION}")),
+                ),
+                name,
+                span: decl.span.clone(),
+            }),
+        }
+    }
+
+    // 残ったファイルはどこからも宣言されていない。
+    let mut undeclared: Vec<ModuleTree> = files.into_values().collect();
+    undeclared.sort_by_key(|m| m.mod_id);
+    for child in undeclared {
+        structural.push(PkgLoadError::UndeclaredModuleFile {
+            path: display_path(srcpath, &child.path),
+            declare_in: Some(format!("src/{}", module_tree.mod_path.file_name())),
+        });
+    }
+
+    to_load.sort_by_key(|(_, m)| m.mod_id);
+    let mut errs = Vec::new();
+    let mut children = HashMap::new();
+    for (name, child) in to_load {
+        match load_module::<P>(interner, srcs, child, srcpath, false, structural) {
+            Ok(module) => {
+                children.insert(name, module);
+            }
+            Err(e) => errs.extend(e),
+        }
+    }
 
     // 自分は読めても、子モジュールが失敗していれば失敗である。
     //
@@ -268,6 +391,25 @@ fn load_module<'a, P: SourceParser>(
         ast,
         children,
     })
+}
+
+fn ident_str(interner: &IdentInterner, ident: InternedIdent) -> String {
+    interner
+        .get_str(&ident)
+        .expect("compiler bug: an identifier is not interned")
+        .to_owned()
+}
+
+/// モジュール `mod_path` の子モジュールのファイルが置かれるディレクトリ。
+///
+/// ルートモジュールなら `src/`、`src/a/b.biwa` なら `src/a/b/`。
+fn module_dir(srcpath: &Path, mod_path: &ModPath) -> PathBuf {
+    match mod_path {
+        ModPath::Main | ModPath::Lib => srcpath.to_path_buf(),
+        ModPath::Mod(segments) => segments
+            .iter()
+            .fold(srcpath.to_path_buf(), |p, s| p.join(s)),
+    }
 }
 
 struct ModuleTree {
@@ -306,6 +448,7 @@ fn map_module_tree_children_from_dir<'a>(
     dir: &Path,
     modpath: ModPath,
     interner: &mut IdentInterner,
+    orphan_files: &mut Vec<PathBuf>,
 ) -> Result<Vec<(InternedIdent, ModuleTree)>, PkgLoadError<'a>> {
     let mut work_dir_files: HashMap<String, (ModPath, Box<PathBuf>)> = HashMap::new();
     let mut work_dir_sub_dirs: HashMap<String, Box<PathBuf>> = HashMap::new();
@@ -357,6 +500,18 @@ fn map_module_tree_children_from_dir<'a>(
         work_dir_files.into_iter().collect();
     work_dir_files.sort_by(|a, b| a.0.cmp(&b.0));
 
+    // 対応するモジュールファイルの無いディレクトリは、どのモジュールの子でもない。
+    // 中の `.biwa` はどこからも宣言できないので、宣言されていないファイルとして報告する。
+    let mut orphan_dirs: Vec<&Box<PathBuf>> = work_dir_sub_dirs
+        .iter()
+        .filter(|(name, _)| !work_dir_files.iter().any(|(f, _)| f == *name))
+        .map(|(_, dir)| dir)
+        .collect();
+    orphan_dirs.sort();
+    for dir in orphan_dirs {
+        collect_biwa_files(dir, orphan_files);
+    }
+
     work_dir_files
         .into_iter()
         .map(|(file_name, (mod_path, path))| {
@@ -368,6 +523,7 @@ fn map_module_tree_children_from_dir<'a>(
                     dir,
                     modpath.clone().extend(vec![file_name]),
                     interner,
+                    orphan_files,
                 )?
             } else {
                 Vec::new()
@@ -384,4 +540,18 @@ fn map_module_tree_children_from_dir<'a>(
             ))
         })
         .collect()
+}
+
+/// `dir` 以下の `.biwa` をすべて (ファイル名順に) 集める。
+fn collect_biwa_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = dir.read_dir() else { return };
+    let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    paths.sort();
+    for path in paths {
+        if path.is_dir() {
+            collect_biwa_files(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some(BIWA_EXTENSION) {
+            out.push(path);
+        }
+    }
 }

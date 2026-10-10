@@ -166,6 +166,7 @@ fn lower_module_vals(
             biwac_ast::Globals::TypeDef(_)
             | biwac_ast::Globals::TraitDef(_)
             | biwac_ast::Globals::Import(_)
+            | biwac_ast::Globals::Mod(_)
             | biwac_ast::Globals::VarDecl(_)
             | biwac_ast::Globals::ImplBlock(_)
             | biwac_ast::Globals::NativeCode(_) => {}
@@ -260,6 +261,10 @@ pub(crate) fn def_id_kind_from_path(path: &Path) -> Result<DefIdKind, ResolveErr
             .expect("compiler bug: completely empty Path")
         {
             biwac_ast::AbsolutePathHeader::Package(_) => todo!(),
+            // `super::` の後には必ずセグメントがある (パーサが読む)。
+            biwac_ast::AbsolutePathHeader::Super { .. } => {
+                unreachable!("compiler bug: `super::` without segments")
+            }
             biwac_ast::AbsolutePathHeader::SelfTyp(self_typ) => {
                 return Ok(DefIdKind::Ty(
                     *self_typ

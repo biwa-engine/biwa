@@ -3,6 +3,7 @@ use ariadne::{Color, Label, Report, ReportKind, Source};
 use biwac_base::{BiwacError, ModId};
 use biwac_lexer::{TkKindName, Token};
 use biwac_novel_parser::NovelParseError;
+use biwac_span::Span;
 
 #[derive(Debug, Clone)]
 pub enum ParseError<'src> {
@@ -16,6 +17,16 @@ pub enum ParseError<'src> {
         expecteds: Vec<TkKindName>,
     },
     NovelParseError(NovelParseError),
+    /// 書けない場所に書かれたもの (可視性・属性)。
+    ///
+    /// 例: enum の variant の `pub` (variant は常に enum と同じ可視性になる)。
+    NotAllowedHere {
+        span: Span,
+        /// 書かれたもの (`"a visibility"` など)。
+        what: &'static str,
+        /// 書かれた場所 (`"an enum variant (..)"` など)。
+        place: &'static str,
+    },
 }
 
 impl BiwacError for ParseError<'_> {
@@ -88,6 +99,24 @@ impl BiwacError for ParseError<'_> {
             }
             Self::NovelParseError(e) => {
                 e.print_error_message(ctx);
+            }
+            Self::NotAllowedHere { span, what, place } => {
+                let modsrc = ctx.srcs.mods.get(&span.module()).unwrap();
+
+                let file_name = modsrc.modu.file_name();
+                let begin = modsrc.char_offset(span.begin());
+                let end = modsrc.char_offset(span.end());
+
+                Report::build(ReportKind::Error, (file_name.as_str(), begin..end))
+                    .with_message(format!("{what} is not allowed on {place}."))
+                    .with_label(
+                        Label::new((file_name.as_str(), begin..end))
+                            .with_message("Remove this.")
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .print((file_name.as_str(), Source::from(&modsrc.src)))
+                    .unwrap();
             }
         }
     }

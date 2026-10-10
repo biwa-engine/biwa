@@ -110,7 +110,7 @@ fn resolve_in_module(
                 // TODO:
                 todo!()
             }
-            biwac_ast::Globals::Import(_) => None,
+            biwac_ast::Globals::Import(_) | biwac_ast::Globals::Mod(_) => None,
             biwac_ast::Globals::TypeDef(type_def) => match type_def {
                 biwac_ast::TypeDef::Struct(struct_def) => {
                     Some(struct_def.resolve(&ctx, def_collector))

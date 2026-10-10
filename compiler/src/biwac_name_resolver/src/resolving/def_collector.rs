@@ -91,7 +91,7 @@ impl DefCollector {
         // 構造体のメンバの型が後方宣言でよいのと同じ理屈である。
 
         // Step 1: assign IDs to all non-impl symbols, build module-level NameTree.
-        let root_module_tree = self.collect_in_module(&pkg.root_module)?;
+        let root_module_tree = self.collect_in_module(&pkg.root_module, None)?;
         let package_tree = PackageNameTree {
             pkg_id: PackageId::SELF_PACKAGE,
             root_module_tree,
@@ -149,6 +149,7 @@ impl DefCollector {
     fn collect_in_module(
         &mut self,
         module: &LoadedModule,
+        parent: Option<ModId>,
     ) -> Result<ModuleNameTree, Vec<ResolveError>> {
         let mut children = HashMap::<InternedIdent, (ModuleNameTreeItem, Span)>::new();
         let mut errors = Vec::new();
@@ -173,6 +174,8 @@ impl DefCollector {
                     None
                 }
                 biwac_ast::Globals::Import(_) => None,
+                // 子モジュールはパッケージローダーが木にしてある (`ModuleNameTree` の子)。
+                biwac_ast::Globals::Mod(_) => None,
                 biwac_ast::Globals::TypeDef(type_def) => match type_def {
                     biwac_ast::TypeDef::Struct(struct_def) => {
                         let def_id = TyDefId::new(self.alloc_def_id());
@@ -301,11 +304,13 @@ impl DefCollector {
             }
         }
 
+        let module_mod_id = module.mod_id;
+
         // 子モジュールも決定論的な順序で処理する。
         // ここで DefId を採番するので、順序がぶれると .biwameta がビルドごとに変わる。
         for (interned_mod_name, module) in module.children_ordered() {
             match children.entry(*interned_mod_name) {
-                Entry::Vacant(e) => match self.collect_in_module(module) {
+                Entry::Vacant(e) => match self.collect_in_module(module, Some(module_mod_id)) {
                     Ok(module_tree) => {
                         e.insert((
                             ModuleNameTreeItem::Mod(module_tree),
@@ -329,6 +334,7 @@ impl DefCollector {
         if errors.is_empty() {
             Ok(ModuleNameTree {
                 mod_id: module.mod_id,
+                parent,
                 children: children
                     .into_iter()
                     .map(|(interned, (item, _))| (interned, item))

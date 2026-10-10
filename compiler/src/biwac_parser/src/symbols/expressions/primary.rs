@@ -70,7 +70,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
             // `package::` から始まる絶対パスも式に書ける。
             // `package` は識別子ではなくキーワードなので、ここで拾わないと
             // `consume_qualified_identifier` に辿り着けない。
-            TkKind::Ident(_) | TkKind::KwPackage => {
+            TkKind::Ident(_) | TkKind::KwPackage | TkKind::KwSuper => {
                 let begin = t.span.clone();
                 let path = self.consume_qualified_identifier()?;
 

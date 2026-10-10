@@ -62,6 +62,10 @@ pub enum ResolveError {
     UnexpectedSelfType {
         span: Span,
     },
+    /// `super::` がルートモジュールより上を指している。
+    SuperBeyondRoot {
+        span: Span,
+    },
     UnexpectedSelfVariable {
         span: Span,
     },
@@ -401,6 +405,12 @@ impl BiwacError for ResolveError {
                         "`Self` refers to the type of the enclosing impl block",
                     )
                     .note("write the type name instead")
+                    .print();
+            }
+
+            Self::SuperBeyondRoot { span } => {
+                ctx.diagnostic("`super` goes beyond the root module.")
+                    .label(at(span), "the root module has no parent module")
                     .print();
             }
 

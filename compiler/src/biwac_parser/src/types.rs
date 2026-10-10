@@ -89,7 +89,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                 let genargs = self.opt_consume_generic_args()?;
 
                 Ok(TypRepr::new_def_typ(path, genargs))
-            } else if let TkKind::KwPackage = t.kind {
+            } else if let TkKind::KwPackage | TkKind::KwSuper = t.kind {
                 let path = self.consume_qualified_identifier()?;
                 let genargs = self.opt_consume_generic_args()?;
 
@@ -111,6 +111,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                         TkKindName::KwBool,
                         TkKindName::Ident,
                         TkKindName::KwPackage,
+                        TkKindName::KwSuper,
                         TkKindName::KwSelfTyp,
                         TkKindName::KwFn,
                     ],
@@ -126,6 +127,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                     TkKindName::KwBool,
                     TkKindName::Ident,
                     TkKindName::KwPackage,
+                    TkKindName::KwSuper,
                     TkKindName::KwSelfTyp,
                     TkKindName::KwFn,
                 ],
