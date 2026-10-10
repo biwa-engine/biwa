@@ -10,11 +10,11 @@
 // wasm では `unreachable` に落ちる (trap)。
 // TypeScript では例外を投げる。
 [[native(arch="typescript")]]
-fn abort[T]() -> T {{
+pub fn abort[T]() -> T {{
   throw new Error("[biwa] aborted");
 }}
 
 [[native(arch="wasm")]]
-fn abort[T]() -> T {{
+pub fn abort[T]() -> T {{
   unreachable
 }}

@@ -1,53 +1,53 @@
 import package::string::String;
 
-struct Font {
-  path: String,
+pub struct Font {
+  pub path: String,
 }
 
 impl Font {
-  fn new(path: String) -> Self {
+  pub fn new(path: String) -> Self {
     Self { path = path }
   }
 }
 
-struct TextWeight {
-  weight: Uint, // such as 100, 300, 400, 500, 700, ...
+pub struct TextWeight {
+  pub weight: Uint, // such as 100, 300, 400, 500, 700, ...
 }
 
 impl TextWeight {
-  fn thin() -> Self {
+  pub fn thin() -> Self {
     Self { weight = 100 }
   }
   
-  fn extra_light() -> Self {
+  pub fn extra_light() -> Self {
     Self { weight = 200 }
   }
   
-  fn light() -> Self {
+  pub fn light() -> Self {
     Self { weight = 300 }
   }
   
-  fn normal() -> Self {
+  pub fn normal() -> Self {
     Self { weight = 400 }
   }
   
-  fn medium() -> Self {
+  pub fn medium() -> Self {
     Self { weight = 500 }
   }
   
-  fn semi_bold() -> Self {
+  pub fn semi_bold() -> Self {
     Self { weight = 600 }
   }
   
-  fn bold() -> Self {
+  pub fn bold() -> Self {
     Self { weight = 700 }
   }
   
-  fn extra_bold() -> Self {
+  pub fn extra_bold() -> Self {
     Self { weight = 800 }
   }
   
-  fn heavy() -> Self {
+  pub fn heavy() -> Self {
     Self { weight = 900 }
   }
 }

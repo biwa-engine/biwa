@@ -18,9 +18,9 @@ import package::game::base_engine::wait;
 // フィクスチャ版は出力先の ui_id を持たない
 // (本物の std (`library/std`) は canvas / message area の ui_id を持つ)。
 // コンパイラの検査 (host export など) に要る形だけを揃えている。
-struct GameWindow {
-  canvas: Canvas,
-  message_window: MessageWindow,
+pub struct GameWindow {
+  pub canvas: Canvas,
+  pub message_window: MessageWindow,
 }
 
 // ランタイムが `GameWindow` を組み立てるための入口。
@@ -28,7 +28,7 @@ struct GameWindow {
 // 本物の std では ui_id を受け取り、0 を「無し」として `GameWindow::new` に渡す。
 // フィクスチャ版は ui_id を持たないので受け取るだけで使わない。
 [[host_export="__biwa_std_game_window_new"]]
-fn game_window_new_for_host(canvas_id: Uint, message_area_id: Uint) -> GameWindow {
+pub fn game_window_new_for_host(canvas_id: Uint, message_area_id: Uint) -> GameWindow {
   GameWindow::new()
 }
 
@@ -38,21 +38,21 @@ fn game_window_new_for_host(canvas_id: Uint, message_area_id: Uint) -> GameWindo
 // `show()` で UI syscall を発行する)。コンパイラの検査 (`main` のシグニチャ、
 // 関数の値) に要る形だけを揃えている。本物と同じく、scene 本体は `new` で必ず受け取る。
 [[lang="ui_window"]]
-struct Window[S] {
-  main_scene: Scene[S],
+pub struct Window[S] {
+  pub main_scene: Scene[S],
 }
 
 impl[S] Window[S] {
-  fn new(main_scene: Scene[S]) -> Self {
+  pub fn new(main_scene: Scene[S]) -> Self {
     Window { main_scene = main_scene }
   }
 
   // 本物の std では UI syscall を発行し、`main_scene` をホストに預ける。
-  fn show(self) {}
+  pub fn show(self) {}
 }
 
 impl GameWindow {
-  fn new() -> Self {
+  pub fn new() -> Self {
     Self {
       canvas = Canvas{},
       message_window = MessageWindow{},
@@ -60,7 +60,7 @@ impl GameWindow {
   }
 
   // クリックが来るまでシーンを止める。
-  fn wait(self) {
+  pub fn wait(self) {
     wait();
   }
 
@@ -68,13 +68,13 @@ impl GameWindow {
   // fn height(self) -> Uint;
 }
 
-struct Canvas {}
+pub struct Canvas {}
 
 impl Canvas {
   // fn create_image(self, image: Image, x: Int, y: Int, width: Option[Uint], height: Option[Uint]);
 }
 
-struct MessageWindow {}
+pub struct MessageWindow {}
 
 impl MessageWindow {
   // テキストを 1 つ積む。まだ描画されない。
@@ -84,7 +84,7 @@ impl MessageWindow {
   // Window API は設定を知らない。
   //
   // `Size` は enum なので、syscall には (単位, 値) の 2 つに割って渡す。
-  fn push_text(self, text: String, speed: Float, size: Size, weight: TextWeight, color: Color) {
+  pub fn push_text(self, text: String, speed: Float, size: Size, weight: TextWeight, color: Color) {
     match size {
       Size::Vw(v) => {
         sys_content_push_text(
@@ -98,12 +98,12 @@ impl MessageWindow {
   }
 
   // 積まれたものをまとめて出し始める。
-  fn flush(self) {
+  pub fn flush(self) {
     sys_content_flush();
   }
 
   // 枠を空にする。呼ぶ時機を決めるのは std であってエンジンではない。
-  fn clear(self) {
+  pub fn clear(self) {
     sys_content_clear();
   }
 
@@ -111,12 +111,12 @@ impl MessageWindow {
   // fn set_talker_image(self, image: Image);
 }
 
-struct Position {
-  x: Int,
-  y: Int,
+pub struct Position {
+  pub x: Int,
+  pub y: Int,
 }
 
-enum Size {
+pub enum Size {
   // All of these `Float` value must be positive.
   Vw(Float), // 100.0 means 100 % of viewport width.
   Vh(Float), // 100.0 means 100 % of viewport height.
@@ -127,7 +127,7 @@ enum Size {
 }
 
 impl Size {
-  fn mul(self, mul: Float) -> Self {
+  pub fn mul(self, mul: Float) -> Self {
     match self {
       Size::Vw(vw) => Size::Vw(vw * mul),
       Size::Vh(vh) => Size::Vh(vh * mul),

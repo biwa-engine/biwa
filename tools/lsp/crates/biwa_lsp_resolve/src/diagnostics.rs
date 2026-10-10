@@ -165,6 +165,19 @@ fn to_diagnostic(err: &ResolveError, interner: &IdentInterner) -> Option<RawDiag
             None
         }
 
+        E::InvisibleItem { segment, vis, .. } => {
+            let n = name(interner, &segment.ident.id);
+            let declared = match vis.declared {
+                biwac_hir::DeclaredVisibility::Private => "private",
+                biwac_hir::DeclaredVisibility::Super => "`pub(super)`",
+                biwac_hir::DeclaredVisibility::Package => "`pub(package)`",
+                biwac_hir::DeclaredVisibility::Public => "`pub`",
+            };
+            raw(
+                segment.ident.span.clone(),
+                format!("`{n}` is not visible here (it is declared {declared})."),
+            )
+        }
         E::SuperVisibilityInRoot { span } => raw(
             span.clone(),
             "`pub(super)` is not allowed in the root module; it has no parent module. \

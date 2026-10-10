@@ -1,11 +1,11 @@
-mod base_engine;
-mod character;
-mod color;
-mod config;
-mod content;
-mod font;
-mod image;
-mod window;
+pub mod base_engine;
+pub mod character;
+pub mod color;
+pub mod config;
+pub mod content;
+pub mod font;
+pub mod image;
+pub mod window;
 
 import package::string::String;
 import package::option::Option;
@@ -24,16 +24,16 @@ import config::Config;
 // 以前はキャラクターの束を別の型引数 `C` (`Game[C, S]`) で持っていたが廃止した。
 // キャラクターが要るなら `S` のメンバに持つか、scene の中で作る。
 [[lang="game"]]
-struct Game[S] {
-  name: String, // ゲームの名前
-  states: S,
-  window: GameWindow,
+pub struct Game[S] {
+  pub name: String, // ゲームの名前
+  pub states: S,
+  pub window: GameWindow,
 
   // 文字速度・サイズ・色などの設定。
   //
   // **エンジンは設定を持たない。** std がここを読んで絶対値に直してから
   // syscall に渡す。
-  config: Config,
+  pub config: Config,
 }
 
 // scene の型。scene は `Game[S]` を受け取って (状態を進めた) `Game[S]` を返す関数である。
@@ -41,11 +41,11 @@ struct Game[S] {
 // `scene foo(g: MyGame) -> MyGame {{ .. }}` は `Scene[MyGameState]` の値として渡せる
 // (例えば UI の `Window` の `main_scene` に。`docs/ui-api.md` の改訂版)。
 // wasm では scene は普通の関数である。TypeScript では generator function なので、まだ値にできない。
-type Scene[S] = fn(Game[S]) -> Game[S];
+pub type Scene[S] = fn(Game[S]) -> Game[S];
 
 impl[S] Game[S] {
   // `window` は本物の std ではランタイムが組み立てて `SceneStartButton` の `on_click(window)` に渡したもの。
-  fn new(window: GameWindow, name: String, states: S, config: Config) -> Self {
+  pub fn new(window: GameWindow, name: String, states: S, config: Config) -> Self {
     Self {
       name = name,
       states = states,
@@ -59,15 +59,15 @@ impl[S] Game[S] {
 // P: 個々のキャラクターが持つ特有のプロパティを格納するcustom properties
 //    ゲーム開発者が必要に応じて定義する
 [[lang="character"]]
-struct Character[P] {
-  name: String,
-  display_name: String,
-  props: P,
-  default_visual: Image,
-  default_face: Image,
-  current_visual: Option[CanvasObject],
-  current_face: Option[CanvasObject],
-  current_position: Option[Position], // キャラクターの画面上の位置。noneならば画面上にない
+pub struct Character[P] {
+  pub name: String,
+  pub display_name: String,
+  pub props: P,
+  pub default_visual: Image,
+  pub default_face: Image,
+  pub current_visual: Option[CanvasObject],
+  pub current_face: Option[CanvasObject],
+  pub current_position: Option[Position], // キャラクターの画面上の位置。noneならば画面上にない
   // window: Window, // Window の API を利用するために参照を内部的に保持
 }
 

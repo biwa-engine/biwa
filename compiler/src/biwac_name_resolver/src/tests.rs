@@ -170,3 +170,45 @@ fn name_tree_carries_visibility() {
     );
     assert_eq!(assoc("Choice", "Left"), (D::Public, S::Public));
 }
+
+/// パッケージの中の可視性の違反が、それぞれ `InvisibleItem` になること (issue #8 の段階 3)。
+///
+/// `vis_errors` には、見えるもの (`// OK`) と見えないもの (`// NG`) を並べてある。
+/// 報告されるのは見えないものだけで、それぞれ 1 度だけである
+/// (import が private を指すときは、その import の側で 1 度)。
+#[test]
+fn reports_invisible_items() {
+    let mut srcs = biwac_base::SourceHolder::default();
+    let mut interner = biwac_base::IdentInterner::default();
+    let pkg_root_path = Path::new("../../assets/tests/vis_errors");
+    let metadata =
+        biwac_metadata_loader::try_load_package_metadata(pkg_root_path.to_path_buf()).unwrap();
+    let mut pkg = biwac_package_loader::Pkg::try_load::<biwac_package_loader::BiwacSourceParser>(
+        &metadata,
+        &mut interner,
+        &mut srcs,
+        pkg_root_path.to_path_buf(),
+    )
+    .unwrap_or_else(|_| panic!("failed to load vis_errors"));
+    let pkg_name = interner.get_or_insert("vis_errors");
+
+    let errors = match NameResolver::new(&metadata, Vec::new(), pkg_name, &mut pkg)
+        .unwrap()
+        .try_resolve(&mut interner)
+    {
+        Ok(_) => panic!("vis_errors must be rejected"),
+        Err(errors) => errors,
+    };
+
+    let mut invisible: Vec<&str> = errors
+        .iter()
+        .map(|e| match e {
+            crate::ResolveError::InvisibleItem { segment, .. } => {
+                interner.get_str(&segment.ident.id).unwrap()
+            }
+            e => panic!("unexpected error: {e:?}"),
+        })
+        .collect();
+    invisible.sort();
+    assert_eq!(invisible, ["Secret", "b", "hidden_fn", "secret"]);
+}

@@ -1,0 +1,14 @@
+{
+  "name": "vis_dep_user",
+  "version": "0.1.0",
+  "description": "uses vis_dep: only its pub items are visible",
+  "dependencies": [
+    {
+      "name": "vis_dep",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

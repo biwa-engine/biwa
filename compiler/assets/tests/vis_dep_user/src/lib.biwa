@@ -1,0 +1,9 @@
+// 依存パッケージの可視性 (issue #8 の段階 3)。`pub` 以外は見えない。
+
+pub fn uses() -> Int {
+  vis_dep::open()           // OK
+    + vis_dep::via_inner()  // OK
+    + vis_dep::hidden()     // NG: private
+    + vis_dep::in_pkg()     // NG: pub(package) は自分のパッケージの中だけ
+    + vis_dep::inner::deep() // NG: `inner` は private なモジュール
+}

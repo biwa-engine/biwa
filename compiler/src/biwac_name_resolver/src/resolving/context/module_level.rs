@@ -9,7 +9,7 @@ use biwac_base::{IdentInterner, InternedIdent, ModId, PackageId};
 use biwac_dependency_metadata::{
     DepMetadata, DepMetadataModuleView, ExternalChildKind, ExternalChildRef, PackageModuleView,
 };
-use biwac_hir::TyTraitImpl;
+use biwac_hir::{TyTraitImpl, Visibility};
 use biwac_span::{DefIdKind, TraitAssocDefId, TraitDefId, TyDefId};
 use biwac_trait_solver::{Solved, TraitEnv, TraitSolveError};
 
@@ -169,6 +169,8 @@ impl<'t> ModuleResolveCtx<'t> {
 impl ModuleResolveCtx<'_> {
     fn local_tree_ctx(&self) -> LocalTreeCtx<'_> {
         LocalTreeCtx {
+            from: self.module.mod_id,
+            mod_index: self.mod_index,
             ty_index: self.ty_index,
             ext_pkg_data: &self.global_tree.ext_pkg_data,
             interner: self.interner,
@@ -498,10 +500,53 @@ impl ResolveCtx for ModuleResolveCtx<'_> {
 /// その場合 canonical な型はローカルのツリーに居ないので、
 /// 依存メタデータ側に降りて関連アイテムを引く必要がある。
 struct LocalTreeCtx<'t> {
+    /// パスを書いたモジュール。可視性はここから見えるかで判定する。
+    from: ModId,
+    /// モジュールの親を辿るのに使う (可視性の判定)。
+    mod_index: &'t HashMap<ModId, &'t ModuleNameTree>,
     ty_index: &'t HashMap<TyDefId, &'t TyNameTree>,
     ext_pkg_data: &'t HashMap<PackageId, Arc<DepMetadata>>,
     interner: &'t IdentInterner,
     trait_env: ModuleTraitEnv<'t>,
+}
+
+impl LocalTreeCtx<'_> {
+    /// パスのセグメント `segment` が指す項目 (可視性 `vis`) が、パスを書いたモジュールから見えるか。
+    ///
+    /// 祖先による頭打ちは、途中のモジュールのセグメントごとにこれを呼ぶことで効く
+    /// (`docs/symbol-visibility-impl-status.md` §5.3)。
+    fn check_visible(
+        &self,
+        vis: Visibility,
+        segment: &biwac_ast::PathSegment,
+        kind: DefIdKind,
+    ) -> Option<ResolveError> {
+        let parent_of = |m: ModId| self.mod_index.get(&m).and_then(|t| t.parent);
+        if vis.is_visible_from(self.from, parent_of) {
+            None
+        } else {
+            Some(ResolveError::InvisibleItem {
+                segment: segment.clone(),
+                kind,
+                vis,
+            })
+        }
+    }
+}
+
+/// 見えない項目を辿ったときの戻り値。
+///
+/// 項目は見つかっているので、セグメントには解決結果を入れたまま先も辿る
+/// (同じパスを何度も解決しても、エラーが 1 度だけになるように)。
+/// その先の結果にかかわらず、可視性のエラーを返す。
+fn with_visibility_error(
+    result: Result<(), ResolveError>,
+    vis_err: Option<ResolveError>,
+) -> Result<(), ResolveError> {
+    match vis_err {
+        Some(e) => Err(e),
+        None => result,
+    }
 }
 
 /// 1 つのモジュールに閉じた [`TraitEnv`]。
@@ -590,12 +635,15 @@ fn resolve_path_in_module(
     match module.children.get(&segment.ident.id) {
         Some(item) => {
             let def_id_kind = module_item_to_def_id_kind(item);
+            let vis_err = module
+                .child_visibility(segment.ident.id)
+                .and_then(|vis| ctx.check_visible(vis, segment, def_id_kind.clone()));
             segment
                 .resolved_id
                 .set(PathSegmentResolution::Ok(def_id_kind))
                 .unwrap();
 
-            if path.segments.len() == depth + 1 {
+            let result = if path.segments.len() == depth + 1 {
                 Ok(())
             } else {
                 match item {
@@ -617,7 +665,8 @@ fn resolve_path_in_module(
                         })
                     }
                 }
-            }
+            };
+            with_visibility_error(result, vis_err)
         }
         None => {
             segment.resolved_id.set(PathSegmentResolution::Err).unwrap();
@@ -684,21 +733,27 @@ fn resolve_path_in_ty(
     match children.get(&segment.ident.id) {
         Some(assoc_tree) => {
             // TODO: segment に genargs: Option<Vec<TypRepr>> を持たせて解決
-            let def_id_kind = match assoc_tree.find_matched(None, segment) {
-                Ok(AssocNameTreeItemKind::Val(def_id)) => DefIdKind::Val(*def_id),
-                Ok(AssocNameTreeItemKind::Variant(def_id)) => DefIdKind::Variant(*def_id),
+            let (def_id_kind, vis) = match assoc_tree.find_matched(None, segment) {
+                Ok(item) => (
+                    match item.kind {
+                        AssocNameTreeItemKind::Val(def_id) => DefIdKind::Val(def_id),
+                        AssocNameTreeItemKind::Variant(def_id) => DefIdKind::Variant(def_id),
+                    },
+                    item.vis,
+                ),
                 Err(e) => {
                     segment.resolved_id.set(PathSegmentResolution::Err).unwrap();
                     return Err(e);
                 }
             };
+            let vis_err = ctx.check_visible(vis, segment, def_id_kind.clone());
 
             segment
                 .resolved_id
                 .set(PathSegmentResolution::Ok(def_id_kind))
                 .unwrap();
 
-            if path.segments.len() == depth + 1 {
+            let result = if path.segments.len() == depth + 1 {
                 Ok(())
             } else {
                 path.segments[depth + 1]
@@ -708,7 +763,8 @@ fn resolve_path_in_ty(
                 Err(ResolveError::PathResolutionFailed {
                     path: Box::new(path.clone()),
                 })
-            }
+            };
+            with_visibility_error(result, vis_err)
         }
         None => {
             // 直接の impl に無い。ここで初めて trait を探す。
@@ -784,12 +840,13 @@ fn resolve_path_in_ext_pkg(
         }
         Some(child_ref) => {
             let def_id_kind = ext_child_ref_to_def_id_kind(&child_ref, pkg_id);
+            let vis_err = trait_ctx.check_visible(child_ref.vis, segment, def_id_kind.clone());
             segment
                 .resolved_id
                 .set(PathSegmentResolution::Ok(def_id_kind))
                 .unwrap();
 
-            if path.segments.len() == depth + 1 {
+            let result = if path.segments.len() == depth + 1 {
                 Ok(())
             } else {
                 match child_ref.kind {
@@ -827,7 +884,8 @@ fn resolve_path_in_ext_pkg(
                         })
                     }
                 }
-            }
+            };
+            with_visibility_error(result, vis_err)
         }
     }
 }
@@ -877,12 +935,13 @@ fn resolve_path_in_ext_ty(
         }
         Some(child_ref) => {
             let def_id_kind = ext_child_ref_to_def_id_kind(&child_ref, pkg_id);
+            let vis_err = trait_ctx.check_visible(child_ref.vis, segment, def_id_kind.clone());
             segment
                 .resolved_id
                 .set(PathSegmentResolution::Ok(def_id_kind))
                 .unwrap();
 
-            if path.segments.len() == depth + 1 {
+            let result = if path.segments.len() == depth + 1 {
                 Ok(())
             } else {
                 // assoc アイテムの先をさらに辿ることは現時点でサポートしない
@@ -893,7 +952,8 @@ fn resolve_path_in_ext_ty(
                 Err(ResolveError::PathResolutionFailed {
                     path: Box::new(path.clone()),
                 })
-            }
+            };
+            with_visibility_error(result, vis_err)
         }
     }
 }

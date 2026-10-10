@@ -2,7 +2,7 @@
 
 issue #8 「[feature] Visibility of symbols」の実装方針と進み具合のメモ。決まったこと・未決のこと・調べたことをここに集める。
 
-状況: **段階 2 (可視性を HIR・名前の表・`.biwameta` に載せる) まで実装済み**。可視性はまだ検査していない。
+状況: **段階 3 (名前解決での検査) まで実装済み**。型推論 (フィールド・メソッド) と private-in-public はまだ検査していない。
 
 ## 0. スコープ
 
@@ -27,6 +27,9 @@ issue #8 「[feature] Visibility of symbols」の実装方針と進み具合の�
 5. **private-in-public は、実効可視性を正しく判定して定義側でエラーにする** (§5.2)。
    - 実効可視性は module tree の祖先の可視性で頭打ちになるので、Voldemort 型 (§4.2) は作れない。一旦はそれでよい。
    - sealed trait (§4.3) も作れない。必要になったら別の手段で表す。
+6. **`pub import` (将来) は Rust と同じ規則にする。** 再 export は元の項目に**書かれた**可視性を超えられない
+   (`pub(super) fn foo` を `pub import` することはできない)。祖先のモジュールによる頭打ちは超えられる
+   (private なモジュールの中の `pub struct Foo` を、上のモジュールで `pub import` して公開できる)。§5.2 / §5.3。
 
 ## 2. 未決のこと
 
@@ -152,15 +155,29 @@ issue #8 「[feature] Visibility of symbols」の実装方針と進み具合の�
 
 **実効可視性**
 
-- 項目に届くパスごとに、パス上の各段 (モジュール・項目) の可視性の交わりを取る。その中で最も広いものが実効可視性。
-  - 今は届くパスが定義の場所の 1 本しか無い。
-    たとえば private なモジュールの中の `pub fn` の実効可視性は、そのモジュールの private と同じ。
-  - **`pub import` を入れると、再 export ごとに届くパスが増える**。
-    再 export は依存の向きが循環しうるので、実効可視性はモジュール木と再 export の辺を合わせたグラフ上の不動点として求める
+項目の「どこから見えるか」の全体。使う側の検査 (§5.3) では要らず、この節の定義側の検査でだけ使う
+(2 つの項目の見える範囲を比べるため)。
+
+- 1 本の経路 (`a::b::Foo` のように項目に届く名前の並び) について、経路上の各段 (モジュール・項目) の可視性の範囲の共通部分を取る。
+  - どの段の範囲もその項目自身を含む部分木なので、共通部分は**その中で最も狭い 1 つの部分木**になる。
+  - 例: private なモジュールの中の `pub fn` は、そのモジュールの private の範囲 (親の部分木) で頭打ちになる。
+- 今は項目に届く経路は定義の場所の 1 本しか無いので、実効可視性はその経路のものである。
+- **`pub import` (将来) を入れると、再 export の分だけ項目に届く経路が増え、見える範囲が広がりうる。**
+  - 再 export は書かれた可視性を超えられないが、祖先による頭打ちは超えられる (§1 の 6)。
+    ```biwa
+    // lib.biwa
+    mod imp;              // private
+    pub import imp::Foo;  // `Foo` はパッケージの外から `mylib::Foo` で届く
+
+    // imp.biwa
+    pub struct Foo {}     // 定義の経路 `imp::Foo` だけを見ると、ルートの部分木で頭打ち
+    ```
+  - このとき `pub fn make() -> Foo` は正しいコードである。定義の経路だけで `Foo` の実効可視性を求めると、誤ってエラーにする。
+  - したがって実効可視性は、**届く経路ごとの範囲の和**にする。範囲の和は部分木 1 つになるとは限らない
+    (別々の枝で `pub(super) import` した場合など) ので、範囲の集合として持つ。
+  - 再 export の import が再 export されることもあるので、モジュール木と再 export の辺を合わせたグラフの上で求める
     (rustc の `EffectiveVisibilities` と同じ考え方)。
-    再 export は元の項目の宣言した可視性より広くはできない (Rust の E0364 / E0365 と同じ) ものとする。
-  - したがって実効可視性の計算は、最初から「パスの集合」を扱う形で作る (パスが 1 本の今は自明に解ける)。
-    「祖先を辿って交わりを取る」だけの実装にすると、`pub import` を入れたときに作り直しになる。
+  - 実装は最初から「経路ごとの範囲の和」を扱える形にしておく。定義の経路だけを辿る作りにすると、`pub import` を入れたときに作り直しになる。
 - 関連 item (inherent impl の項目): 項目の可視性 ∩ 型の実効可視性。
 - impl ブロック (trait impl): trait の実効可視性 ∩ 型の実効可視性 ∩ impl の型引数・境界に現れる型の実効可視性 (Rust と同じ)。
 
@@ -181,7 +198,7 @@ issue #8 「[feature] Visibility of symbols」の実装方針と進み具合の�
 
 **将来の言語機能** (「今は無いから漏れない」とは考えない。入れるときに必ずインターフェースを定めること):
 
-- `pub import`: 実効可視性の計算に辺を足す (上記)。再 export そのものはインターフェースを持たない。
+- `pub import`: 実効可視性の計算に再 export の経路を足す (上記)。再 export そのものはインターフェースを持たない。
 - 関連型: trait 内の宣言の境界と、**impl 側の `type Out = T` の右辺**の両方をインターフェースに含める
   (impl の実効可視性で判定)。Rust の旧規則の漏れの典型はここだった。
 - supertrait: インターフェースに含める (private な supertrait はエラー。sealed trait は §4.3 の別手段で)。
@@ -196,6 +213,25 @@ issue #8 「[feature] Visibility of symbols」の実装方針と進み具合の�
 - 負例のフィクスチャを item の種類ごとに置く。
 
 **この方針で失うもの**: Voldemort 型 (§4.2) と sealed trait (§4.3)。一旦はそれでよい。
+
+### 5.3 使う側の検査 (名前解決・型推論)
+
+使う側では、実効可視性 (経路ごとの範囲の和) は要らない。
+
+- **見える範囲は部分木**。`pub` は全体、`pub(package)` はそのパッケージのルート、何も書かない・`pub(super)` はそのモジュール。
+  使う側のモジュールがその部分木に入っていれば見える。
+  部分木の根をパッケージから始まるセグメントの列で表せば、「根の列が使う側のモジュールの列の接頭辞か」で判定できる
+  (`ModId` の親を辿って比べても同じ。列はエラー文にもそのまま出せる)。
+- **名前解決**: 書かれたパスを先頭から辿り、セグメントごとに、そのセグメントの項目の (書かれた) 可視性がその場所から見えるかを確かめる。
+  - 祖先による頭打ちは、途中のモジュールのセグメントを確かめることで自然に効く。
+  - 再 export を通るパス (将来) なら、再 export が作った名前のセグメント自身の可視性を見る。
+    その `pub import` が元の項目に書かれた可視性を超えていないかは、import 宣言の側で別に確かめる。
+    経路が何本あるかは関係しない。
+- **型推論**: `<expr>.<identifier>` (フィールド・メソッド) では、その識別子自身の書かれた可視性の範囲だけを見る。祖先による頭打ちは掛けない
+  (Rust のフィールドの検査も同じ)。
+  - `<expr>` の型の値がその場所にあること自体は、§5.2 の定義側の規則 (見えない型をシグネチャに出せない) が保証する。
+    Voldemort 型を作れないので、名前を書けない型の値が出てくることは無い。
+  - struct リテラルとパターンは、書いたフィールドだけでなく全フィールドを見る (§6.4)。
 
 ## 6. 実装方針 (案)
 
@@ -225,7 +261,7 @@ issue #8 「[feature] Visibility of symbols」の実装方針と進み具合の�
   - `pub(package)` → このパッケージのルート
   - `pub` → どこからでも
   - 関連 item は impl ブロックのあるモジュールを基準にする。
-- 判定は「利用する側のモジュールが、範囲のモジュールそのものかその子孫か」。`ModId` から親を辿れるようにする。
+- 判定は「利用する側のモジュールが、範囲のモジュールそのものかその子孫か」(§5.3)。
 - `ModuleNameTreeItem` と `AssocNameTreeItem` に範囲を持たせる。
   HIR の定義 (ValDef / TyDef / struct のメンバ) にも持たせる (型推論で使うため)。
 
@@ -369,3 +405,40 @@ issue #8 「[feature] Visibility of symbols」の実装方針と進み具合の�
   - `mod_tree` フィクスチャのルートの `pub(super)` を `pub(package)` に直した (段階 2 からエラー)。
   - LSP 99 件 (新しいエラーの文面を足しただけ)。
   - std と `~/test1` を強制再ビルドし、ブラウザで Link と scene の開始まで動くことを確かめた。
+
+### 8.3 段階 3: 名前解決での検査 (実装済み)
+
+- **判定**: `biwac_hir::Visibility::is_visible_from(from, parent_of)`。見える範囲の部分木に、パスを書いたモジュール `from` が入っていれば見える (§5.3)。
+  `pub(package)` は `from` のパッケージで比べる。型推論 (段階 4) でも同じものを使う。
+- **場所**: パスを辿る 4 か所 (`biwac_name_resolver` の `module_level.rs`) で、セグメントごとに確かめる。
+  - モジュールの子 (`resolve_path_in_module`。`ModuleNameTree::child_visibility`)
+  - 型の関連 item・variant (`resolve_path_in_ty`。`AssocNameTreeItem::vis`。`find_matched` が項目ごと返すようにした)
+  - 依存パッケージのモジュールの子・型の関連 item (`resolve_path_in_ext_pkg` / `resolve_path_in_ext_ty`。`ExternalChildRef::vis`)
+  - 祖先による頭打ちは、途中のモジュールのセグメントを確かめることで効く。
+  - import・型の注釈・関連関数のパス・`super::` はすべてこの経路を通るので、まとめて効く。
+    import した名前から始まるパスは、import のパスを解決するときに確かめてある。
+  - 名前解決の文脈 (fn・impl・型定義・trait 定義) はどれも最後は `ModuleResolveCtx::resolve_path` に来るので、ここだけでよい。
+    パスを書いたモジュールは `LocalTreeCtx::from` で持ち回る。
+- **検査しないもの**:
+  - trait 越しの解決 (`solve_assoc_fallback`): trait impl の項目は `pub` 扱い (§8.2)。trait がスコープにあることは import の側で確かめてある。
+  - `Self::foo`: 名前解決はヘッダ (`Self`) だけを解決し、`foo` は型推論が引くので段階 4。`T::foo` (ジェネリック引数の trait の項目) も trait の可視性で足りる。
+  - lang item・host export・エントリポイント (コンパイラ・ホストが DefId や名前で直接呼ぶ)。
+- **エラー**: `ResolveError::InvisibleItem { segment, kind, vis }`。
+  「`hidden_fn` is not visible here.」+「a value visible only in module `a` and its submodules」+「it is declared without `pub` (private to its module)」。
+  依存パッケージの項目は「visible only in a module of its own package」(依存パッケージのモジュール名はまだ引けない)。
+  - 見えなくても項目は見つかっているので、セグメントには解決結果を入れたまま先も辿り、可視性のエラーだけを返す。
+    同じ import を何度使っても、エラーは 1 度だけになる。
+  - LSP にも同じ診断を足した。
+- **今のままの点**: import はそれを使うパスが解決されるときに初めて解決される (以前からの作り)。
+  使われない import は、private を指していても報告されない (存在しないものを指していても報告されないのと同じ)。
+- **フィクスチャ**:
+  - コンパイラのテスト用のライブラリ (`compiler/assets/tests` の std・color・greeter・fn_lib) と、test1 の子モジュールの公開面を `pub` にした
+    (テスト用の入力なので、細かく絞らず、`mod` 宣言・トップレベルの項目・inherent impl のメソッド・struct のメンバをすべて `pub` にした)。
+    これをしないと、負例のフィクスチャ (`scene_main` など) が本来の理由ではなく可視性で落ちてしまう。全フィクスチャで可視性のエラーが出ないことを確かめた。
+  - 負例 `vis_errors` (パッケージの中: private な関数の import、private なモジュール越し、private な関連関数、private な enum の variant) と
+    `vis_dep` / `vis_dep_user` (依存パッケージの private・`pub(package)`・private なモジュールの中の `pub`)。
+    見えるもの (`pub(super)` を親から、`pub(package)` を兄弟から、`super::` 経由) も同じフィクスチャに並べ、報告される名前の集合を確かめている。
+- **テスト**: compiler 130 件、LSP 99 件。
+  std (`library/std`。可視性は利用者が設定したもの) と `~/test1` を強制再ビルドし、ブラウザで Link と scene の開始まで動くことを確かめた。
+  ただし `~/test1` の依存 `greeter` (Hub から取ったもの) は `trait Greeter` が `pub` でないため、手元の `.biwa_build/deps/greeter` だけ `pub trait` に直して確かめた
+  (Hub 側の `greeter` も直して公開し直す必要がある。`self.display_name` (std の `Character` の private なメンバ) を読んでいるので、段階 4 でも引っかかる)。

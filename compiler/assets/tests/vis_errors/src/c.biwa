@@ -1,0 +1,5 @@
+pub(package) fn pkg_fn() {}
+
+pub fn call_up() {
+  super::a::shown(); // OK
+}

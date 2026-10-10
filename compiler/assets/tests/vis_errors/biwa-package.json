@@ -1,0 +1,6 @@
+{
+  "name": "vis_errors",
+  "version": "0.1.0",
+  "description": "visibility violations inside a package (each is reported as InvisibleItem)",
+  "dependencies": []
+}

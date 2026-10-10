@@ -2,7 +2,7 @@
 //!
 //! 名前解決が AST の可視性 (`biwac_ast::Visibility`) を「見える範囲」に直して持たせる。
 //! 依存パッケージの宣言は `.biwameta` から読む。
-//! 今はまだ載せているだけで、検査には使っていない (段階 3 以降)。
+//! 名前解決はパスを辿るときに、型推論はフィールド・メソッドを引くときに [`Visibility::is_visible_from`] で確かめる。
 
 use biwac_base::{ModId, PackageId};
 
@@ -65,6 +65,30 @@ impl Visibility {
             DeclaredVisibility::Public => VisibilityScope::Public,
         };
         Some(Self { declared, scope })
+    }
+}
+
+impl Visibility {
+    /// モジュール `from` から見えるか (`docs/symbol-visibility-impl-status.md` §5.3)。
+    ///
+    /// 見える範囲の部分木に `from` が入っていればよい。`parent_of` はモジュールの親を返す
+    /// (ルートモジュールなら `None`)。祖先による頭打ちはここでは見ない
+    /// (パスを辿る側が途中のモジュールごとに確かめる)。
+    pub fn is_visible_from(&self, from: ModId, parent_of: impl Fn(ModId) -> Option<ModId>) -> bool {
+        match self.scope {
+            VisibilityScope::Public => true,
+            VisibilityScope::Package(pkg_id) => PackageId::new(from.pkg_id_bits()) == pkg_id,
+            VisibilityScope::Module(scope) => {
+                let mut cur = Some(from);
+                while let Some(m) = cur {
+                    if m == scope {
+                        return true;
+                    }
+                    cur = parent_of(m);
+                }
+                false
+            }
+        }
     }
 }
 

@@ -6,14 +6,14 @@
 // これを解決するには、依存グラフの推移閉包すべてに PackageId を振って
 // .biwameta をロードしている必要がある。
 
-struct Rgb {
-  r: Int,
-  g: Int,
-  b: Int,
+pub struct Rgb {
+  pub r: Int,
+  pub g: Int,
+  pub b: Int,
 }
 
 impl Rgb {
-  fn new(r: Int, g: Int, b: Int) -> Self {
+  pub fn new(r: Int, g: Int, b: Int) -> Self {
     Self {
       r = r,
       g = g,
@@ -21,7 +21,7 @@ impl Rgb {
     }
   }
 
-  fn white() -> Self {
+  pub fn white() -> Self {
     Rgb::new(255, 255, 255)
   }
 }

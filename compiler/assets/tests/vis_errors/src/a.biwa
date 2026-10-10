@@ -1,0 +1,20 @@
+mod b;
+
+fn hidden_fn() {}
+
+pub fn shown() {
+  b::in_b();   // OK: `b` は `a` の private なモジュールで、ここは `a`
+  b::for_a();  // OK: pub(super) で、ここはその親 `a`
+}
+
+pub struct Holder {}
+
+impl Holder {
+  fn secret() {}
+
+  pub fn open() {}
+}
+
+enum Secret {
+  A,
+}

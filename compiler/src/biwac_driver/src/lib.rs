@@ -1312,6 +1312,7 @@ mod tests {
             | "fn_lib"
             | "fn_value_capture" => &["std"],
             "fn_user" | "fn_user_scene" => &["std", "fn_lib"],
+            "vis_dep_user" => &["vis_dep"],
             _ => &[],
         };
         if deps.is_empty() {
@@ -2008,6 +2009,84 @@ mod tests {
         assert_eq!(member("left"), (D::Public, S::Public));
         assert_eq!(member("right"), (D::Package, S::Package(pkg)));
         assert_eq!(member("hidden"), (D::Private, S::Module(root_mod)));
+    }
+
+    /// 依存パッケージの項目は `pub` のものしか見えないこと (issue #8 の段階 3)。
+    ///
+    /// `vis_dep` を実際にビルドして `.biwameta` を作り、それを依存として `vis_dep_user` を名前解決する。
+    /// private・`pub(package)`・private なモジュールの中の `pub` が、それぞれ `InvisibleItem` になる。
+    #[test]
+    fn dependency_items_other_than_pub_are_invisible() {
+        ensure_fixture_deps("vis_dep_user");
+        let result = with_build_lock(|_| {
+            compile(
+                Path::new("../../assets/tests/vis_dep").to_path_buf(),
+                BuildOptions {
+                    force_rebuild: true,
+                    emit_mir: true,
+                    target: biwac_base::Target::Wasm,
+                },
+            )
+        });
+        assert!(result.is_ok(), "vis_dep must compile");
+
+        let dep_root = Path::new("../../assets/tests/vis_dep");
+        let dep_metadata =
+            biwac_metadata_loader::try_load_package_metadata(dep_root.to_path_buf()).unwrap();
+        let data = std::fs::read(
+            dep_root
+                .join(biwac_base::BIWA_BUILD_DIRECTORY_NAME)
+                .join(biwac_base::Target::Wasm.build_subdir())
+                .join("vis_dep.biwameta"),
+        )
+        .unwrap();
+
+        let mut srcs = biwac_base::SourceHolder::default();
+        let mut interner = biwac_base::IdentInterner::default();
+        let root = Path::new("../../assets/tests/vis_dep_user");
+        let metadata =
+            biwac_metadata_loader::try_load_package_metadata(root.to_path_buf()).unwrap();
+        let mut pkg =
+            biwac_package_loader::Pkg::try_load::<biwac_package_loader::BiwacSourceParser>(
+                &metadata,
+                &mut interner,
+                &mut srcs,
+                root.to_path_buf(),
+            )
+            .unwrap_or_else(|_| panic!("failed to load vis_dep_user"));
+        let dep = biwac_dependency_metadata::ExternalPackage {
+            ident: interner.get_or_insert("vis_dep"),
+            pkg_id: biwac_span::PackageHashId::new(
+                &dep_metadata.metadata.name,
+                &dep_metadata.metadata.version,
+            )
+            .as_package_id(),
+            meta: std::sync::Arc::new(
+                biwac_dependency_metadata::DepMetadata::decode_file(&data).unwrap(),
+            ),
+            direct: true,
+        };
+        let pkg_name = interner.get_or_insert("vis_dep_user");
+
+        let errors =
+            match biwac_name_resolver::NameResolver::new(&metadata, vec![dep], pkg_name, &mut pkg)
+                .unwrap()
+                .try_resolve(&mut interner)
+            {
+                Ok(_) => panic!("vis_dep_user must be rejected"),
+                Err(errors) => errors,
+            };
+        let mut invisible: Vec<&str> = errors
+            .iter()
+            .map(|e| match e {
+                biwac_name_resolver::ResolveError::InvisibleItem { segment, .. } => {
+                    interner.get_str(&segment.ident.id).unwrap()
+                }
+                e => panic!("unexpected error: {e:?}"),
+            })
+            .collect();
+        invisible.sort();
+        assert_eq!(invisible, ["hidden", "in_pkg", "inner"]);
     }
 
     /// ルートモジュールの `pub(super)` は名前解決のエラーになること (親が無いため)。

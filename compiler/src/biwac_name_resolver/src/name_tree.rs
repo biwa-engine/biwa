@@ -111,7 +111,7 @@ impl AssocNameTree {
         &self,
         genargs: Option<&[Ty]>,
         segment: &PathSegment,
-    ) -> Result<&AssocNameTreeItemKind, ResolveError> {
+    ) -> Result<&AssocNameTreeItem, ResolveError> {
         match genargs {
             Some(genargs) => {
                 for item in &self.assocs {
@@ -122,7 +122,7 @@ impl AssocNameTree {
                             .zip(genargs)
                             .all(|(t1, t2)| t1.kind.is_duplicated_for_impl_genarg(&t2.kind))
                     {
-                        return Ok(&item.kind);
+                        return Ok(item);
                     }
                 }
 
@@ -132,7 +132,7 @@ impl AssocNameTree {
             }
             None => {
                 if self.assocs.len() == 1 {
-                    Ok(&self.assocs[0].kind)
+                    Ok(&self.assocs[0])
                 } else {
                     Err(ResolveError::AmbiguousAssocItem {
                         segment: segment.clone(),
