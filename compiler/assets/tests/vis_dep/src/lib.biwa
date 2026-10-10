@@ -1,0 +1,36 @@
+// 依存する側 (`vis_dep_user`) から見えるのは `pub` だけである。
+
+mod inner;
+
+pub fn open() -> Int {
+  1
+}
+
+fn hidden() -> Int {
+  2
+}
+
+pub(package) fn in_pkg() -> Int {
+  3
+}
+
+// パッケージの中からは `inner::deep` が見える。
+pub fn via_inner() -> Int {
+  inner::deep()
+}
+
+// 依存する側から見えるのは `pub` なメンバ・メソッドだけである (段階 4)。
+pub struct Item {
+  pub a: Int,
+  b: Int,
+}
+
+impl Item {
+  pub fn new() -> Self {
+    Item { a = 1, b = 2 }
+  }
+
+  fn hidden_method(self) -> Int {
+    self.b
+  }
+}

@@ -77,7 +77,7 @@ import package::game::window::Size;
 // syscall の記述子。中身はエンジンとの規約であり、Biwa 側からは不透明。
 [[lang="syscall"]]
 [[native(arch="typescript")]]
-type Syscall = {{
+pub type Syscall = {{
   BiwaSyscall
 }};
 
@@ -89,7 +89,7 @@ type Syscall = {{
 // TODO: 要求する lang item を arch ごとに変えられるようにして、これを消す。
 [[lang="syscall"]]
 [[native(arch="wasm")]]
-type Syscall = {{
+pub type Syscall = {{
   i32
 }};
 
@@ -110,7 +110,7 @@ type Syscall = {{
 // 読み込みは非同期だが、この呼び出しは待たない。
 // 読み込みに失敗しても id は返る (ゲーム側にできることが無いため)。
 [[native(arch="typescript")]]
-fn sys_create_object(
+pub fn sys_create_object(
   path: String, layer: Uint,
   x: Int, y: Int, w: Int, h: Int, alpha: Int, theta: Int,
 ) -> Uint {{
@@ -120,7 +120,7 @@ fn sys_create_object(
 }}
 
 [[native(arch="wasm")]]
-fn sys_create_object(
+pub fn sys_create_object(
   path: String, layer: Uint,
   x: Int, y: Int, w: Int, h: Int, alpha: Int, theta: Int,
 ) -> Uint {{
@@ -135,27 +135,27 @@ fn sys_create_object(
   call $sys_create_object
 }}
 
-struct X {
-  x: Size,
+pub struct X {
+  pub x: Size,
 }
 
 impl X {
-  fn vw(vw: Float) -> Self {
+  pub fn vw(vw: Float) -> Self {
     Self { x = Size::Vw(vw) }
   }
 }
 
-struct Y {
-  y: Size,
+pub struct Y {
+  pub y: Size,
 }
 
 impl Y {
-  fn vh(vh: Float) -> Self {
+  pub fn vh(vh: Float) -> Self {
     Self { y = Size::Vh(vh) }
   }
 }
 
-fn create_object(
+pub fn create_object(
   path: String, layer: Uint,
   x: Int, y: Int, w: Int, h: Int, alpha: Int, theta: Int,
 ) -> Uint {
@@ -167,12 +167,12 @@ fn create_object(
 // 完全に透明にしただけでは資源は解放されない。
 // 消えるアニメーションを出したあとは、その終わりに合わせてこれを呼ぶ。
 [[native(arch="typescript")]]
-fn delete_object(id: Uint, after: Uint) {{
+pub fn delete_object(id: Uint, after: Uint) {{
   deleteObject(id, after);
 }}
 
 [[native(arch="wasm")]]
-fn delete_object(id: Uint, after: Uint) {{
+pub fn delete_object(id: Uint, after: Uint) {{
   local.get 0
   local.get 1
   call $sys_delete_object
@@ -183,12 +183,12 @@ fn delete_object(id: Uint, after: Uint) {{
 // `value` は一度限りの遷移では目標値、周期的な遷移では振幅。
 // `after` は発火からの遅れ、`duration` は遷移時間 (周期系では周期)。
 [[native(arch="typescript")]]
-fn add_transition(id: Uint, param: Uint, kind: Uint, value: Int, after: Uint, duration: Uint) {{
+pub fn add_transition(id: Uint, param: Uint, kind: Uint, value: Int, after: Uint, duration: Uint) {{
   addTransition(id, param, kind, value, after, duration);
 }}
 
 [[native(arch="wasm")]]
-fn add_transition(id: Uint, param: Uint, kind: Uint, value: Int, after: Uint, duration: Uint) {{
+pub fn add_transition(id: Uint, param: Uint, kind: Uint, value: Int, after: Uint, duration: Uint) {{
   local.get 0
   local.get 1
   local.get 2
@@ -206,12 +206,12 @@ fn add_transition(id: Uint, param: Uint, kind: Uint, value: Int, after: Uint, du
 // `sync` が 0 でなければ、この演出はテキストの進行と結びつく。
 // クリックはまずこれを完了させ、`await_transitions` が待つ対象にもなる。
 [[native(arch="typescript")]]
-fn start_transitions(sync: Uint) {{
+pub fn start_transitions(sync: Uint) {{
   startTransitions(sync);
 }}
 
 [[native(arch="wasm")]]
-fn start_transitions(sync: Uint) {{
+pub fn start_transitions(sync: Uint) {{
   local.get 0
   call $sys_start_transitions
 }}
@@ -222,14 +222,14 @@ fn start_transitions(sync: Uint) {{
 // 今のところ novel statement の展開先だけで、任意の呼び出しを中断させる手段が
 // コンパイラに無い。
 [[native(arch="wasm")]]
-fn await_transitions() {{
+pub fn await_transitions() {{
   call $sys_await_transitions
 }}
 
 // エンジン時計の上で指定時間シーンを止める (ポーズ中は進まない)。
 // `await_transitions` と同じく wasm ターゲット専用。
 [[native(arch="wasm")]]
-fn sleep(ms: Uint) {{
+pub fn sleep(ms: Uint) {{
   local.get 0
   call $sys_sleep
 }}
@@ -250,7 +250,7 @@ fn sleep(ms: Uint) {{
 //   1 語に詰めないのは、biwa にビット演算が無く、
 //   算術で詰めると `a` が i32 の符号を跨ぐためである
 [[native(arch="typescript")]]
-fn sys_content_push_text(
+pub fn sys_content_push_text(
   text: String, speed: Float,
   size_unit: Uint, size_value: Float,
   weight: Uint,
@@ -260,7 +260,7 @@ fn sys_content_push_text(
 }}
 
 [[native(arch="wasm")]]
-fn sys_content_push_text(
+pub fn sys_content_push_text(
   text: String, speed: Float,
   size_unit: Uint, size_value: Float,
   weight: Uint,
@@ -280,12 +280,12 @@ fn sys_content_push_text(
 
 // 積まれた content をまとめて出し始める。
 [[native(arch="typescript")]]
-fn sys_content_flush() {{
+pub fn sys_content_flush() {{
   flushContent();
 }}
 
 [[native(arch="wasm")]]
-fn sys_content_flush() {{
+pub fn sys_content_flush() {{
   call $sys_content_flush
 }}
 
@@ -295,12 +295,12 @@ fn sys_content_flush() {{
 // (決めたこと 2)。待っても消したくない API を将来足すときに、
 // 変更がエンジンまで波及しないようにするための切り分けである。
 [[native(arch="typescript")]]
-fn sys_content_clear() {{
+pub fn sys_content_clear() {{
   clearContent();
 }}
 
 [[native(arch="wasm")]]
-fn sys_content_clear() {{
+pub fn sys_content_clear() {{
   call $sys_content_clear
 }}
 
@@ -311,12 +311,12 @@ fn sys_content_clear() {{
 // これを呼ぶ `content_flush_and_wait` は普通の関数なので
 // コンパイラが `yield` を置かない (`docs/content-api.md` の段 2 を参照)。
 [[native(arch="typescript")]]
-fn wait() -> Syscall {{
+pub fn wait() -> Syscall {{
   return { sys: Sys.Wait, args: [] };
 }}
 
 [[native(arch="wasm")]]
-fn wait() {{
+pub fn wait() {{
   call $sys_wait
 }}
 
@@ -326,23 +326,23 @@ fn wait() {{
 // `String` の実体はホスト側にしか無いので、数値から作るのもホストに頼む。
 
 [[native(arch="typescript")]]
-fn int_to_string(val: Int) -> String {{
+pub fn int_to_string(val: Int) -> String {{
   return String(val);
 }}
 
 [[native(arch="wasm")]]
-fn int_to_string(val: Int) -> String {{
+pub fn int_to_string(val: Int) -> String {{
   local.get 0
   call $sys_int_to_string
 }}
 
 [[native(arch="typescript")]]
-fn float_to_string(val: Float) -> String {{
+pub fn float_to_string(val: Float) -> String {{
   return String(val);
 }}
 
 [[native(arch="wasm")]]
-fn float_to_string(val: Float) -> String {{
+pub fn float_to_string(val: Float) -> String {{
   local.get 0
   call $sys_float_to_string
 }}

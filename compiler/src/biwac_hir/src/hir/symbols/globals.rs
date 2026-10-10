@@ -6,7 +6,7 @@ use biwac_span::{
     GenDefId, LocalGenDefId, Span, TraitAssocDefId, TraitDefId, TyDefId, VarId, VariantDefId,
 };
 
-use crate::{DecledVar, Expr, ExprId, Ident, Stmt, Ty};
+use crate::{DecledVar, Expr, ExprId, Ident, Stmt, Ty, Visibility};
 
 // 値名前空間のシンボル
 #[derive(Debug, Clone)]
@@ -29,6 +29,7 @@ pub enum AssocValDefKind {
 #[derive(Debug, Clone)]
 pub struct FnDef {
     pub name: Ident,
+    pub vis: Visibility,
 
     // signature
     pub signature: FnSignature,
@@ -154,6 +155,7 @@ pub struct FnBody {
 #[derive(Debug, Clone)]
 pub struct NativeFnDef {
     pub name: Ident,
+    pub vis: Visibility,
 
     // signature
     pub signature: FnSignature,
@@ -188,8 +190,11 @@ pub enum TyDefKind {
 #[derive(Debug, Clone)]
 pub struct StructDef {
     pub name: Ident,
+    pub vis: Visibility,
 
     pub members: HashMap<InternedIdent, Ty>,
+    /// メンバの可視性。`members` と同じ名前を持つ。
+    pub member_vis: HashMap<InternedIdent, Visibility>,
     pub genargs: Vec<GenDefId>,
     // TODO: その他各種情報
 }
@@ -197,6 +202,8 @@ pub struct StructDef {
 #[derive(Debug, Clone)]
 pub struct EnumDef {
     pub name: Ident,
+    /// variant (とそのフィールド) も常にこの可視性になる。
+    pub vis: Visibility,
 
     /// 宣言順。添字がそのままタグの値になるので、並べ替えてはならない。
     pub variants: Vec<VariantDef>,
@@ -239,6 +246,7 @@ pub struct VariantOwner {
 #[derive(Debug, Clone)]
 pub struct TypeAliasDef {
     pub name: Ident,
+    pub vis: Visibility,
 
     pub genargs: Vec<GenDefId>,
     pub right: Ty,
@@ -247,6 +255,7 @@ pub struct TypeAliasDef {
 #[derive(Debug, Clone)]
 pub struct NativeTypeAliasDef {
     pub name: Ident,
+    pub vis: Visibility,
     pub genargs: Vec<Ident>,
     pub native: String,
     pub native_span: Span,
@@ -262,6 +271,8 @@ pub struct NativeTypeAliasDef {
 #[derive(Debug, Clone)]
 pub struct TraitDef {
     pub name: Ident,
+    /// 項目と trait impl の項目も常にこの可視性になる。
+    pub vis: Visibility,
 
     /// `Self` を表す暗黙のジェネリック引数。
     ///
@@ -352,6 +363,7 @@ pub struct NativeCode {
 #[derive(Debug, Clone)]
 pub struct NovelSceneDef {
     pub name: Ident,
+    pub vis: Visibility,
 
     // signature
     // ただし、
@@ -373,9 +385,10 @@ pub struct NovelSceneDef {
 }
 
 impl FnDef {
-    pub fn new(name: Ident, signature: FnSignature, body: FnBody) -> Self {
+    pub fn new(name: Ident, vis: Visibility, signature: FnSignature, body: FnBody) -> Self {
         Self {
             name,
+            vis,
             signature,
             body,
             expr_tys: HashMap::new(),
@@ -388,6 +401,7 @@ impl FnDef {
 impl NativeFnDef {
     pub fn new(
         name: Ident,
+        vis: Visibility,
         native_span: Span,
         span: Span,
         native_body: String,
@@ -395,6 +409,7 @@ impl NativeFnDef {
     ) -> Self {
         Self {
             name,
+            vis,
             signature,
             native_body,
             native_span,
@@ -413,9 +428,10 @@ impl From<&biwac_ast::NativeCode> for NativeCode {
 }
 
 impl NovelSceneDef {
-    pub fn new(name: Ident, signature: FnSignature, body: FnBody) -> Self {
+    pub fn new(name: Ident, vis: Visibility, signature: FnSignature, body: FnBody) -> Self {
         Self {
             name,
+            vis,
             signature,
             body,
             expr_tys: HashMap::new(),

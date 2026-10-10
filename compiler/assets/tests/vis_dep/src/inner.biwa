@@ -1,0 +1,4 @@
+// `inner` は private なモジュールなので、`pub fn deep` もパッケージの外からは届かない。
+pub fn deep() -> Int {
+  4
+}

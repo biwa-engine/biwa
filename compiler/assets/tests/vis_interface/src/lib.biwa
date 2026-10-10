@@ -1,0 +1,6 @@
+// private-in-public の検査 (issue #8 の段階 5)。違反は `a.biwa` に並べてある。
+//
+// `a` は private なモジュールなので、`a` の中の `pub` な項目の実効可視性は
+// ルートの部分木で頭打ちになる (`ok_capped` を参照)。
+
+mod a;

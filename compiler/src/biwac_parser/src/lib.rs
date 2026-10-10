@@ -9,6 +9,7 @@ mod tests;
 use biwac_ast::{AbsolutePathHeader, Exprs, Ident, Path};
 use biwac_base::{IdentInterner, ModId, ModPath};
 use biwac_lexer::{TkKind, TkKindName, Token};
+use biwac_span::Span;
 
 pub(crate) use symbols::statements::ExprOrStmt;
 
@@ -187,6 +188,27 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
             segments.push(self.consume_identifier()?.into());
 
             Some(AbsolutePathHeader::Package(t.span.clone()))
+        } else if let Some(t) = self.peek().cloned()
+            && matches!(t.kind, TkKind::KwSuper)
+        {
+            // "super" "::" ( "super" "::" )* <identifier>
+            let mut depth = 0;
+            let mut end = t.span.clone();
+            while let Some(t) = self.peek().cloned()
+                && matches!(t.kind, TkKind::KwSuper)
+            {
+                self.next();
+                self.must_consume_next(vec![TkKindName::MarkDoubleColon])?;
+                depth += 1;
+                end = t.span.clone();
+            }
+
+            segments.push(self.consume_identifier()?.into());
+
+            Some(AbsolutePathHeader::Super {
+                depth,
+                span: Span::merge(&t.span, &end),
+            })
         } else {
             let ident = self.consume_identifier()?;
             segments.push(ident.into());

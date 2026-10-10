@@ -4,6 +4,7 @@ use biwac_span::Span;
 pub(crate) mod expressions;
 pub(crate) mod globals;
 pub(crate) mod statements;
+pub(crate) mod visibility;
 
 #[derive(Debug, Clone)]
 pub struct Ident {

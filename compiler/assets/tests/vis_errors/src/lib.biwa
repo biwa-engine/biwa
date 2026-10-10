@@ -1,0 +1,18 @@
+// パッケージの中の可視性の違反 (issue #8 の段階 3)。
+// 名前解決は、パスのセグメントごとに、そのパスを書いたモジュールから見えるかを確かめる。
+// 違反には `// NG` を、見えるものには `// OK` を付けてある。
+
+mod a;
+mod c;
+
+import a::hidden_fn; // NG (使ったときに解決される): `hidden_fn` は `a` の private
+
+pub fn uses() {
+  hidden_fn();          // NG: import が private を指している (import の側で報告される)
+  a::shown();           // OK: pub
+  a::b::in_b();         // NG: `b` は `a` の private なモジュール (祖先による頭打ち)
+  a::Holder::open();    // OK: pub な関連関数
+  a::Holder::secret();  // NG: private な関連関数 (impl は `a` にある)
+  let s = a::Secret::A; // NG: `Secret` は `a` の private な enum (variant は enum と同じ)
+  c::pkg_fn();          // OK: pub(package)
+}

@@ -25,13 +25,67 @@ pub struct GenArgsDecl<I> {
     pub span: Span,
 }
 
+/// 可視性。
+///
+/// 何も書かなければ `Private` (定義したモジュールとその子孫から見える)。
+/// 書ける場所・書けない場所はパーサが決める
+/// (enum の variant とそのフィールド、trait の項目、trait impl の項目には書けない)。
+/// 今はまだ構文として受理するだけで、検査には使っていない
+/// (`docs/symbol-visibility-impl-status.md`)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Visibility {
+    /// 何も書かない。
+    Private,
+    /// `pub(super)`: 親モジュールとその子孫から見える。
+    Super(Span),
+    /// `pub(package)`: このパッケージの中から見える。
+    Package(Span),
+    /// `pub`: 祖先が許す範囲で、どこからでも見える。
+    Public(Span),
+}
+
+impl Visibility {
+    /// 書かれた可視性の span。`Private` (何も書かない) なら `None`。
+    pub fn span(&self) -> Option<&Span> {
+        match self {
+            Self::Private => None,
+            Self::Super(span) | Self::Package(span) | Self::Public(span) => Some(span),
+        }
+    }
+}
+
+//  子モジュールの宣言
+//  ```biwa
+//  mod foo;
+//  pub mod bar;
+//  ```
+//
+//  `foo` の実体は、このモジュールのディレクトリにある `foo.biwa` である
+//  (ルートモジュールなら `src/foo.biwa`、`src/a.biwa` なら `src/a/foo.biwa`)。
+//  宣言とファイルの対応はパッケージローダーが確かめる。
+#[derive(Debug, Clone)]
+pub struct ModDecl {
+    pub vis: Visibility,
+    pub id: Ident,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct StructDef {
+    pub vis: Visibility,
     pub id: Ident,
     pub def_id: OnceCell<TyDefId>,
-    pub members: Vec<(Ident, TypRepr)>,
+    pub members: Vec<StructMemberDecl>,
     pub genargs: Option<GenArgsDecl<GenDefId>>,
     pub attrs: Attrs,
+}
+
+/// struct のメンバ。`pub name: String` など。
+#[derive(Debug, Clone)]
+pub struct StructMemberDecl {
+    pub vis: Visibility,
+    pub id: Ident,
+    pub typ: TypRepr,
 }
 
 //  enum
@@ -44,6 +98,7 @@ pub struct StructDef {
 //  ```
 #[derive(Debug, Clone)]
 pub struct EnumDef {
+    pub vis: Visibility,
     pub id: Ident,
     pub def_id: OnceCell<TyDefId>,
     /// 宣言順。添字がそのままタグの値になるので、並べ替えてはならない。
@@ -114,6 +169,7 @@ impl std::fmt::Display for VariantShape {
 //  ```
 #[derive(Debug, Clone)]
 pub struct TypeAlias {
+    pub vis: Visibility,
     pub ident: Ident,
     pub def_id: OnceCell<TyDefId>,
     pub genargs: Option<GenArgsDecl<GenDefId>>,
@@ -129,6 +185,7 @@ pub struct TypeAlias {
 //  ```
 #[derive(Debug, Clone)]
 pub struct NativeTypeAlias {
+    pub vis: Visibility,
     pub ident: Ident,
     pub def_id: OnceCell<TyDefId>,
     pub genargs: Option<GenArgsDecl<GenDefId>>,
@@ -140,6 +197,7 @@ pub struct NativeTypeAlias {
 #[derive(Debug)]
 pub enum Globals {
     Import(ImportDecl),
+    Mod(ModDecl),
     FnDef(FnDef),
     VarDecl(VarDecl),
     TypeDef(TypeDef),
@@ -158,6 +216,7 @@ pub struct ImportDecl {
 
 #[derive(Debug, Clone)]
 pub struct FnDef {
+    pub vis: Visibility,
     pub id: Ident,
     pub def_id: OnceCell<ValDefId>,
     pub args: ArgDeclList,
@@ -171,6 +230,7 @@ pub struct FnDef {
 
 #[derive(Debug, Clone)]
 pub struct NativeFnDef {
+    pub vis: Visibility,
     pub id: Ident,
     pub def_id: OnceCell<ValDefId>,
     pub args: ArgDeclList,
@@ -205,6 +265,7 @@ pub struct MethodArgDeclList {
 
 #[derive(Debug, Clone)]
 pub struct MethodDef {
+    pub vis: Visibility,
     pub def_id: OnceCell<ValDefId>,
     pub id: Ident,
     pub args: MethodArgDeclList, // 第一引数がselfであるのは自明なので含まない
@@ -218,6 +279,7 @@ pub struct MethodDef {
 
 #[derive(Debug, Clone)]
 pub struct NativeMethodDef {
+    pub vis: Visibility,
     pub def_id: OnceCell<ValDefId>,
     pub id: Ident,
     pub args: MethodArgDeclList, // 第一引数がselfであるのは自明なので含まない
@@ -256,6 +318,7 @@ pub struct ImplBlock {
 //  項目は本体を持たない。`;` で終わる。
 #[derive(Debug, Clone)]
 pub struct TraitDef {
+    pub vis: Visibility,
     pub id: Ident,
     pub def_id: OnceCell<TraitDefId>,
     /// `Self` を表す暗黙のジェネリック引数。
@@ -347,6 +410,7 @@ pub struct NativeCode {
 // これはパース段階で変換できる
 #[derive(Debug, Clone)]
 pub struct NovelScene {
+    pub vis: Visibility,
     pub id: Ident,
     pub def_id: OnceCell<ValDefId>,
     pub args: ArgDeclList,

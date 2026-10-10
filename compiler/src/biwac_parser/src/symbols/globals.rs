@@ -5,9 +5,9 @@ use biwac_span::Span;
 
 use biwac_ast::{
     ArgDecl, ArgDeclList, Attrs, EnumDef, FnDef, Globals, Ident, ImplBlock, ImportDecl,
-    MethodArgDeclList, MethodDef, NativeCode, NativeFnDef, NativeMethodDef, NativeTypeAlias,
-    NovelScene, RetTypRepr, StructDef, TraitDef, TraitItemArgs, TraitItemDecl, TypRepr, TypeAlias,
-    TypeDef, VariantDecl, VariantFieldsDecl,
+    MethodArgDeclList, MethodDef, ModDecl, NativeCode, NativeFnDef, NativeMethodDef,
+    NativeTypeAlias, NovelScene, RetTypRepr, StructDef, StructMemberDecl, TraitDef, TraitItemArgs,
+    TraitItemDecl, TypRepr, TypeAlias, TypeDef, VariantDecl, VariantFieldsDecl, Visibility,
 };
 
 use crate::{ExprOrStmt, ParseError, TokenStream};
@@ -44,6 +44,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
     fn consume_function(
         &mut self,
         attrs: Attrs,
+        vis: Visibility,
     ) -> Result<CodeOrNative<FnDef, NativeFnDef>, ParseError<'src>> {
         let begin = self.must_consume_next(vec![TkKindName::KwFn])?.span.clone();
 
@@ -57,6 +58,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
             if let Some(t) = self.next() {
                 if let TkKind::DslLiteral(str) = t.kind {
                     Ok(CodeOrNative::Native(NativeFnDef {
+                        vis: vis.clone(),
                         id,
                         def_id: OnceCell::new(),
                         args,
@@ -88,6 +90,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
             };
 
             Ok(CodeOrNative::Code(FnDef {
+                vis: vis.clone(),
                 id,
                 def_id: OnceCell::new(),
                 args,
@@ -112,6 +115,12 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
     /// メソッド形式と関連関数形式に分かれる。
     fn consume_trait_item(&mut self) -> Result<TraitItemDecl, ParseError<'src>> {
         let attrs = self.consume_attributes()?;
+        // trait の項目は trait と同じ可視性になる (Rust と同じ)。
+        let vis = self.opt_consume_visibility()?;
+        reject_visibility(
+            &vis,
+            "an item of a trait (it has the same visibility as the trait)",
+        )?;
         let begin = self.must_consume_next(vec![TkKindName::KwFn])?.span.clone();
 
         let id = self.consume_identifier()?;
@@ -147,6 +156,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
     fn consume_function_or_method_definition(
         &mut self,
         attrs: Attrs,
+        vis: Visibility,
     ) -> Result<
         FnOrMethod<CodeOrNative<FnDef, NativeFnDef>, CodeOrNative<MethodDef, NativeMethodDef>>,
         ParseError<'src>,
@@ -164,6 +174,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                     if let Some(t) = self.next() {
                         if let TkKind::DslLiteral(str) = t.kind {
                             Ok(FnOrMethod::Fn(CodeOrNative::Native(NativeFnDef {
+                                vis: vis.clone(),
                                 id,
                                 def_id: OnceCell::new(),
                                 args,
@@ -195,6 +206,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                     };
 
                     Ok(FnOrMethod::Fn(CodeOrNative::Code(FnDef {
+                        vis: vis.clone(),
                         id,
                         def_id: OnceCell::new(),
                         args,
@@ -213,6 +225,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                     if let Some(t) = self.next() {
                         if let TkKind::DslLiteral(str) = t.kind {
                             Ok(FnOrMethod::Method(CodeOrNative::Native(NativeMethodDef {
+                                vis: vis.clone(),
                                 id,
                                 def_id: OnceCell::new(),
                                 args,
@@ -243,6 +256,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                         ExprOrStmt::Stmt(block_stmt) => (block_stmt.stmts, None, block_stmt.span),
                     };
                     Ok(FnOrMethod::Method(CodeOrNative::Code(MethodDef {
+                        vis: vis.clone(),
                         id,
                         def_id: OnceCell::new(),
                         args,
@@ -263,11 +277,14 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
     ) -> Result<Option<Globals>, ParseError<'src>> {
         let mod_id = self.mod_id;
         let attrs = self.consume_attributes()?;
+        let vis = self.opt_consume_visibility()?;
 
         if let Some(t) = self.peek() {
             match t.kind {
                 TkKind::KwImport => {
                     // "import" <qualified-identifier> ";"
+                    // `pub import` (再 export) はまだ無い。
+                    reject_visibility(&vis, "an import (`pub import` is not supported yet)")?;
                     let begin = t.span.clone();
                     self.next();
                     let path = self.consume_qualified_identifier()?;
@@ -280,11 +297,33 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                         span: Span::merge(&begin, &end),
                     })))
                 }
-                TkKind::KwFn => Ok(match self.consume_function(attrs)? {
+                TkKind::KwMod => {
+                    // <visibility>? "mod" <identifier> ";"
+                    if let Some(attr) = attrs.iter().next() {
+                        return Err(ParseError::NotAllowedHere {
+                            span: attr.span.clone(),
+                            what: "an attribute",
+                            place: "a module declaration",
+                        });
+                    }
+                    let begin = vis.span().cloned().unwrap_or_else(|| t.span.clone());
+                    self.next();
+                    let id = self.consume_identifier()?;
+                    let end = self.must_consume_semicolon()?.span.clone();
+
+                    Ok(Some(Globals::Mod(ModDecl {
+                        vis,
+                        id,
+                        span: Span::merge(&begin, &end),
+                    })))
+                }
+                TkKind::KwFn => Ok(match self.consume_function(attrs, vis)? {
                     CodeOrNative::Code(f) => Some(Globals::FnDef(f)),
                     CodeOrNative::Native(f) => Some(Globals::NativeFnDef(f)),
                 }),
                 TkKind::KwStruct => {
+                    // "struct" <identifier> <generic-argument-declaration>?
+                    //     "{" ( <visibility>? <identifier> ":" <type> "," )* "}"
                     self.next();
 
                     let id = self.consume_identifier()?;
@@ -305,6 +344,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                             self.next();
 
                             return Ok(Some(Globals::TypeDef(TypeDef::Struct(StructDef {
+                                vis,
                                 id,
                                 def_id: OnceCell::new(),
                                 members,
@@ -312,6 +352,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                                 attrs,
                             }))));
                         } else {
+                            let member_vis = self.opt_consume_visibility()?;
                             let t = self
                                 .next()
                                 .ok_or(ParseError::InvalidEOF {
@@ -324,13 +365,14 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                                 // WARN: really?
                                 let typ = self.must_consume_type_annotation()?;
 
-                                members.push((
-                                    Ident {
+                                members.push(StructMemberDecl {
+                                    vis: member_vis,
+                                    id: Ident {
                                         id: *member_id,
                                         span: t.span,
                                     },
                                     typ,
-                                ));
+                                });
 
                                 let t = self.must_consume_next(vec![
                                     TkKindName::MarkComma,
@@ -341,6 +383,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                                 } else if let TkKind::MarkRBrace = t.kind {
                                     return Ok(Some(Globals::TypeDef(TypeDef::Struct(
                                         StructDef {
+                                            vis,
                                             id,
                                             def_id: OnceCell::new(),
                                             members,
@@ -368,6 +411,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                     let variants = self.consume_variant_declarations()?;
 
                     Ok(Some(Globals::TypeDef(TypeDef::Enum(EnumDef {
+                        vis,
                         id,
                         def_id: OnceCell::new(),
                         variants,
@@ -402,6 +446,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
 
                             Ok(Some(Globals::TypeDef(TypeDef::NativeTypeAlias(
                                 NativeTypeAlias {
+                                    vis,
                                     ident,
                                     def_id: OnceCell::new(),
                                     genargs,
@@ -431,6 +476,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                         let _ = self.must_consume_next(vec![TkKindName::MarkSemiColon])?;
 
                         Ok(Some(Globals::TypeDef(TypeDef::TypeAlias(TypeAlias {
+                            vis,
                             ident,
                             def_id: OnceCell::new(),
                             genargs,
@@ -448,6 +494,10 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                     let genargs_decl = self.opt_consume_generic_argument_declaration()?;
 
                     let self_typ = self.consume_type_representaion()?;
+
+                    // impl ブロックそのものは可視性を持たない
+                    // (項目が個別に持つ。trait impl の項目は trait と同じ)。
+                    reject_visibility(&vis, "an impl block (put it on each item instead)")?;
 
                     // `impl Nyoee: Gyao { .. }`
                     //
@@ -488,7 +538,15 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                             })));
                         } else {
                             let attrs = self.consume_attributes()?;
-                            let f = self.consume_function_or_method_definition(attrs)?;
+                            let item_vis = self.opt_consume_visibility()?;
+                            if trait_typ.is_some() {
+                                // trait impl の項目は trait と同じ可視性になる (Rust と同じ)。
+                                reject_visibility(
+                                    &item_vis,
+                                    "an item of a trait impl (it has the same visibility as the trait)",
+                                )?;
+                            }
+                            let f = self.consume_function_or_method_definition(attrs, item_vis)?;
 
                             match f {
                                 FnOrMethod::Fn(CodeOrNative::Code(f)) => {
@@ -535,6 +593,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                     };
 
                     Ok(Some(Globals::TraitDef(TraitDef {
+                        vis,
                         id,
                         def_id: OnceCell::new(),
                         self_gen: OnceCell::new(),
@@ -545,6 +604,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                     })))
                 }
                 TkKind::DslLiteral(str) => {
+                    reject_visibility(&vis, "a native code block")?;
                     let native = str.to_string();
                     let native_span = t.span.clone();
                     self.next();
@@ -591,6 +651,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                         .map_err(ParseError::NovelParseError)?;
 
                         Ok(Some(Globals::NovelScene(NovelScene {
+                            vis,
                             id,
                             def_id: OnceCell::new(),
                             args,
@@ -608,6 +669,7 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                 }
                 _ => Err(ParseError::InvalidToken {
                     expecteds: vec![
+                        TkKindName::KwMod,
                         TkKindName::KwFn,
                         TkKindName::KwStruct,
                         TkKindName::KwEnum,
@@ -623,6 +685,39 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
         } else {
             Ok(None)
         }
+    }
+
+    /// 可視性 (`pub` / `pub(super)` / `pub(package)`) があれば読む。無ければ `Private`。
+    ///
+    /// <visibility> ::= "pub" ( "(" ( "super" | "package" ) ")" )?
+    pub(crate) fn opt_consume_visibility(&mut self) -> Result<Visibility, ParseError<'src>> {
+        let Some(begin) = self
+            .consume_next_if_match(vec![TkKindName::KwPub])
+            .map(|t| t.span.clone())
+        else {
+            return Ok(Visibility::Private);
+        };
+
+        if self
+            .consume_next_if_match(vec![TkKindName::MarkLPare])
+            .is_none()
+        {
+            return Ok(Visibility::Public(begin));
+        }
+
+        let scope = self.must_consume_next(vec![TkKindName::KwSuper, TkKindName::KwPackage])?;
+        let is_super = matches!(scope.kind, TkKind::KwSuper);
+        let end = self
+            .must_consume_next(vec![TkKindName::MarkRPare])?
+            .span
+            .clone();
+        let span = Span::merge(&begin, &end);
+
+        Ok(if is_super {
+            Visibility::Super(span)
+        } else {
+            Visibility::Package(span)
+        })
     }
 
     /// `{ Red, Rgb(Int, Int), Named { x: Int }, }`
@@ -644,6 +739,13 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                 self.next();
                 return Ok(variants);
             }
+
+            // variant は常に enum と同じ可視性になる (Rust と同じ)。
+            let vis = self.opt_consume_visibility()?;
+            reject_visibility(
+                &vis,
+                "an enum variant (it has the same visibility as the enum)",
+            )?;
 
             let id = self.consume_identifier()?;
             let begin = id.span.clone();
@@ -699,6 +801,11 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                 return Ok((typs, Span::merge(&begin, &end)));
             }
 
+            let vis = self.opt_consume_visibility()?;
+            reject_visibility(
+                &vis,
+                "a field of an enum variant (it has the same visibility as the enum)",
+            )?;
             let typ = self.consume_type_representaion()?;
             let name = self.interner.get_or_insert(&format!("_{}", typs.len()));
             typs.push((
@@ -741,6 +848,11 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                 return Ok((members, Span::merge(&begin, &end)));
             }
 
+            let vis = self.opt_consume_visibility()?;
+            reject_visibility(
+                &vis,
+                "a field of an enum variant (it has the same visibility as the enum)",
+            )?;
             let id = self.consume_identifier()?;
             let typ = self.must_consume_type_annotation()?;
             members.push((id, typ));
@@ -909,5 +1021,17 @@ impl<'t, 'src, 'i> TokenStream<'t, 'src, 'i> {
                 }
             }
         }
+    }
+}
+
+/// 可視性を書けない場所に書かれていればエラーにする。
+fn reject_visibility<'src>(vis: &Visibility, place: &'static str) -> Result<(), ParseError<'src>> {
+    match vis.span() {
+        Some(span) => Err(ParseError::NotAllowedHere {
+            span: span.clone(),
+            what: "a visibility",
+            place,
+        }),
+        None => Ok(()),
     }
 }

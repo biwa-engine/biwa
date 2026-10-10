@@ -15,23 +15,23 @@ import package::game::base_engine::int_to_string;
 import package::game::base_engine::float_to_string;
 import package::game::Game;
 
-enum Content {
+pub enum Content {
   Text(TextContent),
 }
 
 // 最も標準的な、テキストのcontent
 // The basic text `content`.
-struct TextContent {
-  text: String,
-  speed: ContentSpeedLevel,
-  size: ContentSizeLevel,
-  weight: TextWeight,
-  color: ContentColor,
+pub struct TextContent {
+  pub text: String,
+  pub speed: ContentSpeedLevel,
+  pub size: ContentSizeLevel,
+  pub weight: TextWeight,
+  pub color: ContentColor,
 }
 
 impl TextContent {
   // 装飾をいっさい付けないテキスト。すべて設定どおりに出る。
-  fn plain(text: String) -> Self {
+  pub fn plain(text: String) -> Self {
     Self {
       text = text,
       speed = ContentSpeedLevel::normal(),
@@ -43,42 +43,42 @@ impl TextContent {
 }
 
 // 文字(content)の速度
-struct ContentSpeed {
+pub struct ContentSpeed {
   // 秒間何文字出るか
-  text_per_sec: Float,
+  pub text_per_sec: Float,
 }
 
-struct ContentSpeedLevel {
+pub struct ContentSpeedLevel {
   // 設定された値(ContentSpeed)の何倍か
   // A multiple of the value configured for `std::game::config::Config.user.content_speed`.
   //
   // mul > 0
-  mul: Float,
+  pub mul: Float,
 }
 
 impl ContentSpeedLevel {
-  fn normal() -> Self {
+  pub fn normal() -> Self {
     Self { mul = 1.0 }
   }
 }
 
-struct ContentSizeLevel {
+pub struct ContentSizeLevel {
   // 設定された値の何倍か
   // テキスト以外のcontentは行の高さが合うように調整される
   // A multiple of the value configured for `std::game::config::Config.user.content_size`.
   // Any other media kind content than text will be adjusted to fit the line height.
   //
   // mul > 0
-  mul: Float,
+  pub mul: Float,
 }
 
 impl ContentSizeLevel {
-  fn normal() -> Self {
+  pub fn normal() -> Self {
     Self { mul = 1.0 }
   }
 }
 
-enum ContentColor {
+pub enum ContentColor {
   // 設定された値
   // The value configured for `std::game::config::Config.dev.default_text_color`.
   Configured,
@@ -122,7 +122,7 @@ impl Float: Into[Content] {
 // ゲーム開発者やサードパーティが直接呼ぶことは想定していない。
 
 [[lang="content_push"]]
-fn content_push[C: Into[Content], S](game: Game[S], content: C) {
+pub fn content_push[C: Into[Content], S](game: Game[S], content: C) {
   let c: Content = content.into();
   match c {
     Content::Text(text) => {
@@ -138,7 +138,7 @@ fn content_push[C: Into[Content], S](game: Game[S], content: C) {
 }
 
 [[lang="content_flush_and_wait"]]
-fn content_flush_and_wait[S](game: Game[S]) {
+pub fn content_flush_and_wait[S](game: Game[S]) {
   game.window.message_window.flush();
   // 将来的に各種イベントを受け取る機構が検討されている。
   // 共通のイベントハンドラをエンジン側が呼び、種類ごとに振り分ける形などが考えられる。
@@ -156,15 +156,15 @@ fn content_flush_and_wait[S](game: Game[S]) {
 // syscall には絶対値しか渡さないので、ここで設定と突き合わせて潰す。
 // エンジンが設定を持たないのはこのためである。
 
-fn resolved_speed(config: Config, level: ContentSpeedLevel) -> Float {
+pub fn resolved_speed(config: Config, level: ContentSpeedLevel) -> Float {
   config.user.content_speed.text_per_sec * level.mul
 }
 
-fn resolved_size(config: Config, level: ContentSizeLevel) -> Size {
+pub fn resolved_size(config: Config, level: ContentSizeLevel) -> Size {
   config.user.content_size.mul(level.mul)
 }
 
-fn resolved_color(config: Config, color: ContentColor) -> Color {
+pub fn resolved_color(config: Config, color: ContentColor) -> Color {
   match color {
     ContentColor::Configured => config.dev.default_text_color,
     ContentColor::Value(c) => c,
@@ -214,42 +214,42 @@ fn resolved_color(config: Config, color: ContentColor) -> Color {
 // --- 色 ---
 
 // 色を指定する。
-fn colored[C: Into[Content]](content: C, color: Color) -> Content {
+pub fn colored[C: Into[Content]](content: C, color: Color) -> Content {
   set_color(content.into(), ContentColor::Value(color))
 }
 
-fn red[C: Into[Content]](content: C) -> Content {
+pub fn red[C: Into[Content]](content: C) -> Content {
   colored(content, Color::red())
 }
 
-fn green[C: Into[Content]](content: C) -> Content {
+pub fn green[C: Into[Content]](content: C) -> Content {
   colored(content, Color::green())
 }
 
-fn blue[C: Into[Content]](content: C) -> Content {
+pub fn blue[C: Into[Content]](content: C) -> Content {
   colored(content, Color::blue())
 }
 
-fn white[C: Into[Content]](content: C) -> Content {
+pub fn white[C: Into[Content]](content: C) -> Content {
   colored(content, Color::white())
 }
 
-fn black[C: Into[Content]](content: C) -> Content {
+pub fn black[C: Into[Content]](content: C) -> Content {
   colored(content, Color::black())
 }
 
 // --- 太さ ---
 
 // 太さを指定する。
-fn weighted[C: Into[Content]](content: C, weight: TextWeight) -> Content {
+pub fn weighted[C: Into[Content]](content: C, weight: TextWeight) -> Content {
   set_weight(content.into(), weight)
 }
 
-fn bold[C: Into[Content]](content: C) -> Content {
+pub fn bold[C: Into[Content]](content: C) -> Content {
   weighted(content, TextWeight::bold())
 }
 
-fn light[C: Into[Content]](content: C) -> Content {
+pub fn light[C: Into[Content]](content: C) -> Content {
   weighted(content, TextWeight::light())
 }
 
@@ -260,15 +260,15 @@ fn light[C: Into[Content]](content: C) -> Content {
 //
 // 入れ子にすると掛け合わさる (`big(big(x))` は 4 倍)。
 
-fn sized[C: Into[Content]](content: C, mul: Float) -> Content {
+pub fn sized[C: Into[Content]](content: C, mul: Float) -> Content {
   scale_size(content.into(), mul)
 }
 
-fn big[C: Into[Content]](content: C) -> Content {
+pub fn big[C: Into[Content]](content: C) -> Content {
   sized(content, 2.0)
 }
 
-fn small[C: Into[Content]](content: C) -> Content {
+pub fn small[C: Into[Content]](content: C) -> Content {
   sized(content, 0.5)
 }
 
@@ -277,15 +277,15 @@ fn small[C: Into[Content]](content: C) -> Content {
 // 大きさと同じく、設定された速度の何倍かで指定する。
 // 入れ子にすると掛け合わさる。
 
-fn paced[C: Into[Content]](content: C, mul: Float) -> Content {
+pub fn paced[C: Into[Content]](content: C, mul: Float) -> Content {
   scale_speed(content.into(), mul)
 }
 
-fn fast[C: Into[Content]](content: C) -> Content {
+pub fn fast[C: Into[Content]](content: C) -> Content {
   paced(content, 2.0)
 }
 
-fn slow[C: Into[Content]](content: C) -> Content {
+pub fn slow[C: Into[Content]](content: C) -> Content {
   paced(content, 0.5)
 }
 
@@ -294,7 +294,7 @@ fn slow[C: Into[Content]](content: C) -> Content {
 // ジェネリクスを剥がしてから 1 箇所で書き換える。
 // メディアの種類が増えたら、それを気にするのはこの 4 つだけになる。
 
-fn set_color(content: Content, color: ContentColor) -> Content {
+pub fn set_color(content: Content, color: ContentColor) -> Content {
   match content {
     Content::Text(text) => {
       text.color = color;
@@ -303,7 +303,7 @@ fn set_color(content: Content, color: ContentColor) -> Content {
   }
 }
 
-fn set_weight(content: Content, weight: TextWeight) -> Content {
+pub fn set_weight(content: Content, weight: TextWeight) -> Content {
   match content {
     Content::Text(text) => {
       text.weight = weight;
@@ -312,7 +312,7 @@ fn set_weight(content: Content, weight: TextWeight) -> Content {
   }
 }
 
-fn scale_size(content: Content, mul: Float) -> Content {
+pub fn scale_size(content: Content, mul: Float) -> Content {
   match content {
     Content::Text(text) => {
       text.size = ContentSizeLevel { mul = text.size.mul * mul };
@@ -321,7 +321,7 @@ fn scale_size(content: Content, mul: Float) -> Content {
   }
 }
 
-fn scale_speed(content: Content, mul: Float) -> Content {
+pub fn scale_speed(content: Content, mul: Float) -> Content {
   match content {
     Content::Text(text) => {
       text.speed = ContentSpeedLevel { mul = text.speed.mul * mul };

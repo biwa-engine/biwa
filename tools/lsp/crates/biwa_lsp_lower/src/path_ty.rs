@@ -42,6 +42,23 @@ pub(crate) fn lower_ident_path(
         // `::` は `expect` されている前提の構文なので、無ければそのまま諦める。
         children.eat_token(SyntaxKind::ColonColon);
         Some(biwac_ast::AbsolutePathHeader::Package(span))
+    } else if let Some(first) = children.eat_token(SyntaxKind::KwSuper) {
+        // `super::` (`super::super::..`)。
+        let mut depth = 1;
+        let mut last = first.clone();
+        children.eat_token(SyntaxKind::ColonColon);
+        while let Some(tok) = children.eat_token(SyntaxKind::KwSuper) {
+            depth += 1;
+            last = tok;
+            children.eat_token(SyntaxKind::ColonColon);
+        }
+        Some(biwac_ast::AbsolutePathHeader::Super {
+            depth,
+            span: Span::merge(
+                &crate::cursor::token_span(mod_id, &first),
+                &crate::cursor::token_span(mod_id, &last),
+            ),
+        })
     } else if let Some(self_ty_tok) = children.eat_token(SyntaxKind::KwSelfType) {
         let span = crate::cursor::token_span(mod_id, &self_ty_tok);
         // `Self` 単独 (`::` が続かない) はここでは segments が空のまま

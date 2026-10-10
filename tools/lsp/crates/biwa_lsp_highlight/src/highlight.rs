@@ -117,6 +117,9 @@ fn token_type_for(kind: SyntaxKind, parent: Option<SyntaxKind>) -> Option<TokenT
         | SyntaxKind::KwSelf
         | SyntaxKind::KwReturn
         | SyntaxKind::KwPackage
+        | SyntaxKind::KwPub
+        | SyntaxKind::KwSuper
+        | SyntaxKind::KwMod
         | SyntaxKind::KwEnum
         | SyntaxKind::KwMatch
         | SyntaxKind::KwTrait

@@ -512,3 +512,167 @@ mod first_class_fn {
         ));
     }
 }
+
+/// 可視性・`mod` 宣言・`super::` パスの構文 (issue #8 の段階 1)。
+///
+/// 段階 1 では受理するだけで検査はしない。ここでは書ける場所で読めること、
+/// 書けない場所 (variant・trait の項目・trait impl の項目など) で拒否されることを確かめる。
+mod visibility {
+    use biwac_ast::{
+        AbsolutePathHeader, Exprs, Globals, ModAst, Primary, TypeDef, Variable, Visibility,
+    };
+    use biwac_base::{IdentInterner, ModId, ModPath};
+
+    use crate::ParseError;
+
+    fn parse(src: &str) -> Result<ModAst, String> {
+        let mod_id = ModId::new_in_self(0);
+        let mut interner = IdentInterner::new();
+        let tokens = biwac_lexer::lex(&mut interner, mod_id, src).unwrap();
+        crate::Parser::new(mod_id, ModPath::Main, tokens, &mut interner)
+            .try_parse()
+            .map_err(|e| format!("{e:?}"))
+    }
+
+    fn is_not_allowed(src: &str, place_contains: &str) -> bool {
+        let mod_id = ModId::new_in_self(0);
+        let mut interner = IdentInterner::new();
+        let tokens = biwac_lexer::lex(&mut interner, mod_id, src).unwrap();
+        match crate::Parser::new(mod_id, ModPath::Main, tokens, &mut interner).try_parse() {
+            Err(ParseError::NotAllowedHere { place, .. }) => place.contains(place_contains),
+            other => panic!("expected NotAllowedHere, got {other:?}"),
+        }
+    }
+
+    fn kind(v: &Visibility) -> &'static str {
+        match v {
+            Visibility::Private => "private",
+            Visibility::Super(_) => "super",
+            Visibility::Package(_) => "package",
+            Visibility::Public(_) => "pub",
+        }
+    }
+
+    #[test]
+    fn accepts_visibility_where_allowed() {
+        let ast = parse(
+            r#"
+mod a;
+pub mod b;
+pub fn f() {}
+pub(super) fn g() {}
+pub(package) struct S { pub x: Int, pub(super) y: Int, z: Int }
+pub enum E { A, B(Int) }
+pub type T = Int;
+pub trait Tr { fn t(self); }
+impl S {
+  pub fn new() -> Self { S { x = 0, y = 0, z = 0 } }
+  pub(package) fn get(self) -> Int { self.x }
+}
+"#,
+        )
+        .unwrap();
+
+        let mut seen = Vec::new();
+        for g in &ast.globals {
+            match g {
+                Globals::Mod(m) => seen.push(kind(&m.vis)),
+                Globals::FnDef(f) => seen.push(kind(&f.vis)),
+                Globals::TypeDef(TypeDef::Struct(s)) => {
+                    seen.push(kind(&s.vis));
+                    seen.extend(s.members.iter().map(|m| kind(&m.vis)));
+                }
+                Globals::TypeDef(TypeDef::Enum(e)) => seen.push(kind(&e.vis)),
+                Globals::TypeDef(TypeDef::TypeAlias(t)) => seen.push(kind(&t.vis)),
+                Globals::TraitDef(t) => seen.push(kind(&t.vis)),
+                Globals::ImplBlock(b) => {
+                    seen.extend(b.assoc_fns.iter().map(|f| kind(&f.vis)));
+                    seen.extend(b.methods.iter().map(|m| kind(&m.vis)));
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            seen,
+            [
+                "private", "pub", "pub", "super", "package", "pub", "super", "private", "pub",
+                "pub", "pub", "pub", "package"
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_visibility_where_not_allowed() {
+        assert!(is_not_allowed("enum E { pub A }", "enum variant"));
+        assert!(is_not_allowed(
+            "enum E { A(pub Int) }",
+            "field of an enum variant"
+        ));
+        assert!(is_not_allowed(
+            "enum E { A { pub x: Int } }",
+            "field of an enum variant"
+        ));
+        assert!(is_not_allowed(
+            "trait T { pub fn t(self); }",
+            "item of a trait"
+        ));
+        assert!(is_not_allowed(
+            "trait T { fn t(self); } impl Int: T { pub fn t(self) {} }",
+            "item of a trait impl"
+        ));
+        assert!(is_not_allowed("pub impl Int {}", "impl block"));
+        assert!(is_not_allowed("pub import package::a;", "import"));
+    }
+
+    #[test]
+    fn rejects_attribute_on_mod() {
+        assert!(matches!(
+            parse("[[native]] mod a;"),
+            Err(e) if e.contains("NotAllowedHere")
+        ));
+    }
+
+    #[test]
+    fn parses_super_paths() {
+        let ast = parse(
+            r#"
+import super::super::a::b;
+fn f() -> super::T { super::g() }
+"#,
+        )
+        .unwrap();
+
+        let Globals::Import(import) = &ast.globals[0] else {
+            panic!("not an import")
+        };
+        assert!(matches!(
+            import.path.abs_header,
+            Some(AbsolutePathHeader::Super { depth: 2, .. })
+        ));
+        assert_eq!(import.path.segments.len(), 2);
+
+        let Globals::FnDef(f) = &ast.globals[1] else {
+            panic!("not a function")
+        };
+        let biwac_ast::RetTypRepr::Typ(rt) = &f.rtype else {
+            panic!("no return type")
+        };
+        let biwac_ast::TypReprVal::Defined(def) = &rt.val else {
+            panic!("not a defined type")
+        };
+        assert!(matches!(
+            def.path.abs_header,
+            Some(AbsolutePathHeader::Super { depth: 1, .. })
+        ));
+        let Some(Exprs::Primary(Primary::Call(call))) = &f.expr else {
+            panic!("not a call: {:?}", f.expr)
+        };
+        let Exprs::Primary(Primary::Variable(Variable::Path(p))) = &*call.callee else {
+            panic!("callee is not a path")
+        };
+        assert!(matches!(
+            p.abs_header,
+            Some(AbsolutePathHeader::Super { depth: 1, .. })
+        ));
+    }
+}

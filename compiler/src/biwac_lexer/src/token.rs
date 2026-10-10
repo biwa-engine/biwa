@@ -49,6 +49,9 @@ pub enum TkKind<'src> {
     KwSelfTyp,             // Self (reserved word of type)
     KwSelfVar,             // self (reserved word of method value)
     KwScene,               // scene (reserved word of novel scene)
+    KwPub,                 // pub (visibility)
+    KwSuper,               // super (parent module in paths, `pub(super)`)
+    KwMod,                 // mod (child module declaration)
     MarkLPare,             // (
     MarkRPare,             // )
     MarkLBrace,            // {
@@ -110,6 +113,9 @@ impl TkKind<'_> {
             Self::KwSelfTyp => "Self".to_string(),
             Self::KwSelfVar => "self".to_string(),
             Self::KwScene => "scene".to_string(),
+            Self::KwPub => "pub".to_string(),
+            Self::KwSuper => "super".to_string(),
+            Self::KwMod => "mod".to_string(),
             Self::MarkLPare => "(".to_string(),
             Self::MarkRPare => ")".to_string(),
             Self::MarkLBrace => "{".to_string(),
@@ -172,6 +178,9 @@ pub enum TkKindName {
     KwSelfTyp,       // Self (reserved word of type)
     KwSelfVar,       // self (reserved word of method value)
     KwScene,         // scene (reserved word of novel scene)
+    KwPub,           // pub (visibility)
+    KwSuper,         // super (parent module in paths, `pub(super)`)
+    KwMod,           // mod (child module declaration)
     MarkLPare,       // (
     MarkRPare,       // )
     MarkLBrace,      // {
@@ -233,6 +242,9 @@ impl TkKind<'_> {
             Self::KwSelfTyp => TkKindName::KwSelfTyp,   // Self (reserved word of type)
             Self::KwSelfVar => TkKindName::KwSelfVar,   // self (reserved word of method value)
             Self::KwScene => TkKindName::KwScene,       // scene (reserved word of novel scene)
+            Self::KwPub => TkKindName::KwPub,           // pub
+            Self::KwSuper => TkKindName::KwSuper,       // super
+            Self::KwMod => TkKindName::KwMod,           // mod
             Self::MarkLPare => TkKindName::MarkLPare,   // (
             Self::MarkRPare => TkKindName::MarkRPare,   // )
             Self::MarkLBrace => TkKindName::MarkLBrace, // {
@@ -296,6 +308,9 @@ impl TkKindName {
             Self::KwSelfTyp => "Self".to_string(),
             Self::KwSelfVar => "self".to_string(),
             Self::KwScene => "scene".to_string(),
+            Self::KwPub => "pub".to_string(),
+            Self::KwSuper => "super".to_string(),
+            Self::KwMod => "mod".to_string(),
             Self::MarkLPare => "(".to_string(),
             Self::MarkRPare => ")".to_string(),
             Self::MarkLBrace => "{".to_string(),

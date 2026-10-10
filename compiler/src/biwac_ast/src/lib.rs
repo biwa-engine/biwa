@@ -13,9 +13,9 @@ pub use symbols::{
     },
     globals::{
         ArgDecl, ArgDeclList, EnumDef, FnDef, Globals, ImplBlock, ImportDecl, MethodArgDeclList,
-        MethodDef, NativeCode, NativeFnDef, NativeMethodDef, NativeTypeAlias, NovelScene,
-        StructDef, TraitDef, TraitItemArgs, TraitItemDecl, TypeAlias, TypeDef, VariantDecl,
-        VariantFieldsDecl, VariantShape,
+        MethodDef, ModDecl, NativeCode, NativeFnDef, NativeMethodDef, NativeTypeAlias, NovelScene,
+        StructDef, StructMemberDecl, TraitDef, TraitItemArgs, TraitItemDecl, TypeAlias, TypeDef,
+        VariantDecl, VariantFieldsDecl, VariantShape, Visibility,
     },
     novel::{NovelBlockStmt, NovelContent, NovelEndSceneStmt, NovelFlush, NovelIfStmt, NovelStmt},
     statements::{

@@ -1,0 +1,5 @@
+pub mod b;
+
+pub(super) fn from_a() -> Int {
+  1
+}

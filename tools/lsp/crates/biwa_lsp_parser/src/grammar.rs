@@ -29,8 +29,10 @@ pub fn parse_root(p: &mut Parser) {
 }
 
 fn parse_global_symbol(p: &mut Parser) {
-    match p.current_non_trivia() {
+    // 可視性 (`pub` ..) は各宣言ノードの先頭の子として読むので、その先で振り分ける。
+    match kind_after_visibility(p) {
         SyntaxKind::KwImport => parse_import_decl(p),
+        SyntaxKind::KwMod => parse_mod_decl(p),
         SyntaxKind::KwFn => parse_function_def(p),
         SyntaxKind::KwStruct => parse_struct_def(p),
         SyntaxKind::KwEnum => parse_enum_def(p),
@@ -49,10 +51,98 @@ fn parse_global_symbol(p: &mut Parser) {
     }
 }
 
+// ── visibility ───────────────────────────────────────────────────────────────
+// `docs/symbol-visibility-impl-status.md`。biwac_parser と同じく、書けない場所でも
+// 読んだうえでエラーにする (`reject_visibility`)。
+
+/// 可視性があれば `Visibility` ノードとして読む。無ければ何もしない。
+///
+/// <visibility> ::= "pub" ( "(" ( "super" | "package" ) ")" )?
+/// 読んだら `true`。
+fn parse_opt_visibility(p: &mut Parser) -> bool {
+    if p.current_non_trivia() != SyntaxKind::KwPub {
+        return false;
+    }
+    p.skip_trivia();
+    p.start_node(SyntaxKind::Visibility);
+    p.bump(); // pub
+    if p.at(SyntaxKind::LParen) {
+        p.skip_trivia();
+        p.bump(); // (
+        p.skip_trivia();
+        match p.current() {
+            SyntaxKind::KwSuper | SyntaxKind::KwPackage => p.bump(),
+            _ => p.push_error("expected `super` or `package` after `pub(`"),
+        }
+        p.expect(SyntaxKind::RParen);
+    }
+    p.finish_node();
+    true
+}
+
+/// 可視性を書けない場所。書かれていれば読んだうえでエラーにする。
+fn reject_visibility(p: &mut Parser, place: &str) {
+    let begin = p.pos;
+    if parse_opt_visibility(p) {
+        let start = p.tokens[begin..]
+            .iter()
+            .find(|t| t.kind == SyntaxKind::KwPub)
+            .map(|t| t.start)
+            .unwrap_or(0);
+        let end = p.tokens[p.pos - 1].end;
+        p.errors.push(crate::parser::ParseError {
+            message: format!("a visibility is not allowed on {place}"),
+            start,
+            end,
+        });
+    }
+}
+
+/// 可視性 (`pub` / `pub(..)`) を読み飛ばした先のトークンの kind。
+/// 宣言の種類を、可視性ごとそのノードに入れる前に決めるための先読み。
+fn kind_after_visibility(p: &Parser) -> SyntaxKind {
+    let tokens = &p.tokens;
+    let mut i = p.pos;
+    let skip = |i: &mut usize| {
+        while *i < tokens.len() && is_trivia(tokens[*i].kind) {
+            *i += 1;
+        }
+    };
+    skip(&mut i);
+    if i < tokens.len() && tokens[i].kind == SyntaxKind::KwPub {
+        i += 1;
+        skip(&mut i);
+        if i < tokens.len() && tokens[i].kind == SyntaxKind::LParen {
+            while i < tokens.len() && tokens[i].kind != SyntaxKind::RParen {
+                i += 1;
+            }
+            i += 1;
+            skip(&mut i);
+        }
+    }
+    tokens.get(i).map(|t| t.kind).unwrap_or(SyntaxKind::Eof)
+}
+
+// ── mod ──────────────────────────────────────────────────────────────────────
+
+/// `<visibility>? mod <ident> ;`
+fn parse_mod_decl(p: &mut Parser) {
+    p.start_node(SyntaxKind::ModDecl);
+    parse_opt_visibility(p);
+    p.skip_trivia();
+    p.expect(SyntaxKind::KwMod);
+    p.skip_trivia();
+    p.expect(SyntaxKind::Ident);
+    p.expect(SyntaxKind::Semi);
+    p.finish_node();
+}
+
 // ── import ───────────────────────────────────────────────────────────────────
 
 fn parse_import_decl(p: &mut Parser) {
     p.start_node(SyntaxKind::ImportDecl);
+    // `pub import` (再 export) はまだ無い。
+    reject_visibility(p, "an import (`pub import` is not supported yet)");
     p.skip_trivia();
     p.expect(SyntaxKind::KwImport);
     parse_identifier_path(p);
@@ -71,6 +161,7 @@ fn parse_import_decl(p: &mut Parser) {
 
 pub(crate) fn parse_function_def(p: &mut Parser) {
     p.start_node(SyntaxKind::FunctionDef);
+    parse_opt_visibility(p);
     p.skip_trivia();
     p.expect(SyntaxKind::KwFn);
     p.skip_trivia();
@@ -97,6 +188,7 @@ fn parse_optional_return_type(p: &mut Parser) {
 
 fn parse_method_def(p: &mut Parser) {
     p.start_node(SyntaxKind::MethodDef);
+    parse_opt_visibility(p);
     p.skip_trivia();
     p.expect(SyntaxKind::KwFn);
     p.skip_trivia();
@@ -158,6 +250,7 @@ fn parse_method_arg_decl(p: &mut Parser) {
 
 fn parse_struct_def(p: &mut Parser) {
     p.start_node(SyntaxKind::StructDef);
+    parse_opt_visibility(p);
     p.skip_trivia();
     p.expect(SyntaxKind::KwStruct);
     p.skip_trivia();
@@ -167,6 +260,8 @@ fn parse_struct_def(p: &mut Parser) {
     }
     p.expect(SyntaxKind::LBrace);
     while !p.at(SyntaxKind::RBrace) && p.current_non_trivia() != SyntaxKind::Eof {
+        // メンバの可視性は、メンバ名の直前の `Visibility` ノードになる。
+        parse_opt_visibility(p);
         p.skip_trivia();
         p.expect(SyntaxKind::Ident);
         p.expect(SyntaxKind::Colon);
@@ -187,6 +282,7 @@ fn parse_struct_def(p: &mut Parser) {
 
 fn parse_enum_def(p: &mut Parser) {
     p.start_node(SyntaxKind::EnumDef);
+    parse_opt_visibility(p);
     p.skip_trivia();
     p.expect(SyntaxKind::KwEnum);
     p.skip_trivia();
@@ -211,12 +307,21 @@ fn parse_enum_def(p: &mut Parser) {
 /// `Red` (unit) / `Rgb(Int, Int, Int)` (tuple) / `Named { name: String }` (struct)
 fn parse_variant_decl(p: &mut Parser) {
     p.start_node(SyntaxKind::VariantDecl);
+    // variant (とそのフィールド) は常に enum と同じ可視性になる。
+    reject_visibility(
+        p,
+        "an enum variant (it has the same visibility as the enum)",
+    );
     p.skip_trivia();
     p.expect(SyntaxKind::Ident);
     if p.at(SyntaxKind::LParen) {
         p.skip_trivia();
         p.bump(); // (
         while !p.at(SyntaxKind::RParen) && p.current_non_trivia() != SyntaxKind::Eof {
+            reject_visibility(
+                p,
+                "a field of an enum variant (it has the same visibility as the enum)",
+            );
             parse_type_repr(p);
             if p.at(SyntaxKind::Comma) {
                 p.skip_trivia();
@@ -230,6 +335,10 @@ fn parse_variant_decl(p: &mut Parser) {
         p.skip_trivia();
         p.bump(); // {
         while !p.at(SyntaxKind::RBrace) && p.current_non_trivia() != SyntaxKind::Eof {
+            reject_visibility(
+                p,
+                "a field of an enum variant (it has the same visibility as the enum)",
+            );
             p.skip_trivia();
             p.expect(SyntaxKind::Ident);
             p.expect(SyntaxKind::Colon);
@@ -251,6 +360,7 @@ fn parse_variant_decl(p: &mut Parser) {
 
 fn parse_trait_def(p: &mut Parser) {
     p.start_node(SyntaxKind::TraitDef);
+    parse_opt_visibility(p);
     p.skip_trivia();
     p.expect(SyntaxKind::KwTrait);
     p.skip_trivia();
@@ -260,7 +370,7 @@ fn parse_trait_def(p: &mut Parser) {
     }
     p.expect(SyntaxKind::LBrace);
     while !p.at(SyntaxKind::RBrace) && p.current_non_trivia() != SyntaxKind::Eof {
-        if p.current_non_trivia() == SyntaxKind::KwFn {
+        if kind_after_visibility(p) == SyntaxKind::KwFn {
             parse_trait_item_decl(p);
         } else {
             p.start_node(SyntaxKind::Error);
@@ -277,6 +387,11 @@ fn parse_trait_def(p: &mut Parser) {
 /// 取らなければ関連関数形式になる (`is_method_def` で先読みして判定)。
 fn parse_trait_item_decl(p: &mut Parser) {
     p.start_node(SyntaxKind::TraitItemDecl);
+    // trait の項目は trait と同じ可視性になる。
+    reject_visibility(
+        p,
+        "an item of a trait (it has the same visibility as the trait)",
+    );
     // `fn` の手前で先読みする。関数/メソッド定義の判定と同じ仕組み。
     let is_method = is_method_def(p);
     p.skip_trivia();
@@ -300,6 +415,7 @@ fn parse_trait_item_decl(p: &mut Parser) {
 
 fn parse_type_alias_def(p: &mut Parser) {
     p.start_node(SyntaxKind::TypeAliasDef);
+    parse_opt_visibility(p);
     p.skip_trivia();
     p.expect(SyntaxKind::KwType);
     p.skip_trivia();
@@ -317,6 +433,8 @@ fn parse_type_alias_def(p: &mut Parser) {
 
 fn parse_impl_block(p: &mut Parser) {
     p.start_node(SyntaxKind::ImplBlock);
+    // impl ブロックそのものは可視性を持たない (項目が個別に持つ)。
+    reject_visibility(p, "an impl block (put it on each item instead)");
     p.skip_trivia();
     p.expect(SyntaxKind::KwImpl);
     if p.at(SyntaxKind::LBracket) {
@@ -325,7 +443,8 @@ fn parse_impl_block(p: &mut Parser) {
     parse_type_repr(p);
     // `impl Ty: Trait { .. }` (`docs/trait.md`)。直後が `{` か `:` かの
     // 1トークンで決まるので曖昧さは無い。
-    if p.at(SyntaxKind::Colon) {
+    let is_trait_impl = p.at(SyntaxKind::Colon);
+    if is_trait_impl {
         p.skip_trivia();
         p.bump(); // :
         parse_type_repr(p);
@@ -334,7 +453,15 @@ fn parse_impl_block(p: &mut Parser) {
     while !p.at(SyntaxKind::RBrace) && p.current_non_trivia() != SyntaxKind::Eof {
         p.skip_trivia();
         // method or function
-        if p.current_non_trivia() == SyntaxKind::KwFn {
+        if kind_after_visibility(p) == SyntaxKind::KwFn {
+            // trait impl の項目は trait と同じ可視性になる。可視性は
+            // 関数/メソッドのノードの中で読むので、ここではエラーだけ積む。
+            if is_trait_impl && p.current_non_trivia() == SyntaxKind::KwPub {
+                p.push_error(
+                    "a visibility is not allowed on an item of a trait impl \
+                     (it has the same visibility as the trait)",
+                );
+            }
             // peek ahead: after `fn name [generics?]` comes `(self` → method
             // simpler: try to detect `self` as first arg
             // We parse as function_def first; if it has `self` it's a method
@@ -366,6 +493,22 @@ fn is_method_def(p: &mut Parser) -> bool {
     // skip trivia
     while i < tokens.len() && is_trivia(tokens[i].kind) {
         i += 1;
+    }
+    // 可視性 (`pub` / `pub(..)`) を飛ばす。
+    if i < tokens.len() && tokens[i].kind == SyntaxKind::KwPub {
+        i += 1;
+        while i < tokens.len() && is_trivia(tokens[i].kind) {
+            i += 1;
+        }
+        if i < tokens.len() && tokens[i].kind == SyntaxKind::LParen {
+            while i < tokens.len() && tokens[i].kind != SyntaxKind::RParen {
+                i += 1;
+            }
+            i += 1;
+            while i < tokens.len() && is_trivia(tokens[i].kind) {
+                i += 1;
+            }
+        }
     }
     if i >= tokens.len() || tokens[i].kind != SyntaxKind::KwFn {
         return false;
@@ -421,6 +564,7 @@ fn is_trivia(k: SyntaxKind) -> bool {
 
 fn parse_scene_def(p: &mut Parser) {
     p.start_node(SyntaxKind::SceneDef);
+    parse_opt_visibility(p);
     p.skip_trivia();
     p.expect(SyntaxKind::KwScene);
     p.skip_trivia();
@@ -726,6 +870,15 @@ fn parse_identifier_path(p: &mut Parser) {
         p.expect(SyntaxKind::ColonColon);
         p.skip_trivia();
         p.expect(SyntaxKind::Ident);
+    } else if p.current_non_trivia() == SyntaxKind::KwSuper {
+        // `super::` (`super::super::..`)。後には必ず識別子が来る。
+        while p.current_non_trivia() == SyntaxKind::KwSuper {
+            p.skip_trivia();
+            p.bump();
+            p.expect(SyntaxKind::ColonColon);
+        }
+        p.skip_trivia();
+        p.expect(SyntaxKind::Ident);
     } else if p.current_non_trivia() == SyntaxKind::KwSelfType {
         // `Self` (型)。単独 (型位置) でも `Self::foo` (式位置) でもよいので、
         // `package` と違い `::` は無くてもエラーにしない。
@@ -898,7 +1051,7 @@ fn parse_pattern(p: &mut Parser) {
             p.skip_trivia();
             p.bump();
         }
-        SyntaxKind::Ident | SyntaxKind::KwPackage => {
+        SyntaxKind::Ident | SyntaxKind::KwPackage | SyntaxKind::KwSuper => {
             parse_identifier_path(p);
             if p.at(SyntaxKind::LParen) {
                 parse_pattern_tuple_fields(p);
@@ -1195,7 +1348,11 @@ fn parse_primary(p: &mut Parser) {
             p.bump();
             p.finish_node();
         }
-        SyntaxKind::Ident | SyntaxKind::KwPackage | SyntaxKind::KwSelf | SyntaxKind::KwSelfType => {
+        SyntaxKind::Ident
+        | SyntaxKind::KwPackage
+        | SyntaxKind::KwSuper
+        | SyntaxKind::KwSelf
+        | SyntaxKind::KwSelfType => {
             // struct literal か ident path かを判定
             // ident path の直後に `{` が来れば struct literal
             let checkpoint = p.builder.checkpoint();

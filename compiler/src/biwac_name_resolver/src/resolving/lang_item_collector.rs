@@ -145,6 +145,7 @@ fn collect_in_mod_ast(
             | Globals::NovelScene(_)
             | Globals::NativeCode(_)
             | Globals::Import(_)
+            | Globals::Mod(_)
             | Globals::VarDecl(_) => {}
         }
     }

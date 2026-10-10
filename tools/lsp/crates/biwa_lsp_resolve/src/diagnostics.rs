@@ -165,6 +165,41 @@ fn to_diagnostic(err: &ResolveError, interner: &IdentInterner) -> Option<RawDiag
             None
         }
 
+        E::InvisibleItem { segment, vis, .. } => {
+            let n = name(interner, &segment.ident.id);
+            let declared = match vis.declared {
+                biwac_hir::DeclaredVisibility::Private => "private",
+                biwac_hir::DeclaredVisibility::Super => "`pub(super)`",
+                biwac_hir::DeclaredVisibility::Package => "`pub(package)`",
+                biwac_hir::DeclaredVisibility::Public => "`pub`",
+            };
+            raw(
+                segment.ident.span.clone(),
+                format!("`{n}` is not visible here (it is declared {declared})."),
+            )
+        }
+        E::PrivateInPublic {
+            item, used, span, ..
+        } => raw(
+            span.clone(),
+            format!(
+                "`{}` is less visible than `{}`; types and traits in the signature or members \
+                 of an item must be at least as visible as the item.",
+                name(interner, &used.id),
+                name(interner, &item.id),
+            ),
+        ),
+        E::SuperVisibilityInRoot { span } => raw(
+            span.clone(),
+            "`pub(super)` is not allowed in the root module; it has no parent module. \
+             Use `pub(package)` to make it visible in the whole package."
+                .to_string(),
+        ),
+        E::SuperBeyondRoot { span } => raw(
+            span.clone(),
+            "`super` goes beyond the root module; the root module has no parent module."
+                .to_string(),
+        ),
         E::UnexpectedSelfType { span } => raw(
             span.clone(),
             "`Self` is not usable here; write the type name instead.".to_string(),

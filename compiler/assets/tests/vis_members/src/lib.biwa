@@ -1,0 +1,12 @@
+// 見えるものだけを使う: pub なメンバ、親からの pub(super) なメンバ、pub なメソッド (getter)。
+
+mod a;
+
+pub fn triple(n: Int) -> Int {
+  n * 3
+}
+
+pub fn uses() -> Int {
+  let p = a::Point::new();
+  p.x + p.z + p.y() + p.open()
+}

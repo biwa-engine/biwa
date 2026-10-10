@@ -46,6 +46,9 @@ pub struct ExternalChildRef {
     /// このパッケージ内でのシンボルインデックス (DiskSymbolIndex の値)。
     pub sym_idx: u32,
     pub kind: ExternalChildKind,
+    /// 宣言の可視性。見えないものも表から消さずに返す
+    /// (「見つからない」ではなく「見えない」と言えるようにするため)。
+    pub vis: biwac_hir::Visibility,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,7 +178,11 @@ impl PackageModuleView for DepMetadataModuleView {
         let index = self.name_index.get_or_init(|| self.build_name_index());
         index
             .get(name_str)
-            .map(|&(sym_idx, kind)| ExternalChildRef { sym_idx, kind })
+            .map(|&(sym_idx, kind)| ExternalChildRef {
+                sym_idx,
+                kind,
+                vis: self.dep.ext_visibility(self.pkg_id, sym_idx),
+            })
     }
 
     fn get_module_view(&self, module_sym_idx: u32) -> Box<dyn PackageModuleView> {
@@ -214,6 +221,7 @@ impl PackageModuleView for DepMetadataModuleView {
                     return Some(ExternalChildRef {
                         sym_idx: variant_sym_idx.0,
                         kind: ExternalChildKind::Variant,
+                        vis: self.dep.ext_visibility(self.pkg_id, variant_sym_idx.0),
                     });
                 }
             }
@@ -240,6 +248,7 @@ impl PackageModuleView for DepMetadataModuleView {
                 return Some(ExternalChildRef {
                     sym_idx: assoc_sym_idx.0,
                     kind: ExternalChildKind::Val,
+                    vis: self.dep.ext_visibility(self.pkg_id, assoc_sym_idx.0),
                 });
             }
         }

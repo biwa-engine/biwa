@@ -1,0 +1,5 @@
+mod declared;
+
+fn f() -> Int {
+  declared::g()
+}

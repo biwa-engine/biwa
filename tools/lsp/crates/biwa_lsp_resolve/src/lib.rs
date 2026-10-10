@@ -68,12 +68,12 @@ pub fn resolve_document(doc_path: &Path, doc_src: &str) -> Result<DocumentResolu
     // 実コンパイラの `biwac_lexer`/`biwac_parser` (既定の `BiwacSourceParser`)
     // だと構文エラーのあるファイルが 1 つでもあるとパッケージ全体のロードが
     // 失敗し、名前解決そのものが始まらなくなってしまう。
-    let mut pkg = biwac_package_loader::Pkg::try_load::<package::LspSourceParser>(
-        &metadata,
-        &mut interner,
-        &mut srcs,
-        pkg_root.clone(),
-    )
+    // モジュール木の形の誤り (宣言されていないファイルなど) では止めず、
+    // 読めた分で解析を続ける (`try_load_tolerant`)。誤りは開いているファイルの
+    // 診断として出す (`loader_diagnostics`)。
+    let (mut pkg, load_errors) = biwac_package_loader::Pkg::try_load_tolerant::<
+        package::LspSourceParser,
+    >(&metadata, &mut interner, &mut srcs, pkg_root.clone())
     .map_err(|e| format!("failed to load package sources: {:?}", e.errs))?;
 
     let target_modpath = package::doc_modpath(&pkg_root, doc_path).ok_or_else(|| {
@@ -84,13 +84,27 @@ pub fn resolve_document(doc_path: &Path, doc_src: &str) -> Result<DocumentResolu
         )
     })?;
 
-    let doc_mod_id = package::substitute_module(&mut pkg, &target_modpath, &mut interner, doc_src)
-        .ok_or_else(|| {
-            format!(
+    let Some(doc_mod_id) =
+        package::substitute_module(&mut pkg, &target_modpath, &mut interner, doc_src)
+    else {
+        // 開いているファイルがどこからも `mod` 宣言されていなければ、
+        // モジュール木に無いので解析できない。そのことだけを診断として出す。
+        return match package::undeclared_message(&pkg_root, doc_path, &load_errors) {
+            Some(message) => Ok(DocumentResolution {
+                diagnostics: vec![Diagnostic {
+                    start: 0,
+                    end: 0,
+                    message,
+                }],
+                classifications: Vec::new(),
+            }),
+            None => Err(format!(
                 "module for {} not found in package tree",
                 doc_path.display()
-            )
-        })?;
+            )),
+        };
+    };
+    let loader_diagnostics = package::loader_diagnostics(&load_errors, doc_mod_id);
 
     // 選択されていない arch の native を落としてから解決する
     // (同名の arch 違い native がシンボル衝突するため)。
@@ -151,6 +165,9 @@ pub fn resolve_document(doc_path: &Path, doc_src: &str) -> Result<DocumentResolu
             Vec::new(),
         ),
     };
+
+    let mut diagnostics = diagnostics;
+    diagnostics.extend(loader_diagnostics);
 
     let mut classifications = classify::classify(&pkg, doc_mod_id);
     classifications.extend(method_classifications);

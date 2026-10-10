@@ -9,7 +9,7 @@ use biwac_hir::{
 use biwac_lang_item::{LangItem, LangItemTable};
 use biwac_span::{Span, ValDefId, VarId};
 
-use crate::ResolveError;
+use crate::{ResolveError, visibility::ModuleParents};
 
 use super::{
     expressions::{ExprLowerCtx, lower_expr, lower_primary},
@@ -19,6 +19,7 @@ use super::{
 pub(super) fn lower_novel_scene(
     scene_def: &biwac_ast::NovelScene,
     lang_items: &LangItemTable,
+    parents: &ModuleParents,
     errors: &mut Vec<ResolveError>,
 ) -> (ValDefId, ValDefKind) {
     let val_def_id = *scene_def
@@ -48,6 +49,7 @@ pub(super) fn lower_novel_scene(
         val_def_id,
         ValDefKind::NovelScene(Box::new(NovelSceneDef::new(
             scene_def.id.clone().into(),
+            parents.resolve(&scene_def.vis, scene_def.id.span.module()),
             signature,
             body,
         ))),

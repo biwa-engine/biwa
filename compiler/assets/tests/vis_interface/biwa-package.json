@@ -1,0 +1,6 @@
+{
+  "name": "vis_interface",
+  "version": "0.1.0",
+  "description": "private-in-public: types in an interface must be at least as visible as the item",
+  "dependencies": []
+}

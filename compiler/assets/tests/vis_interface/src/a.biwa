@@ -1,0 +1,43 @@
+// 項目の実効可視性を V とすると、そのインターフェースに現れる型・trait は実効可視性が V 以上でなければならない。
+// 違反には `// NG`、通るものには `// OK` を付けてある。
+
+struct Priv {}
+
+pub(super) struct ForParent {}
+
+pub struct Open {}
+
+type PrivAlias = Open;
+
+trait PrivTrait {}
+
+pub fn ok_open() -> Open { Open {} }                          // OK
+
+fn ok_private(p: Priv) -> Priv { p }                          // OK: どちらも `a` の中だけ
+
+pub fn ok_capped() -> ForParent { ForParent {} }              // OK: `a` が private なので、どちらもルートの部分木
+
+pub fn ng_ret() -> Priv { Priv {} }                           // NG: 戻り値
+
+pub fn ng_arg(p: Priv) {}                                     // NG: 引数
+
+pub fn ng_nested(f: fn(Priv) -> Int) {}                       // NG: 関数型の中
+
+pub fn ng_alias() -> PrivAlias { Open {} }                    // NG: 型エイリアス (右辺は pub でも、エイリアスが private)
+
+pub fn ng_bound[T: PrivTrait](t: T) {}                        // NG: ジェネリック引数の制限
+
+pub struct Holder {
+  pub field: Priv,                                            // NG: pub なメンバの型
+  hidden: Priv,                                               // OK: private なメンバ
+}
+
+pub enum Choice {                                             // NG: variant のフィールド (enum と同じ可視性)
+  A(Priv),
+}
+
+impl Open {
+  pub fn ng_method(self) -> Priv { Priv {} }                  // NG: pub なメソッド
+
+  fn ok_method(self) -> Priv { Priv {} }                      // OK: private なメソッド
+}

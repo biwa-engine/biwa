@@ -7,20 +7,20 @@
 //  Int や externref は入らないため)。
 //
 // enum なら payload が生の型のまま入るので、その制限は無い。
-enum Option[T] {
+pub enum Option[T] {
   None,
   Some(T),
 }
 
 impl[T] Option[T] {
-  fn is_some(self) -> Bool {
+  pub fn is_some(self) -> Bool {
     match self {
       Option::Some(_) => TRUE,
       Option::None => FALSE,
     }
   }
 
-  fn is_none(self) -> Bool {
+  pub fn is_none(self) -> Bool {
     match self {
       Option::Some(_) => FALSE,
       Option::None => TRUE,
@@ -28,7 +28,7 @@ impl[T] Option[T] {
   }
 
   // 中身を取り出す。None なら失敗する。
-  fn unwrap(self) -> T {
+  pub fn unwrap(self) -> T {
     match self {
       Option::Some(value) => value,
       Option::None => package::panic::abort(),

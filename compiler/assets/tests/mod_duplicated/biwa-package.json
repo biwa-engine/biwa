@@ -1,0 +1,6 @@
+{
+  "name": "mod_duplicated",
+  "version": "0.1.0",
+  "description": "rejects the same `mod` declared twice",
+  "dependencies": []
+}

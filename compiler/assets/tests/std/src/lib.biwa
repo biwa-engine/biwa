@@ -2,3 +2,12 @@
 // - 言語のコア機能と、
 // - ノベルゲーム実装のためのAPI (game module)
 // の両方を提供する
+
+pub mod collections;
+pub mod convert;
+pub mod game;
+pub mod option;
+pub mod panic;
+pub mod result;
+pub mod string;
+pub mod time;

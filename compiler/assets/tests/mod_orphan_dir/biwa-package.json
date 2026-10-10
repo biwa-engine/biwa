@@ -1,0 +1,6 @@
+{
+  "name": "mod_orphan_dir",
+  "version": "0.1.0",
+  "description": "rejects a module file in a directory without its module file",
+  "dependencies": []
+}

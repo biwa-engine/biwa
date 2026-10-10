@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use biwac_ast::{BinOperator, UnOperator, VariantShape};
 use biwac_base::{BiwacError, DiagSpan, InternedIdent};
-use biwac_hir::{AssignStmt, Expr, FnTy, Ident, MemberAccess, StructLiteral, Ty, TyKind, TyVar};
+use biwac_hir::{
+    AssignStmt, Expr, FnTy, Ident, MemberAccess, StructLiteral, Ty, TyKind, TyVar, Visibility,
+};
 use biwac_span::{Span, TyDefId};
 
 #[derive(Debug, Clone)]
@@ -26,6 +28,22 @@ pub enum TyError {
     StructNotHasMember {
         def_id: TyDefId,
         access: Box<MemberAccess>,
+    },
+    /// フィールド・メソッドは見つかったが、その式を書いたモジュールからは見えない。
+    InvisibleMember {
+        /// フィールド・メソッドを引いた式の型 (受け手の型)。
+        ty: Box<Ty>,
+        member: Box<Ident>,
+        is_method: bool,
+        vis: Visibility,
+    },
+    /// struct リテラルで作ろうとしたが、見えないメンバがある。
+    /// メンバがすべて見えなければ struct リテラルでは作れない (書かなかったメンバも含む)。
+    InvisibleFieldInLiteral {
+        def_id: TyDefId,
+        field: InternedIdent,
+        span: Span,
+        vis: Visibility,
     },
     ExprNotHasMember {
         ty: Box<Ty>,
@@ -342,6 +360,49 @@ impl BiwacError for TyErrorReport {
                 ctx.diagnostic(format!("`{ty}` has no member `{name}`."))
                     .label(at(&access.member.span), format!("no member `{name}`"))
                     .print();
+            }
+
+            TyError::InvisibleMember {
+                ty,
+                member,
+                is_method,
+                vis,
+            } => {
+                let name = ident_str(&member.id);
+                let owner = names.render(&ty.kind);
+                let what = if *is_method { "Method" } else { "Field" };
+
+                ctx.diagnostic(format!("{what} `{name}` of `{owner}` is not visible here."))
+                    .label(
+                        at(&member.span),
+                        format!("visible only {}", vis.describe_scope(ctx)),
+                    )
+                    .note(format!("it is declared {}", vis.describe_declared()))
+                    .print();
+            }
+
+            TyError::InvisibleFieldInLiteral {
+                def_id,
+                field,
+                span,
+                vis,
+            } => {
+                let name = ident_str(field);
+                let ty = names
+                    .tys
+                    .get(def_id)
+                    .cloned()
+                    .unwrap_or_else(|| "the struct".to_string());
+
+                ctx.diagnostic(format!(
+                    "`{ty}` cannot be constructed here because field `{name}` is not visible."
+                ))
+                .label(
+                    at(span),
+                    format!("field `{name}` is visible only {}", vis.describe_scope(ctx)),
+                )
+                .note("a struct literal must set every field, so all of them must be visible")
+                .print();
             }
 
             TyError::ExprNotHasMember { ty, access } => {
@@ -690,12 +751,15 @@ pub(crate) fn error_tys(error: &TyError) -> Vec<&Ty> {
         | TyError::StructLiteralAssignToInexsistentMember { .. }
         | TyError::StructLiteralMemberInsufficient { .. }
         | TyError::StructNotHasMember { .. }
+        | TyError::InvisibleFieldInLiteral { .. }
         | TyError::InvalidAssignOperation { .. }
         | TyError::InsufficientContext
         | TyError::TraitItemAsValue { .. }
         | TyError::MissingLangItem { .. } => Vec::new(),
 
-        TyError::TypeNotInferable { ty } | TyError::NotCallable { ty } => vec![ty.as_ref()],
+        TyError::TypeNotInferable { ty }
+        | TyError::NotCallable { ty }
+        | TyError::InvisibleMember { ty, .. } => vec![ty.as_ref()],
     }
 }
 
@@ -704,6 +768,7 @@ pub(crate) fn error_ty_def_ids(error: &TyError) -> Vec<TyDefId> {
     match error {
         TyError::StructLiteralAssignToInexsistentMember { def_id, .. } => vec![**def_id],
         TyError::StructNotHasMember { def_id, .. } => vec![*def_id],
+        TyError::InvisibleFieldInLiteral { def_id, .. } => vec![*def_id],
         _ => Vec::new(),
     }
 }

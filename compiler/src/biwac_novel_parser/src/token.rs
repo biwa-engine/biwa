@@ -23,6 +23,7 @@ pub enum NCodeTkKind {
     KwTrue,                // bool literal `TRUE`
     KwFalse,               // bool literal `FALSE`
     KwPackage,             // package
+    KwSuper,               // super (親モジュール。パスの先頭)
     KwLet,                 // let
     KwFn,                  // fn (関数型 `fn(A) -> B`)
     KwIf,                  // if
@@ -70,6 +71,7 @@ pub enum NCodeTkKindName {
     KwTrue,          // bool literal `TRUE`
     KwFalse,         // bool literal `FALSE`
     KwPackage,       // package
+    KwSuper,         // super
     KwLet,           // let
     KwFn,            // fn
     KwIf,            // if
@@ -593,6 +595,7 @@ impl<'src> NovelSourceStream<'src> {
                         "TRUE" => (NCodeTkKind::KwTrue, 4),
                         "FALSE" => (NCodeTkKind::KwFalse, 5),
                         "package" => (NCodeTkKind::KwPackage, 7),
+                        "super" => (NCodeTkKind::KwSuper, 5),
                         "let" => (NCodeTkKind::KwLet, 3),
                         "fn" => (NCodeTkKind::KwFn, 2),
                         "if" => (NCodeTkKind::KwIf, 2),
@@ -684,6 +687,7 @@ impl NCodeTkKind {
             Self::KwTrue => NCodeTkKindName::KwTrue,  // bool literal `TRUE`
             Self::KwFalse => NCodeTkKindName::KwFalse, // bool literal `FALSE`
             Self::KwPackage => NCodeTkKindName::KwPackage, // package
+            Self::KwSuper => NCodeTkKindName::KwSuper, // super
             Self::KwLet => NCodeTkKindName::KwLet,    // let
             Self::KwFn => NCodeTkKindName::KwFn,      // fn
             Self::KwIf => NCodeTkKindName::KwIf,      // if
@@ -781,6 +785,27 @@ impl<'src> NovelSourceStream<'src> {
             segments.push(self.consume_identifier()?.into());
 
             Some(AbsolutePathHeader::Package(t.span.clone()))
+        } else if let NCodeTokenOption::Some(t) = self.peek_token()?.cloned()
+            && matches!(t.kind.as_kind_name(), NCodeTkKindName::KwSuper)
+        {
+            // "super" "::" ( "super" "::" )* <identifier>
+            let mut depth = 0;
+            let mut end = t.span.clone();
+            while let NCodeTokenOption::Some(t) = self.peek_token()?.cloned()
+                && matches!(t.kind.as_kind_name(), NCodeTkKindName::KwSuper)
+            {
+                self.next_token()?;
+                self.must_consume_next(vec![NCodeTkKindName::MarkDoubleColon])?;
+                depth += 1;
+                end = t.span.clone();
+            }
+
+            segments.push(self.consume_identifier()?.into());
+
+            Some(AbsolutePathHeader::Super {
+                depth,
+                span: Span::merge(&t.span, &end),
+            })
         } else {
             let ident = self.consume_identifier()?;
             segments.push(ident.into());
@@ -854,6 +879,7 @@ impl NCodeTkKindName {
             Self::KwTrue => "TRUE",
             Self::KwFalse => "FALSE",
             Self::KwPackage => "package",
+            Self::KwSuper => "super",
             Self::KwLet => "let",
             Self::KwFn => "fn",
             Self::KwIf => "if",

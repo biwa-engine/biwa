@@ -1,0 +1,6 @@
+{
+  "name": "mod_undeclared",
+  "version": "0.1.0",
+  "description": "rejects a module file that no `mod` declares",
+  "dependencies": []
+}

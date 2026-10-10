@@ -28,6 +28,12 @@ pub struct Path {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AbsolutePathHeader {
     Package(Span),
+    /// `super::` (`super::super::..`)。`depth` は `super` の数 (1 以上)。
+    /// `span` は `super` の並び全体 (`::` を除く最後の `super` まで)。
+    Super {
+        depth: usize,
+        span: Span,
+    },
     SelfTyp(SelfTypHeader),
     // Int, Float, Bool and other primitive types...
 }
@@ -63,7 +69,7 @@ impl Path {
         // if segments is empty, it is compiler bug.
         // Not only <identifier> but also <qualified-identifier> must has at least one valid segment
         // in its segments.
-        // <qualified-identifier> ::= ("package" "::") (<identifier> "::")* <identifier>
+        // <qualified-identifier> ::= ("package" "::" | ("super" "::")+)? (<identifier> "::")* <identifier>
         //     | "Self" ("::" <identifier>)?
         assert!(!segments.is_empty() || abs_header.is_some());
 
@@ -104,6 +110,7 @@ impl AbsolutePathHeader {
     pub fn span(&self) -> Span {
         match self {
             Self::Package(span) => span.clone(),
+            Self::Super { span, .. } => span.clone(),
             Self::SelfTyp(self_typ) => self_typ.span.clone(),
         }
     }

@@ -6,30 +6,30 @@
 // 以前は自パッケージのシンボル表しか引けず、外部の型は黙ってシンボル 0 番に化けていた。
 
 // 引数も戻り値も std で定義された型。
-fn greet(name: std::string::String) -> std::string::String {
+pub fn greet(name: std::string::String) -> std::string::String {
   return name.concat("!");
 }
 
 // struct のメンバが依存パッケージの型。
-struct Greeting {
-  message: std::string::String,
+pub struct Greeting {
+  pub message: std::string::String,
 }
 
 impl Greeting {
-  fn new(message: std::string::String) -> Self {
+  pub fn new(message: std::string::String) -> Self {
     Self {
       message = message,
     }
   }
 
-  fn message(self) -> std::string::String {
+  pub fn message(self) -> std::string::String {
     self.message
   }
 }
 
 // 戻り値が color の型。
 // greeter を使う側から見ると、color は推移的な依存になる。
-fn theme() -> color::Rgb {
+pub fn theme() -> color::Rgb {
   return color::Rgb::white();
 }
 
@@ -39,18 +39,18 @@ fn theme() -> color::Rgb {
 // そのエイリアス越しに `IntBox::new(1)` と関連関数を引けなければならない。
 // エイリアスの右辺が外部パッケージの型を指す場合、canonical な型は
 // 使う側の名前ツリーに居ないので、依存メタデータまで降りる必要がある。
-struct Box[T] {
-  value: T,
+pub struct Box[T] {
+  pub value: T,
 }
 
 impl[T] Box[T] {
-  fn new(value: T) -> Self {
+  pub fn new(value: T) -> Self {
     Self {
       value = value,
     }
   }
 
-  fn get(self) -> T {
+  pub fn get(self) -> T {
     self.value
   }
 }
@@ -60,7 +60,7 @@ impl[T] Box[T] {
 // 使う側 (test1) がこの trait を import して
 // 自分の型に実装できることを確認する。
 // trait 自身がこのパッケージのものなので、孤児則は満たされる。
-trait Describe {
+pub trait Describe {
   fn describe(self) -> Int;
 
   fn from_code(code: Int) -> Self;
@@ -86,10 +86,10 @@ impl Greeting: Describe {
 // 依存由来の host export も単相化の roots に入っている証拠になる。
 // 呼び先の `host_export_helper` も到達性で消されてはならない。
 [[host_export="greeter_host_export_demo"]]
-fn greeter_host_export_demo() -> Int {
+pub fn greeter_host_export_demo() -> Int {
   host_export_helper(40)
 }
 
-fn host_export_helper(x: Int) -> Int {
+pub fn host_export_helper(x: Int) -> Int {
   x + 2
 }

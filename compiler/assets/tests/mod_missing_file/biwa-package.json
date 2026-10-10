@@ -1,0 +1,6 @@
+{
+  "name": "mod_missing_file",
+  "version": "0.1.0",
+  "description": "rejects a `mod` declaration without its file",
+  "dependencies": []
+}

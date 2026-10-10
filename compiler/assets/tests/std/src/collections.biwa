@@ -13,24 +13,24 @@ import package::option::Option::None;
 // バックエンドがエラーにする。
 // (`Option[T]` はこの制約から外れた。enum になったため)
 [[native(arch="typescript")]]
-type Vec[T] = {{
+pub type Vec[T] = {{
   Array<T>
 }};
 
 [[native(arch="wasm")]]
-type Vec[T] = {{
+pub type Vec[T] = {{
   externref
 }};
 
 impl[T] Vec[T] {
   // 空のVecを生成
   [[native(arch="typescript")]]
-  fn new() -> Self {{
+  pub fn new() -> Self {{
     return [];
   }}
 
   [[native(arch="wasm")]]
-  fn new() -> Self {{
+  pub fn new() -> Self {{
     call $sys_vec_new
   }}
 
@@ -40,24 +40,24 @@ impl[T] Vec[T] {
   // 文脈から決められない場所では使えない (コンパイラの制限)。
   // 引数から要素の型が決まるこちらならどこでも書ける。
   [[native(arch="typescript")]]
-  fn of(value: T) -> Self {{
+  pub fn of(value: T) -> Self {{
     return [value];
   }}
 
   [[native(arch="wasm")]]
-  fn of(value: T) -> Self {{
+  pub fn of(value: T) -> Self {{
     local.get 0
     call $sys_vec_of
   }}
 
   // 値を後ろに追加
   [[native(arch="typescript")]]
-  fn push(self, value: T) {{
+  pub fn push(self, value: T) {{
     self.push(value);
   }}
 
   [[native(arch="wasm")]]
-  fn push(self, value: T) {{
+  pub fn push(self, value: T) {{
     local.get 0
     local.get 1
     call $sys_vec_push
@@ -65,12 +65,12 @@ impl[T] Vec[T] {
 
   // 長さを取得
   [[native(arch="typescript")]]
-  fn len(self) -> Uint {{
+  pub fn len(self) -> Uint {{
     return self.length;
   }}
 
   [[native(arch="wasm")]]
-  fn len(self) -> Uint {{
+  pub fn len(self) -> Uint {{
     local.get 0
     call $sys_vec_len
   }}
@@ -80,7 +80,7 @@ impl[T] Vec[T] {
   // Option は enum なので、native から直接は組み立てられない。
   // 範囲の検査と Option の構築は biwa 側で書き、
   // native は「範囲内であることが分かっている取り出し」だけを担う。
-  fn get(self, index: Uint) -> Option[T] {
+  pub fn get(self, index: Uint) -> Option[T] {
     if index < self.len() {
       Some(self.get_unchecked(index))
     } else {
@@ -90,12 +90,12 @@ impl[T] Vec[T] {
 
   // 範囲を検査しない取り出し。範囲外を渡してはならない。
   [[native(arch="typescript")]]
-  fn get_unchecked(self, index: Uint) -> T {{
+  pub fn get_unchecked(self, index: Uint) -> T {{
     return self[index];
   }}
 
   [[native(arch="wasm")]]
-  fn get_unchecked(self, index: Uint) -> T {{
+  pub fn get_unchecked(self, index: Uint) -> T {{
     local.get 0
     local.get 1
     call $sys_vec_get
@@ -104,23 +104,23 @@ impl[T] Vec[T] {
 }
 
 [[native(arch="typescript")]]
-type Map[K, V] = {{
+pub type Map[K, V] = {{
   Map<K, V>
 }};
 
 [[native(arch="wasm")]]
-type Map[K, V] = {{
+pub type Map[K, V] = {{
   externref
 }};
 
 impl[K, V] Map[K, V] {
   [[native(arch="typescript")]]
-  fn insert(self, key: K, value: V) {{
+  pub fn insert(self, key: K, value: V) {{
     self.set(key, value);
   }}
 
   [[native(arch="wasm")]]
-  fn insert(self, key: K, value: V) {{
+  pub fn insert(self, key: K, value: V) {{
     local.get 0
     local.get 1
     local.get 2
@@ -128,7 +128,7 @@ impl[K, V] Map[K, V] {
   }}
 
   // Option は enum なので、Vec と同じく構築は biwa 側で書く。
-  fn get(self, key: K) -> Option[V] {
+  pub fn get(self, key: K) -> Option[V] {
     if self.has(key) {
       Some(self.get_unchecked(key))
     } else {
@@ -137,12 +137,12 @@ impl[K, V] Map[K, V] {
   }
 
   [[native(arch="typescript")]]
-  fn has(self, key: K) -> Bool {{
+  pub fn has(self, key: K) -> Bool {{
     return self.has(key);
   }}
 
   [[native(arch="wasm")]]
-  fn has(self, key: K) -> Bool {{
+  pub fn has(self, key: K) -> Bool {{
     local.get 0
     local.get 1
     call $sys_map_get
@@ -155,13 +155,13 @@ impl[K, V] Map[K, V] {
   // `Map.prototype.get` の戻りは `V | undefined` なので、
   // キーの存在を先に確かめてある前提で押し込む。
   [[native(arch="typescript")]]
-  fn get_unchecked(self, key: K) -> V {{
+  pub fn get_unchecked(self, key: K) -> V {{
     // 型引数の名前はマングルされるので、native の中では書けない。
     return self.get(key) as any;
   }}
 
   [[native(arch="wasm")]]
-  fn get_unchecked(self, key: K) -> V {{
+  pub fn get_unchecked(self, key: K) -> V {{
     local.get 0
     local.get 1
     call $sys_map_get

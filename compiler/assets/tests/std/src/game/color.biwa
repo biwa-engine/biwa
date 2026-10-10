@@ -1,18 +1,18 @@
-struct Color {
+pub struct Color {
   // 現在のBiwaにはByte型がないのでUintで表現しているが、
   // いずれも 0 ~ 255 の値に丸められる
-  r: Uint,
-  g: Uint,
-  b: Uint,
-  a: Uint,
+  pub r: Uint,
+  pub g: Uint,
+  pub b: Uint,
+  pub a: Uint,
 }
 
 impl Color {
-  fn new(r: Uint, g: Uint, b: Uint, a: Uint) -> Self {
+  pub fn new(r: Uint, g: Uint, b: Uint, a: Uint) -> Self {
     Self { r = r, g = g, b = b, a = a }
   }
 
-  fn white() -> Self {
+  pub fn white() -> Self {
     Self {
       r = 255,
       g = 255,
@@ -21,7 +21,7 @@ impl Color {
     }
   }
 
-  fn black() -> Self {
+  pub fn black() -> Self {
     Self {
       r = 0,
       g = 0,
@@ -30,7 +30,7 @@ impl Color {
     }
   }
 
-  fn red() -> Self {
+  pub fn red() -> Self {
     Self {
       r = 255,
       g = 0,
@@ -39,7 +39,7 @@ impl Color {
     }
   }
   
-  fn green() -> Self {
+  pub fn green() -> Self {
     Self {
       r = 0,
       g = 255,
@@ -48,7 +48,7 @@ impl Color {
     }
   }
   
-  fn blue() -> Self {
+  pub fn blue() -> Self {
     Self {
       r = 0,
       g = 0,

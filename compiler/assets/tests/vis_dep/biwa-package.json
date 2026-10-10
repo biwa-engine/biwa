@@ -1,0 +1,6 @@
+{
+  "name": "vis_dep",
+  "version": "0.1.0",
+  "description": "a library with items of each visibility, used by vis_dep_user",
+  "dependencies": []
+}

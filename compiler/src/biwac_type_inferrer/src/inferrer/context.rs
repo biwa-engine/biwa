@@ -6,7 +6,7 @@ use biwac_base::{IdentInterner, InternedIdent, ModId, PackageId};
 use biwac_dependency_metadata::DepMetadata;
 use biwac_hir::{
     AssocValDefKind, DefinedTyImpl, EnumDef, ExprId, FnSignature, Hir, Ident, InferTy, Ty,
-    TyDefKind, TyKind, TyTraitImpl, TyVar, ValDefKind, VariantDef, VariantOwner,
+    TyDefKind, TyKind, TyTraitImpl, TyVar, ValDefKind, VariantDef, VariantOwner, Visibility,
 };
 use biwac_lang_item::{LangItem, LangItemKind, LangItemTable};
 use biwac_span::{LocalGenDefId, TraitDefId, TyDefId, ValDefId, VarId, VariantDefId};
@@ -190,6 +190,46 @@ impl<'a> TyCtx<'a> {
     }
 
     /// 外部パッケージに対応する DepMetadata を PackageId で引く。
+    /// 可視性 `vis` の項目が、モジュール `from` から見えるか。
+    pub(super) fn is_visible_from(&self, vis: &Visibility, from: ModId) -> bool {
+        vis.is_visible_from(from, |m| self.hir.mod_parents.get(&m).copied())
+    }
+
+    /// 関数・関連関数・メソッドの可視性。
+    ///
+    /// 自パッケージのものは HIR の定義から、依存パッケージのものは `.biwameta` から引く。
+    pub(super) fn get_value_visibility(&self, def_id: &ValDefId) -> Option<Visibility> {
+        if def_id.pkg().is_self() {
+            if let Some(v) = self.hir.vals.get(def_id) {
+                return Some(match v {
+                    ValDefKind::Fn(f) => f.vis,
+                    ValDefKind::Native(f) => f.vis,
+                    ValDefKind::NovelScene(s) => s.vis,
+                });
+            }
+            let (ty_def_id, assoc_name) = self.hir.assoc_val_map.get(def_id)?;
+            match &self
+                .hir
+                .tys
+                .get(ty_def_id)?
+                .vals
+                .get(assoc_name)?
+                .vals
+                .get(def_id)?
+                .val_content
+            {
+                AssocValDefKind::Fn(f) => Some(f.vis),
+                AssocValDefKind::NativeFn(f) => Some(f.vis),
+            }
+        } else {
+            let pkg_id = def_id.pkg();
+            Some(
+                self.find_ext_dep(pkg_id)?
+                    .ext_visibility(pkg_id, def_id.local_idx()),
+            )
+        }
+    }
+
     fn find_ext_dep(&self, pkg_id: PackageId) -> Option<&Arc<DepMetadata>> {
         self.ext_pkgs
             .iter()

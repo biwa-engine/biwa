@@ -25,6 +25,7 @@ pub use crate::hir::{
             AssignStmt, BlockStmt, DecledVar, ExprStmt, IfStmt, MatchStmt, MatchStmtArm,
             NovelSyscallStmt, ReturnStmt, Stmt, VarDecl, WhileStmt,
         },
+        visibility::{DeclaredVisibility, Visibility, VisibilityScope},
     },
     types::{DefinedTy, FnTy, InferTy, Ty, TyKind, TyVar},
 };

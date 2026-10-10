@@ -1,0 +1,6 @@
+{
+  "name": "vis_struct_literal",
+  "version": "0.1.0",
+  "description": "rejects a struct literal with a private field",
+  "dependencies": []
+}

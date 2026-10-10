@@ -3,8 +3,8 @@ use std::cell::OnceCell;
 use biwa_lsp_lexer::SyntaxKind;
 use biwac_ast::{
     ArgDecl, ArgDeclList, Attrs, EnumDef, FnDef, Globals, ImplBlock, ImportDecl, MethodArgDeclList,
-    MethodDef, ModAst, NovelScene, StructDef, TraitDef, TraitItemArgs, TraitItemDecl, TypeAlias,
-    TypeDef, VariantDecl, VariantFieldsDecl,
+    MethodDef, ModAst, ModDecl, NovelScene, StructDef, StructMemberDecl, TraitDef, TraitItemArgs,
+    TraitItemDecl, TypeAlias, TypeDef, VariantDecl, VariantFieldsDecl, Visibility,
     symbols::globals::{GenArgDeclItem, GenArgsDecl},
 };
 use biwac_base::{IdentInterner, ModId, ModPath};
@@ -15,6 +15,26 @@ use crate::error::LowerError;
 use crate::novel::lower_novel_stmts;
 use crate::path_ty::{lower_ident_path, lower_optional_return_type, lower_type_repr};
 use crate::stmt::lower_fn_body;
+
+/// 宣言の先頭の `Visibility` ノードを読む。無ければ `Private`。
+///
+/// 書けない場所 (variant など) の可視性もこれで読み飛ばす
+/// (エラーは biwa_lsp_parser が積んである)。
+fn lower_opt_visibility(mod_id: ModId, children: &mut Children) -> Visibility {
+    let Some(node) = children.eat_node(SyntaxKind::Visibility) else {
+        return Visibility::Private;
+    };
+    let span = node_span(mod_id, &node);
+    let scope = Children::of(&node)
+        .into_kinds()
+        .into_iter()
+        .find(|k| matches!(k, SyntaxKind::KwSuper | SyntaxKind::KwPackage));
+    match scope {
+        Some(SyntaxKind::KwSuper) => Visibility::Super(span),
+        Some(_) => Visibility::Package(span),
+        None => Visibility::Public(span),
+    }
+}
 
 /// `[T, U: A && B]` (宣言。使用時の型引数指定 `GenericsArgList` とは別物)。
 fn lower_generics_arg_decl<I>(
@@ -144,6 +164,7 @@ fn lower_fn_def(
 ) -> Option<FnDef> {
     let span = node_span(mod_id, node);
     let mut children = Children::of(node);
+    let vis = lower_opt_visibility(mod_id, &mut children);
     children.eat_token(SyntaxKind::KwFn);
     let id_tok = children.eat_token(SyntaxKind::Ident)?;
     let id = intern_ident_token(mod_id, interner, &id_tok);
@@ -160,6 +181,7 @@ fn lower_fn_def(
     let (stmts, expr, _) = lower_fn_body(mod_id, interner, &body_node, errors);
 
     Some(FnDef {
+        vis,
         id,
         def_id: OnceCell::new(),
         args,
@@ -180,6 +202,7 @@ fn lower_method_def(
 ) -> Option<MethodDef> {
     let span = node_span(mod_id, node);
     let mut children = Children::of(node);
+    let vis = lower_opt_visibility(mod_id, &mut children);
     children.eat_token(SyntaxKind::KwFn);
     let id_tok = children.eat_token(SyntaxKind::Ident)?;
     let id = intern_ident_token(mod_id, interner, &id_tok);
@@ -196,6 +219,7 @@ fn lower_method_def(
     let (stmts, expr, _) = lower_fn_body(mod_id, interner, &body_node, errors);
 
     Some(MethodDef {
+        vis,
         def_id: OnceCell::new(),
         id,
         args,
@@ -215,6 +239,7 @@ fn lower_struct_def(
     errors: &mut Vec<LowerError>,
 ) -> Option<StructDef> {
     let mut children = Children::of(node);
+    let vis = lower_opt_visibility(mod_id, &mut children);
     children.eat_token(SyntaxKind::KwStruct);
     let id_tok = children.eat_token(SyntaxKind::Ident)?;
     let id = intern_ident_token(mod_id, interner, &id_tok);
@@ -225,12 +250,20 @@ fn lower_struct_def(
 
     children.eat_token(SyntaxKind::LBrace);
     let mut members = Vec::new();
-    while let Some(member_tok) = children.eat_token(SyntaxKind::Ident) {
+    loop {
+        let member_vis = lower_opt_visibility(mod_id, &mut children);
+        let Some(member_tok) = children.eat_token(SyntaxKind::Ident) else {
+            break;
+        };
         children.eat_token(SyntaxKind::Colon);
         if let Some(ty_node) = children.eat_node(SyntaxKind::TypeRepr) {
             if let Some(typ) = lower_type_repr(mod_id, interner, &ty_node, errors) {
                 let member_id = intern_ident_token(mod_id, interner, &member_tok);
-                members.push((member_id, typ));
+                members.push(StructMemberDecl {
+                    vis: member_vis,
+                    id: member_id,
+                    typ,
+                });
             }
         }
         if children.eat_token(SyntaxKind::Comma).is_none() {
@@ -240,6 +273,7 @@ fn lower_struct_def(
     children.eat_token(SyntaxKind::RBrace);
 
     Some(StructDef {
+        vis,
         id,
         def_id: OnceCell::new(),
         members,
@@ -256,6 +290,7 @@ fn lower_type_alias_def(
     errors: &mut Vec<LowerError>,
 ) -> Option<TypeAlias> {
     let mut children = Children::of(node);
+    let vis = lower_opt_visibility(mod_id, &mut children);
     children.eat_token(SyntaxKind::KwType);
     let id_tok = children.eat_token(SyntaxKind::Ident)?;
     let ident = intern_ident_token(mod_id, interner, &id_tok);
@@ -270,6 +305,7 @@ fn lower_type_alias_def(
     children.eat_token(SyntaxKind::Semi);
 
     Some(TypeAlias {
+        vis,
         ident,
         def_id: OnceCell::new(),
         genargs,
@@ -288,6 +324,7 @@ fn lower_enum_def(
     errors: &mut Vec<LowerError>,
 ) -> Option<EnumDef> {
     let mut children = Children::of(node);
+    let vis = lower_opt_visibility(mod_id, &mut children);
     children.eat_token(SyntaxKind::KwEnum);
     let id_tok = children.eat_token(SyntaxKind::Ident)?;
     let id = intern_ident_token(mod_id, interner, &id_tok);
@@ -309,6 +346,7 @@ fn lower_enum_def(
     children.eat_token(SyntaxKind::RBrace);
 
     Some(EnumDef {
+        vis,
         id,
         def_id: OnceCell::new(),
         variants,
@@ -326,6 +364,8 @@ fn lower_variant_decl(
 ) -> Option<VariantDecl> {
     let span = node_span(mod_id, node);
     let mut children = Children::of(node);
+    // variant には可視性を書けない (エラーは biwa_lsp_parser が積んである)。読み捨てる。
+    lower_opt_visibility(mod_id, &mut children);
     let id_tok = children.eat_token(SyntaxKind::Ident)?;
     let id = intern_ident_token(mod_id, interner, &id_tok);
 
@@ -333,7 +373,10 @@ fn lower_variant_decl(
         Some(SyntaxKind::LParen) => {
             children.eat_token(SyntaxKind::LParen);
             let mut typs = Vec::new();
-            while let Some(ty_node) = children.eat_node(SyntaxKind::TypeRepr) {
+            while let Some(ty_node) = {
+                lower_opt_visibility(mod_id, &mut children);
+                children.eat_node(SyntaxKind::TypeRepr)
+            } {
                 if let Some(t) = lower_type_repr(mod_id, interner, &ty_node, errors) {
                     typs.push(t);
                 }
@@ -366,7 +409,10 @@ fn lower_variant_decl(
         Some(SyntaxKind::LBrace) => {
             children.eat_token(SyntaxKind::LBrace);
             let mut members = Vec::new();
-            while let Some(member_tok) = children.eat_token(SyntaxKind::Ident) {
+            while let Some(member_tok) = {
+                lower_opt_visibility(mod_id, &mut children);
+                children.eat_token(SyntaxKind::Ident)
+            } {
                 children.eat_token(SyntaxKind::Colon);
                 if let Some(ty_node) = children.eat_node(SyntaxKind::TypeRepr) {
                     if let Some(t) = lower_type_repr(mod_id, interner, &ty_node, errors) {
@@ -402,6 +448,7 @@ fn lower_trait_def(
 ) -> Option<TraitDef> {
     let span = node_span(mod_id, node);
     let mut children = Children::of(node);
+    let vis = lower_opt_visibility(mod_id, &mut children);
     children.eat_token(SyntaxKind::KwTrait);
     let id_tok = children.eat_token(SyntaxKind::Ident)?;
     let id = intern_ident_token(mod_id, interner, &id_tok);
@@ -429,6 +476,7 @@ fn lower_trait_def(
     children.eat_token(SyntaxKind::RBrace);
 
     Some(TraitDef {
+        vis,
         id,
         def_id: OnceCell::new(),
         self_gen: OnceCell::new(),
@@ -450,6 +498,8 @@ fn lower_trait_item_decl(
 ) -> Option<TraitItemDecl> {
     let span = node_span(mod_id, node);
     let mut children = Children::of(node);
+    // trait の項目には可視性を書けない (エラーは biwa_lsp_parser が積んである)。
+    lower_opt_visibility(mod_id, &mut children);
     children.eat_token(SyntaxKind::KwFn);
     let id_tok = children.eat_token(SyntaxKind::Ident)?;
     let id = intern_ident_token(mod_id, interner, &id_tok);
@@ -496,6 +546,7 @@ fn lower_import_decl(
 ) -> Option<Globals> {
     let span = node_span(mod_id, node);
     let mut children = Children::of(node);
+    lower_opt_visibility(mod_id, &mut children);
     children.eat_token(SyntaxKind::KwImport);
     let path_node = children.eat_node(SyntaxKind::IdentPath)?;
     let path = lower_ident_path(mod_id, interner, &path_node)?;
@@ -513,6 +564,23 @@ fn lower_import_decl(
     Some(Globals::Import(ImportDecl { path, span }))
 }
 
+/// `<visibility>? mod <ident> ;`
+fn lower_mod_decl(
+    mod_id: ModId,
+    interner: &mut IdentInterner,
+    node: &SyntaxNode,
+) -> Option<Globals> {
+    let span = node_span(mod_id, node);
+    let mut children = Children::of(node);
+    let vis = lower_opt_visibility(mod_id, &mut children);
+    children.eat_token(SyntaxKind::KwMod);
+    let id_tok = children.eat_token(SyntaxKind::Ident)?;
+    let id = intern_ident_token(mod_id, interner, &id_tok);
+    children.eat_token(SyntaxKind::Semi);
+
+    Some(Globals::Mod(ModDecl { vis, id, span }))
+}
+
 fn lower_impl_block(
     mod_id: ModId,
     interner: &mut IdentInterner,
@@ -521,6 +589,7 @@ fn lower_impl_block(
 ) -> Option<Globals> {
     let span = node_span(mod_id, node);
     let mut children = Children::of(node);
+    lower_opt_visibility(mod_id, &mut children);
     children.eat_token(SyntaxKind::KwImpl);
 
     let genargs_decl = children
@@ -589,6 +658,7 @@ fn lower_scene_def(
 ) -> Option<Globals> {
     let span = node_span(mod_id, node);
     let mut children = Children::of(node);
+    let vis = lower_opt_visibility(mod_id, &mut children);
     children.eat_token(SyntaxKind::KwScene);
     let id_tok = children.eat_token(SyntaxKind::Ident)?;
     let id = intern_ident_token(mod_id, interner, &id_tok);
@@ -606,6 +676,7 @@ fn lower_scene_def(
     children.eat_token(SyntaxKind::DoubleRBrace);
 
     Some(Globals::NovelScene(NovelScene {
+        vis,
         id,
         def_id: OnceCell::new(),
         args,
@@ -635,6 +706,12 @@ pub fn lower_module(
             SyntaxKind::ImportDecl => {
                 let n = children.eat_node(SyntaxKind::ImportDecl).expect("peeked");
                 if let Some(g) = lower_import_decl(mod_id, interner, &n, &mut errors) {
+                    globals.push(g);
+                }
+            }
+            SyntaxKind::ModDecl => {
+                let n = children.eat_node(SyntaxKind::ModDecl).expect("peeked");
+                if let Some(g) = lower_mod_decl(mod_id, interner, &n) {
                     globals.push(g);
                 }
             }

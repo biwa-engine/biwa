@@ -1,10 +1,10 @@
-struct Pos {
-  x: Int,
-  y: Int,
+pub struct Pos {
+  pub x: Int,
+  pub y: Int,
 }
 
 impl Pos {
-  fn new(x: Int, y: Int) -> Self {
+  pub fn new(x: Int, y: Int) -> Self {
     Self { x = x, y = y }
   }
 }

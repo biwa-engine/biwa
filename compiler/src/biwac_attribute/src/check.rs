@@ -52,7 +52,7 @@ pub fn check_mod_ast(ast: &ModAst, interner: &IdentInterner, errors: &mut Vec<At
                 }
             }
             Globals::ImplBlock(b) => check_impl_block(b, interner, errors),
-            Globals::Import(_) | Globals::VarDecl(_) => {}
+            Globals::Import(_) | Globals::Mod(_) | Globals::VarDecl(_) => {}
         }
     }
 }

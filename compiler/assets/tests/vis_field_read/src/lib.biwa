@@ -1,0 +1,11 @@
+// NG: private なメンバを読む。
+
+mod a;
+
+pub fn triple(n: Int) -> Int {
+  n * 3
+}
+
+pub fn uses() -> Int {
+  a::Point::new().y
+}
