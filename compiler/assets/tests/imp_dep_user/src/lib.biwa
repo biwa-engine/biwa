@@ -1,0 +1,21 @@
+// 依存パッケージの re-export を使う (issue #18)。
+
+// 依存パッケージのモジュールの glob (re-export も含む)。
+import imp_dep::*;
+// 依存パッケージの enum の glob。
+import imp_dep::Kind::*;
+
+pub fn uses() -> Int {
+  value()                          // imp_dep が glob で re-export したもの
+    + open()                       // imp_dep が別のパッケージ (vis_dep) から re-export したもの
+    + imp_dep::facade::imp::value() // re-export されたモジュールの中
+    + Thing::new().n               // re-export された型と、その関連関数
+    + kind_value(B)
+}
+
+fn kind_value(k: Kind) -> Int {
+  match k {
+    A => 1,
+    B => 2,
+  }
+}

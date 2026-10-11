@@ -1313,6 +1313,8 @@ mod tests {
             | "fn_value_capture" => &["std"],
             "fn_user" | "fn_user_scene" => &["std", "fn_lib"],
             "vis_dep_user" | "vis_dep_field_user" | "vis_dep_method_user" => &["vis_dep"],
+            "imp_dep" => &["vis_dep"],
+            "imp_dep_user" | "imp_dep_user_ng" => &["imp_dep", "vis_dep"],
             _ => &[],
         };
         if deps.is_empty() {
@@ -2124,6 +2126,59 @@ mod tests {
             .collect();
         invisible.sort();
         assert_eq!(invisible, ["hidden", "in_pkg", "inner"]);
+    }
+
+    /// 依存パッケージの re-export (`.biwameta` に書いたもの) を使えること (issue #18)。
+    ///
+    /// `imp_dep` は private なモジュールの中のものを glob で re-export し、別のパッケージ (`vis_dep`) の
+    /// 関数とモジュールも re-export している。`imp_dep_user` はそれらを名前で引き、依存パッケージの
+    /// モジュール・enum を glob で取り込む。名前解決も型推論も通ること。
+    #[test]
+    fn dependency_reexports_are_usable() {
+        ensure_fixture_deps("imp_dep");
+        ensure_fixture_deps("imp_dep_user");
+        let mut interner = biwac_base::IdentInterner::default();
+        let deps = vec![
+            built_dependency("imp_dep", &mut interner),
+            built_dependency("vis_dep", &mut interner),
+        ];
+        let ext = deps
+            .iter()
+            .map(|d| (d.pkg_id, std::sync::Arc::clone(&d.meta)))
+            .collect();
+        let resolved = resolve_fixture("imp_dep_user", deps, &mut interner)
+            .unwrap_or_else(|e| panic!("imp_dep_user must pass name resolution: {e:?}"));
+        assert!(
+            biwac_type_inferrer::TyCtx::new(resolved.hir, resolved.lang_items, ext, &mut interner)
+                .infer()
+                .is_ok(),
+            "imp_dep_user must pass type inference"
+        );
+    }
+
+    /// 依存パッケージの `pub` でない re-export は、「見つからない」ではなく「見えない」になること。
+    #[test]
+    fn dependency_non_pub_reexport_is_invisible() {
+        ensure_fixture_deps("imp_dep");
+        let mut interner = biwac_base::IdentInterner::default();
+        let deps = vec![
+            built_dependency("imp_dep", &mut interner),
+            built_dependency("vis_dep", &mut interner),
+        ];
+        let errors = match resolve_fixture("imp_dep_user_ng", deps, &mut interner) {
+            Ok(_) => panic!("imp_dep_user_ng must be rejected"),
+            Err(errors) => errors,
+        };
+        let names: Vec<&str> = errors
+            .iter()
+            .map(|e| match e {
+                biwac_name_resolver::ResolveError::InvisibleItem { segment, .. } => {
+                    interner.get_str(&segment.ident.id).unwrap()
+                }
+                e => panic!("unexpected error: {e:?}"),
+            })
+            .collect();
+        assert_eq!(names, ["pkg_fn"]);
     }
 
     /// 型推論で、見えないフィールド・メソッドが `InvisibleMember` になること (issue #8 の段階 4)。

@@ -6,7 +6,8 @@ pub mod hir;
 pub use biwac_ast::VariantShape;
 
 pub use crate::hir::{
-    DefinedTyImpl, Hir, TyExistence, TyTraitImpl, TyValImplGenargsContentPair, TyValImplList,
+    DefinedTyImpl, Hir, Reexport, TyExistence, TyTraitImpl, TyValImplGenargsContentPair,
+    TyValImplList,
     symbols::{
         Ident,
         expressions::{

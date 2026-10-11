@@ -1,0 +1,22 @@
+pub struct Thing {
+  pub n: Int,
+}
+
+impl Thing {
+  pub fn new() -> Self {
+    Thing { n = 10 }
+  }
+}
+
+pub enum Kind {
+  A,
+  B,
+}
+
+pub fn value() -> Int {
+  1
+}
+
+pub(package) fn pkg_fn() -> Int {
+  2
+}

@@ -1,0 +1,6 @@
+{
+  "name": "imp_ok",
+  "version": "0.1.0",
+  "description": "glob import and re-export (no error)",
+  "dependencies": []
+}

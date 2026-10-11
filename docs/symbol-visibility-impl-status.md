@@ -214,6 +214,8 @@ issue #8 「[feature] Visibility of symbols」の実装方針と進み具合の�
 
 **この方針で失うもの**: Voldemort 型 (§4.2) と sealed trait (§4.3)。一旦はそれでよい。
 
+`pub import` は issue #18 で入れた。re-export の経路の数え方の実装は `docs/useful-import-patterns-impl-status.md` §6.4。
+
 ### 5.3 使う側の検査 (名前解決・型推論)
 
 使う側では、実効可視性 (経路ごとの範囲の和) は要らない。

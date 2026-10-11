@@ -698,7 +698,6 @@ fn rejects_visibility_where_not_allowed() {
             "item of a trait impl",
         ),
         ("pub impl Int {}", "impl block"),
-        ("pub import a::b;", "import"),
     ] {
         let errors = parse_errors(src);
         assert!(
@@ -735,4 +734,43 @@ fn lowers_super_path() {
         d.path.abs_header,
         Some(biwac_ast::AbsolutePathHeader::Super { depth: 1, .. })
     ));
+}
+
+// ── glob import と re-export (issue #18) ─────────────────────────────────────
+
+#[test]
+fn lowers_glob_and_reexport() {
+    use biwac_ast::Visibility;
+    let src = "import a::b;\npub import a::b;\nimport a::*;\npub(package) import super::*;\n";
+    let (ast, errors) = lower(src);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    assert!(parse_errors(src).is_empty(), "{:?}", parse_errors(src));
+    let imports: Vec<_> = ast
+        .globals
+        .iter()
+        .map(|g| match g {
+            Globals::Import(i) => i,
+            g => panic!("{g:?}"),
+        })
+        .collect();
+    let shape: Vec<(bool, usize, bool)> = imports
+        .iter()
+        .map(|i| {
+            (
+                !matches!(i.vis, Visibility::Private),
+                i.path.segments.len(),
+                i.glob,
+            )
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            (false, 2, false),
+            (true, 2, false),
+            (false, 1, true),
+            (true, 0, true)
+        ]
+    );
+    assert!(matches!(imports[3].vis, Visibility::Package(_)));
 }

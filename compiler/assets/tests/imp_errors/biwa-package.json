@@ -1,0 +1,6 @@
+{
+  "name": "imp_errors",
+  "version": "0.1.0",
+  "description": "errors of glob import and re-export",
+  "dependencies": []
+}

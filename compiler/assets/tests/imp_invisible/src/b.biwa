@@ -1,0 +1,9 @@
+mod secret;
+
+pub fn shared() -> Int {
+  1
+}
+
+pub fn kept() -> Int {
+  2
+}

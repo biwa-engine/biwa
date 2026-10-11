@@ -1,0 +1,14 @@
+{
+  "name": "imp_dep",
+  "version": "0.1.0",
+  "description": "a library re-exporting items (from a private module and from another package)",
+  "dependencies": [
+    {
+      "name": "vis_dep",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

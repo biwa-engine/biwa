@@ -82,6 +82,8 @@ impl Path {
 
     pub fn span(&self) -> Span {
         match &self.abs_header {
+            // glob の import (`super::*`) はセグメントを持たないことがある。
+            Some(abs_header) if self.segments.is_empty() => abs_header.span(),
             Some(abs_header) => Span::merge(
                 &abs_header.span(),
                 &self.segments.last().unwrap().span().clone(),

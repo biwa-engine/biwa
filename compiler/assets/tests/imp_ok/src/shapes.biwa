@@ -1,0 +1,19 @@
+mod inner;
+
+pub struct Circle {
+  r: Int,
+}
+
+impl Circle {
+  pub fn new(r: Int) -> Self {
+    Circle { r = r }
+  }
+}
+
+pub fn area(c: Circle) -> Int {
+  c.r * c.r * 3
+}
+
+// 子モジュールのものを re-export する (連鎖: ルートはこれをさらに glob で取り込む)。
+pub import inner::Deep;
+pub import inner::deep_value;

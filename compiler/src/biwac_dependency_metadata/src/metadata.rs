@@ -966,7 +966,87 @@ impl DepMetadata {
             })
             .collect();
         let mod_vis_of = |mp: &ModPath| mod_vis.get(mp).copied().unwrap_or(DiskVisibility::Public);
+        let mod_id_of: HashMap<&ModPath, biwac_base::ModId> =
+            self_mods.iter().map(|(id, ms)| (&ms.modu, *id)).collect();
         for mp in &mod_paths_sorted {
+            // re-export。指すものが別のパッケージのものなら外部シンボルの表で指す。
+            let mut reexports: Vec<(&str, format::DiskReexport)> = Vec::new();
+            for r in mod_id_of
+                .get(mp)
+                .and_then(|id| hir.reexports.get(id))
+                .into_iter()
+                .flatten()
+            {
+                use biwac_span::DefIdKind;
+                use format::{
+                    REEXPORT_KIND_MOD, REEXPORT_KIND_TRAIT, REEXPORT_KIND_TY, REEXPORT_KIND_VAL,
+                    REEXPORT_KIND_VARIANT,
+                };
+                // (種類, 自パッケージのシンボル番号, 外部なら (パッケージ, シンボル番号))
+                let (kind, local, ext) = match &r.kind {
+                    DefIdKind::Ty(id) => (
+                        REEXPORT_KIND_TY,
+                        ty_to_sym.get(id).map(|s| s.0),
+                        (id.pkg(), id.local_idx()),
+                    ),
+                    DefIdKind::Trait(id) => (
+                        REEXPORT_KIND_TRAIT,
+                        trait_to_sym.get(id).map(|s| s.0),
+                        (id.pkg(), id.local_idx()),
+                    ),
+                    DefIdKind::Val(id) => (
+                        REEXPORT_KIND_VAL,
+                        val_to_sym.get(id).map(|s| s.0),
+                        (id.pkg(), id.local_idx()),
+                    ),
+                    DefIdKind::Variant(id) => (
+                        REEXPORT_KIND_VARIANT,
+                        variant_to_sym.get(id).map(|s| s.0),
+                        (id.pkg(), id.local_idx()),
+                    ),
+                    DefIdKind::Mod(id) => (
+                        REEXPORT_KIND_MOD,
+                        source_holder
+                            .mods
+                            .get(id)
+                            .and_then(|ms| mod_path_to_sym.get(&ms.modu))
+                            .map(|s| s.0),
+                        (biwac_base::PackageId::new(id.pkg_id_bits()), id.sym_idx()),
+                    ),
+                    _ => continue,
+                };
+                let (external, target) = if ext.0.is_self() {
+                    match local {
+                        Some(sym) => (0, sym),
+                        None => continue,
+                    }
+                } else if ext.0 == biwac_base::PackageId::BUILTIN_RESERVED_PACKAGE {
+                    continue;
+                } else {
+                    (1, ext_syms.intern(ext.0, ext.1))
+                };
+                let name = interner.get_str(&r.name).unwrap_or("");
+                reexports.push((
+                    name,
+                    format::DiskReexport {
+                        name: format::DiskStringOffset(0),
+                        kind,
+                        external,
+                        target,
+                        vis: DiskVisibility::from(r.vis.declared) as u32,
+                    },
+                ));
+            }
+            // 名前順に並べてから文字列表に積む (ビルドごとにバイト一致させるため)。
+            reexports.sort_by(|a, b| a.0.cmp(b.0));
+            let reexports: Vec<format::DiskReexport> = reexports
+                .into_iter()
+                .map(|(name, mut r)| {
+                    r.name = strings.push(name);
+                    r
+                })
+                .collect();
+
             let mod_name_str = match mp {
                 ModPath::Lib => "lib",
                 ModPath::Main => "main",
@@ -982,6 +1062,7 @@ impl DepMetadata {
                     end: 0,
                 },
                 children: DiskVec(children_vec),
+                reexports: DiskVec(reexports),
             });
             push_body(
                 &mut body_builder,
@@ -1479,7 +1560,7 @@ impl DepMetadata {
     }
 
     /// 外部シンボル表のエントリ 1 件を `(PackageId, シンボルインデックス)` に解決する。
-    fn resolve_ext_sym(&self, ext_sym_idx: u32) -> Option<(biwac_base::PackageId, u32)> {
+    pub(crate) fn resolve_ext_sym(&self, ext_sym_idx: u32) -> Option<(biwac_base::PackageId, u32)> {
         let entry = self.ext_syms.get(ext_sym_idx as usize)?;
         Some((biwac_base::PackageId::new(entry.pkg), entry.sym.0))
     }
@@ -1553,6 +1634,22 @@ impl DepMetadata {
                     h.write_usize(d.children.0.len());
                     for c in &d.children.0 {
                         h.write_u32(c.0);
+                    }
+                    // re-export も依存する側の名前解決の結果を変える。
+                    h.write_usize(d.reexports.0.len());
+                    for r in &d.reexports.0 {
+                        h.write_str(self.get_str(r.name).unwrap_or(""));
+                        h.write_u32(r.kind);
+                        let (pkg, sym) = if r.external == 0 {
+                            (0, r.target)
+                        } else {
+                            self.resolve_ext_sym(r.target)
+                                .map(|(p, s)| (p.value(), s))
+                                .unwrap_or((u32::MAX, r.target))
+                        };
+                        h.write_u32(pkg);
+                        h.write_u32(sym);
+                        h.write_u32(r.vis);
                     }
                 }
                 SymbolBody::Struct(d) => {
@@ -1968,6 +2065,29 @@ impl DepMetadata {
             DeclaredVisibility::Super => VisibilityScope::Module(module_id(
                 self.symbol_owners()
                     .get(&home)
+                    .copied()
+                    .unwrap_or(self.root_sym_idx),
+            )),
+        };
+        biwac_hir::Visibility { declared, scope }
+    }
+
+    /// モジュール `module_sym` で宣言された可視性 `declared` の見える範囲 (re-export に使う)。
+    pub(crate) fn visibility_in_module(
+        &self,
+        pkg_id: biwac_base::PackageId,
+        module_sym: u32,
+        declared: biwac_hir::DeclaredVisibility,
+    ) -> biwac_hir::Visibility {
+        use biwac_hir::{DeclaredVisibility, VisibilityScope};
+        let module_id = |sym: u32| biwac_base::ModId::new_ext(pkg_id.value(), sym);
+        let scope = match declared {
+            DeclaredVisibility::Public => VisibilityScope::Public,
+            DeclaredVisibility::Package => VisibilityScope::Package(pkg_id),
+            DeclaredVisibility::Private => VisibilityScope::Module(module_id(module_sym)),
+            DeclaredVisibility::Super => VisibilityScope::Module(module_id(
+                self.symbol_owners()
+                    .get(&module_sym)
                     .copied()
                     .unwrap_or(self.root_sym_idx),
             )),

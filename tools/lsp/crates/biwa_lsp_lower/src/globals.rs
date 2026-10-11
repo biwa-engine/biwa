@@ -546,10 +546,14 @@ fn lower_import_decl(
 ) -> Option<Globals> {
     let span = node_span(mod_id, node);
     let mut children = Children::of(node);
-    lower_opt_visibility(mod_id, &mut children);
+    let vis = lower_opt_visibility(mod_id, &mut children);
     children.eat_token(SyntaxKind::KwImport);
     let path_node = children.eat_node(SyntaxKind::IdentPath)?;
     let path = lower_ident_path(mod_id, interner, &path_node)?;
+    // `import a::*;` の `*` は IdentPath の中の `Star` トークンとして残っている。
+    let glob = path_node
+        .children_with_tokens()
+        .any(|e| elem_kind(&e) == SyntaxKind::Star);
 
     if children.eat_token(SyntaxKind::KwAs).is_some() {
         children.eat_token(SyntaxKind::Ident);
@@ -561,7 +565,12 @@ fn lower_import_decl(
     }
     children.eat_token(SyntaxKind::Semi);
 
-    Some(Globals::Import(ImportDecl { path, span }))
+    Some(Globals::Import(ImportDecl {
+        vis,
+        path,
+        glob,
+        span,
+    }))
 }
 
 /// `<visibility>? mod <ident> ;`

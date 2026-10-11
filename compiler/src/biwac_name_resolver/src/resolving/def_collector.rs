@@ -84,7 +84,7 @@ impl DefCollector {
         pkg_name: InternedIdent,
         pkg: &Pkg,
         external_packages: Vec<ExternalPackage>,
-        interner: &IdentInterner,
+        interner: &mut IdentInterner,
     ) -> Result<NameTree, Vec<ResolveError>> {
         // trait も他のシンボルと同じ走査で採番する。
         // 制限 (`struct Foo[T: A]` の `A`) が解決されるのは Step 2 以降で、
@@ -116,12 +116,24 @@ impl DefCollector {
 
         let mut packages = HashMap::new();
         packages.insert(pkg_name, package_tree);
-        let name_tree = NameTree {
+        let mut name_tree = NameTree {
             self_pkg_name: pkg_name,
             packages,
             ext_pkg_views,
             ext_pkg_data,
+            imports: HashMap::new(),
         };
+
+        // Step 1.5: import の表 (明示した import・glob・re-export)。
+        //
+        // Step 2 以降で書かれたパスも import を経由しうるので、ここで作る。
+        // glob で依存パッケージの子の名前を intern するので、interner は可変で借りる。
+        let (imports, import_errors) = super::import_table::build(pkg, &name_tree, interner);
+        if !import_errors.is_empty() {
+            return Err(import_errors);
+        }
+        name_tree.imports = imports;
+        let interner: &IdentInterner = interner;
 
         // Build TyDefId → &TyNameTree and ModId → &ModuleNameTree indexes.
         let root = &name_tree.packages[&pkg_name].root_module_tree;

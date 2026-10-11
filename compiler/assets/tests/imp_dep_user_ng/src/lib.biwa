@@ -1,0 +1,4 @@
+// NG: imp_dep の glob の re-export では pkg_fn は pub(package) になるので、外からは見えない。
+pub fn uses() -> Int {
+  imp_dep::pkg_fn()
+}

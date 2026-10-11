@@ -621,7 +621,6 @@ impl S {
             "item of a trait impl"
         ));
         assert!(is_not_allowed("pub impl Int {}", "impl block"));
-        assert!(is_not_allowed("pub import package::a;", "import"));
     }
 
     #[test]
@@ -674,5 +673,87 @@ fn f() -> super::T { super::g() }
             p.abs_header,
             Some(AbsolutePathHeader::Super { depth: 1, .. })
         ));
+    }
+}
+
+/// glob import と re-export の構文 (issue #18)。
+mod import_patterns {
+    use biwac_ast::{AbsolutePathHeader, Globals, ImportDecl, Visibility};
+    use biwac_base::{IdentInterner, ModId, ModPath};
+
+    fn imports(src: &str) -> Vec<ImportDecl> {
+        let mod_id = ModId::new_in_self(0);
+        let mut interner = IdentInterner::new();
+        let tokens = biwac_lexer::lex(&mut interner, mod_id, src).unwrap();
+        crate::Parser::new(mod_id, ModPath::Main, tokens, &mut interner)
+            .try_parse()
+            .unwrap_or_else(|e| panic!("parse failed: {e:?}"))
+            .globals
+            .into_iter()
+            .map(|g| match g {
+                Globals::Import(i) => i,
+                g => panic!("not an import: {g:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parses_glob_and_reexport() {
+        let i = imports(
+            r#"
+import a::b;
+pub import a::b;
+import a::*;
+pub(package) import package::x::*;
+import super::*;
+import package::*;
+"#,
+        );
+        let shape: Vec<(bool, usize, bool)> = i
+            .iter()
+            .map(|i| {
+                (
+                    !matches!(i.vis, Visibility::Private),
+                    i.path.segments.len(),
+                    i.glob,
+                )
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                (false, 2, false),
+                (true, 2, false),
+                (false, 1, true),
+                (true, 1, true),
+                (false, 0, true),
+                (false, 0, true),
+            ]
+        );
+        assert!(matches!(i[3].vis, Visibility::Package(_)));
+        assert!(matches!(
+            i[4].path.abs_header,
+            Some(AbsolutePathHeader::Super { depth: 1, .. })
+        ));
+        assert!(matches!(
+            i[5].path.abs_header,
+            Some(AbsolutePathHeader::Package(_))
+        ));
+    }
+
+    /// `*` は import のパスの最後にしか書けない (型や式のパスには書けない)。
+    #[test]
+    fn rejects_glob_outside_import() {
+        let mod_id = ModId::new_in_self(0);
+        let mut interner = IdentInterner::new();
+        for src in ["fn f() -> a::* {}", "import a::*::b;"] {
+            let tokens = biwac_lexer::lex(&mut interner, mod_id, src).unwrap();
+            assert!(
+                crate::Parser::new(mod_id, ModPath::Main, tokens, &mut interner)
+                    .try_parse()
+                    .is_err(),
+                "{src}"
+            );
+        }
     }
 }

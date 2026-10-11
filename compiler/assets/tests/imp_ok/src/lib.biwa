@@ -1,0 +1,37 @@
+// glob import と re-export (issue #18) の正例。
+
+mod shapes;
+mod colors;
+
+// private なモジュールの中の pub な struct を、上で公開する (祖先による頭打ちは超えられる)。
+pub import shapes::Circle;
+// glob の re-export。`colors` の pub なものは pub で、pub(package) なものは pub(package) で再 export される。
+pub import colors::*;
+// 同じものを指すだけなら、明示した import (`Circle`) と glob が重なってもよい。
+import shapes::*;
+
+pub fn use_all() -> Int {
+  // `shapes::area` は glob で、`Choice` の variant は enum の glob で入っている。
+  area(Circle::new(2)) + red_value() + dim() + choice_value(First) + shapes::deep_value()
+}
+
+// 他のモジュールの re-export も、パスの途中で引ける (`shapes::Deep` は `shapes` が re-export したもの)。
+// `Deep` の定義は private なモジュール `shapes::inner` の中だが、`shapes` の re-export の経路で
+// パッケージ全体から届くので、pub(package) な関数のシグネチャに出せる (実効可視性は経路の和)。
+pub(package) fn via_reexport() -> shapes::Deep {
+  shapes::Deep {}
+}
+
+import Choice::*;
+
+pub enum Choice {
+  First,
+  Second,
+}
+
+fn choice_value(c: Choice) -> Int {
+  match c {
+    First => 1,
+    Second => 2,
+  }
+}

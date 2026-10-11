@@ -82,6 +82,38 @@ pub enum ResolveError {
         /// 型が書かれた場所。
         span: Span,
     },
+    /// re-export (`pub import a::b;`) の可視性が、指すものの可視性の範囲を超えている。
+    ReexportBeyondVisibility {
+        name: biwac_ast::Ident,
+        /// import 宣言。
+        span: Span,
+        /// import に書いた可視性。
+        declared: biwac_hir::Visibility,
+        /// 指すものの可視性。
+        target: biwac_hir::Visibility,
+    },
+    /// glob の re-export (`pub import a::*;`) で、書いた可視性まで広げられるものが 1 つも無い。
+    GlobReexportsNothing {
+        span: Span,
+        vis: biwac_hir::Visibility,
+    },
+    /// glob import (`import a::*;`) の `*` の位置がモジュールでも enum でもない。
+    GlobImportOfNonContainer {
+        span: Span,
+    },
+    /// 別々の glob import が、同じ名前で別のものを持ち込んだ。
+    ImportedNameConflict {
+        name: InternedIdent,
+        span1: Span,
+        span2: Span,
+    },
+    /// glob import で入った名前が、そのモジュールの定義・明示した import と重なった。
+    GlobImportShadowed {
+        name: InternedIdent,
+        glob_span: Span,
+        /// 明示した import の宣言。モジュールの定義なら `None`。
+        other_span: Option<Span>,
+    },
     /// ルートモジュールに `pub(super)` と書いた。ルートモジュールには親が無い。
     SuperVisibilityInRoot {
         span: Span,
@@ -474,6 +506,78 @@ impl BiwacError for ResolveError {
                          must be at least as visible as the item",
                     )
                     .print();
+            }
+
+            Self::ReexportBeyondVisibility {
+                name,
+                span,
+                declared,
+                target,
+            } => {
+                let name = ident_str(ctx, &name.id);
+                ctx.diagnostic(format!(
+                    "`{name}` cannot be re-exported beyond its own visibility."
+                ))
+                .label(
+                    at(span),
+                    format!("this re-exports it {}", declared.describe_scope(ctx)),
+                )
+                .note(format!(
+                    "`{name}` is declared {}, so it is visible only {}",
+                    target.describe_declared(),
+                    target.describe_scope(ctx)
+                ))
+                .print();
+            }
+
+            Self::GlobReexportsNothing { span, vis } => {
+                ctx.diagnostic("This glob re-export re-exports nothing.")
+                    .label(
+                        at(span),
+                        format!(
+                            "no imported item can be made visible {}",
+                            vis.describe_scope(ctx)
+                        ),
+                    )
+                    .note(
+                        "each item is re-exported with the narrower of its own visibility and the \
+                         one written here",
+                    )
+                    .print();
+            }
+
+            Self::GlobImportOfNonContainer { span } => {
+                ctx.diagnostic("Only a module or an enum can be glob-imported.")
+                    .label(at(span), "`*` must follow a module or an enum")
+                    .print();
+            }
+
+            Self::ImportedNameConflict { name, span1, span2 } => {
+                let name = ident_str(ctx, name);
+                ctx.diagnostic(format!("`{name}` is imported twice by glob imports."))
+                    .label(at(span2), format!("`{name}` is imported here"))
+                    .sub_label(at(span1), "and here, as a different item")
+                    .print();
+            }
+
+            Self::GlobImportShadowed {
+                name,
+                glob_span,
+                other_span,
+            } => {
+                let name = ident_str(ctx, name);
+                let d = ctx
+                    .diagnostic(format!(
+                        "`{name}` imported by a glob conflicts with another name in this module."
+                    ))
+                    .label(at(glob_span), format!("this imports `{name}`"));
+                match other_span {
+                    Some(other) => {
+                        d.sub_label(at(other), format!("`{name}` is also imported here"))
+                    }
+                    None => d.note(format!("this module defines `{name}`")),
+                }
+                .print();
             }
 
             Self::SuperVisibilityInRoot { span } => {

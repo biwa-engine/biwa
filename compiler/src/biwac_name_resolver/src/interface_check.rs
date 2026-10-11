@@ -4,6 +4,8 @@
 //! どれも実効可視性が V 以上でなければならない。
 //! `pub fn make() -> Priv` のように、使う側から名前を書けない型の値が外に出るのを定義側で止める。
 //!
+//! 実効可視性には re-export (`pub import`) の経路も数える (`docs/useful-import-patterns-impl-status.md` §4.5)。
+//!
 //! 名前解決が済んだ AST の上で行う。HIR では型エイリアスが右辺に展開されていて、
 //! `pub fn f() -> PrivAlias` の `PrivAlias` が見えなくなっているためである。
 
@@ -13,25 +15,32 @@ use biwac_ast::{
     ArgDeclList, Globals, Ident, ImplBlock, PathSegmentResolution, RetTypRepr, TraitItemArgs,
     TypRepr, TypReprVal, TypeDef, VariantFieldsDecl, symbols::globals::GenArgsDecl,
 };
-use biwac_base::{ModId, PackageId};
+use biwac_base::ModId;
 use biwac_hir::VisibilityScope;
 use biwac_package_loader::{LoadedModule, Pkg};
-use biwac_span::{DefIdKind, TraitDefId, TyDefId};
+use biwac_span::{DefIdKind, TraitDefId, TyDefId, ValDefId};
 
-use crate::{ResolveError, visibility::ModuleParents};
+use crate::{
+    ResolveError,
+    resolving::import_table::ModuleImports,
+    visibility::{ModuleParents, ScopeOps},
+};
 
 /// 実効可視性。項目に届く経路ごとの見える範囲の和である。
 ///
 /// 1 本の経路の範囲は、経路上の各段 (モジュール・項目) の見える範囲の共通部分で、
 /// どの段の範囲もその項目自身を含む部分木なので、最も狭い 1 つになる。
-/// 今は届く経路が定義の場所の 1 本しか無いので、範囲は 1 つ (または空) である。
-/// `pub import` を入れたら、再 export の経路の分だけ範囲を足す (和)。
+/// 定義の経路に、re-export (`pub import`) の経路の分だけ範囲を足す (和)。
 #[derive(Debug, Clone)]
 pub struct EffectiveVisibility {
     ranges: Vec<VisibilityScope>,
 }
 
 impl EffectiveVisibility {
+    fn empty() -> Self {
+        Self { ranges: Vec::new() }
+    }
+
     fn public() -> Self {
         Self {
             ranges: vec![VisibilityScope::Public],
@@ -44,50 +53,18 @@ impl EffectiveVisibility {
     }
 }
 
-/// モジュールの親子関係の上での、見える範囲どうしの演算。
+/// 実効可視性どうしの演算。範囲 1 つずつの演算 ([`ScopeOps`]) を経路の和に広げたもの。
 struct Scopes<'a> {
-    parents: &'a HashMap<ModId, ModId>,
+    ops: ScopeOps<'a>,
 }
 
 impl Scopes<'_> {
-    /// `m` が `ancestor` そのものかその子孫か。
-    fn is_within(&self, m: ModId, ancestor: ModId) -> bool {
-        let mut cur = Some(m);
-        while let Some(c) = cur {
-            if c == ancestor {
-                return true;
-            }
-            cur = self.parents.get(&c).copied();
-        }
-        false
-    }
-
-    fn package_of(m: ModId) -> PackageId {
-        PackageId::new(m.pkg_id_bits())
-    }
-
-    /// 範囲 `outer` が範囲 `inner` を含むか。
     fn covers(&self, outer: VisibilityScope, inner: VisibilityScope) -> bool {
-        use VisibilityScope::*;
-        match (outer, inner) {
-            (Public, _) => true,
-            (_, Public) => false,
-            (Package(p), Package(q)) => p == q,
-            (Package(p), Module(m)) => Self::package_of(m) == p,
-            (Module(_), Package(_)) => false,
-            (Module(a), Module(b)) => self.is_within(b, a),
-        }
+        self.ops.covers(outer, inner)
     }
 
-    /// 2 つの範囲の共通部分。部分木どうしなので、入れ子なら狭い方、交わらなければ空。
     fn meet(&self, a: VisibilityScope, b: VisibilityScope) -> Option<VisibilityScope> {
-        if self.covers(a, b) {
-            Some(b)
-        } else if self.covers(b, a) {
-            Some(a)
-        } else {
-            None
-        }
+        self.ops.meet(a, b)
     }
 
     /// 2 つの実効可視性の共通部分 (経路ごとの範囲の組ごとの共通部分の和)。
@@ -108,6 +85,24 @@ impl Scopes<'_> {
         self.meet_all(eff, &EffectiveVisibility { ranges: vec![next] })
     }
 
+    /// 和 (経路を足す)。他の範囲に含まれる範囲は落とす。
+    fn union(&self, a: &EffectiveVisibility, b: &EffectiveVisibility) -> EffectiveVisibility {
+        let mut ranges: Vec<VisibilityScope> = Vec::new();
+        for r in a.ranges.iter().chain(&b.ranges) {
+            if ranges.iter().any(|x| self.covers(*x, *r)) {
+                continue;
+            }
+            ranges.retain(|x| !self.covers(*r, *x));
+            ranges.push(*r);
+        }
+        EffectiveVisibility { ranges }
+    }
+
+    /// 同じ範囲か。
+    fn same(&self, a: &EffectiveVisibility, b: &EffectiveVisibility) -> bool {
+        self.covers_all(a, b) && self.covers_all(b, a)
+    }
+
     /// `outer` が `inner` を含むか (`inner` のどの範囲も、`outer` のどれかの範囲に含まれる)。
     fn covers_all(&self, outer: &EffectiveVisibility, inner: &EffectiveVisibility) -> bool {
         inner
@@ -122,6 +117,90 @@ struct Effective {
     modules: HashMap<ModId, EffectiveVisibility>,
     tys: HashMap<TyDefId, EffectiveVisibility>,
     traits: HashMap<TraitDefId, EffectiveVisibility>,
+    /// 関数・native 関数・scene。
+    vals: HashMap<ValDefId, EffectiveVisibility>,
+}
+
+/// re-export の経路で足す範囲の持ち主 (自パッケージのもの)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Key {
+    Mod(ModId),
+    Ty(TyDefId),
+    Trait(TraitDefId),
+    Val(ValDefId),
+}
+
+impl Key {
+    fn of(kind: &DefIdKind) -> Option<Self> {
+        match kind {
+            DefIdKind::Mod(id) if id.is_self_pkg() => Some(Self::Mod(*id)),
+            DefIdKind::Ty(id) if id.pkg().is_self() => Some(Self::Ty(*id)),
+            DefIdKind::Trait(id) if id.pkg().is_self() => Some(Self::Trait(*id)),
+            DefIdKind::Val(id) if id.pkg().is_self() => Some(Self::Val(*id)),
+            _ => None,
+        }
+    }
+}
+
+/// 定義の経路に、re-export の経路 `extra` を足した実効可視性。
+fn effective_visibilities(
+    pkg: &Pkg,
+    imports: &HashMap<ModId, ModuleImports>,
+    parents: &ModuleParents,
+    scopes: &Scopes,
+) -> Effective {
+    // re-export の経路は、モジュールの実効可視性が決まらないと決まらず、
+    // re-export されたモジュールの子にも経路が延びるので、増えなくなるまで繰り返す。
+    // 範囲は有限なので止まる。
+    let mut extra: HashMap<Key, EffectiveVisibility> = HashMap::new();
+    loop {
+        let mut eff = Effective {
+            modules: HashMap::new(),
+            tys: HashMap::new(),
+            traits: HashMap::new(),
+            vals: HashMap::new(),
+        };
+        collect_modules(
+            &pkg.root_module,
+            EffectiveVisibility::public(),
+            parents,
+            scopes,
+            &extra,
+            &mut eff,
+        );
+        pkg.walk_modules(|module| collect_defs(module, parents, scopes, &extra, &mut eff));
+
+        // モジュール M の import の表の名前 x が T を指すなら、「M ∩ x の可視性」を T に足す。
+        let mut next = extra.clone();
+        let mut mod_ids: Vec<&ModId> = imports.keys().collect();
+        mod_ids.sort();
+        for mod_id in mod_ids {
+            let Some(module_eff) = eff.modules.get(mod_id) else {
+                continue;
+            };
+            let table = &imports[mod_id];
+            for entry in table.explicit.values().chain(table.glob.values()) {
+                let Some(key) = Key::of(&entry.kind) else {
+                    continue;
+                };
+                let path = scopes.through(module_eff, entry.vis.scope);
+                let current = next
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_else(EffectiveVisibility::empty);
+                next.insert(key, scopes.union(&current, &path));
+            }
+        }
+
+        let unchanged = next.len() == extra.len()
+            && next
+                .iter()
+                .all(|(k, v)| extra.get(k).is_some_and(|e| scopes.same(e, v)));
+        if unchanged {
+            return eff;
+        }
+        extra = next;
+    }
 }
 
 impl Effective {
@@ -139,26 +218,16 @@ impl Effective {
 }
 
 /// パッケージ全体の private-in-public を検査する。
-pub(crate) fn check(pkg: &Pkg) -> Vec<ResolveError> {
+pub(crate) fn check(pkg: &Pkg, imports: &HashMap<ModId, ModuleImports>) -> Vec<ResolveError> {
     let parents = ModuleParents::of(pkg);
     let parent_map = parents.to_map();
     let scopes = Scopes {
-        parents: &parent_map,
+        ops: ScopeOps {
+            parents: &parent_map,
+        },
     };
 
-    let mut eff = Effective {
-        modules: HashMap::new(),
-        tys: HashMap::new(),
-        traits: HashMap::new(),
-    };
-    collect_modules(
-        &pkg.root_module,
-        EffectiveVisibility::public(),
-        &parents,
-        &scopes,
-        &mut eff,
-    );
-    pkg.walk_modules(|module| collect_defs(module, &parents, &scopes, &mut eff));
+    let eff = effective_visibilities(pkg, imports, &parents, &scopes);
 
     let mut checker = Checker {
         scopes: &scopes,
@@ -175,46 +244,87 @@ fn collect_modules(
     module_eff: EffectiveVisibility,
     parents: &ModuleParents,
     scopes: &Scopes,
+    extra: &HashMap<Key, EffectiveVisibility>,
     eff: &mut Effective,
 ) {
     for g in &module.ast.globals {
         let Globals::Mod(decl) = g else { continue };
         if let Some(child) = module.children.get(&decl.id.id) {
             let declared = parents.resolve(&decl.vis, module.mod_id).scope;
-            let child_eff = scopes.through(&module_eff, declared);
-            collect_modules(child, child_eff, parents, scopes, eff);
+            let child_eff = with_extra(
+                scopes,
+                scopes.through(&module_eff, declared),
+                extra,
+                Key::Mod(child.mod_id),
+            );
+            collect_modules(child, child_eff, parents, scopes, extra, eff);
         }
     }
     eff.modules.insert(module.mod_id, module_eff);
 }
 
-/// 型・trait の実効可視性。宣言の可視性とモジュールの共通部分。
+/// 経路の和に、re-export の経路 (`extra[key]`) を足す。
+fn with_extra(
+    scopes: &Scopes,
+    eff: EffectiveVisibility,
+    extra: &HashMap<Key, EffectiveVisibility>,
+    key: Key,
+) -> EffectiveVisibility {
+    match extra.get(&key) {
+        Some(e) => scopes.union(&eff, e),
+        None => eff,
+    }
+}
+
+/// 型・trait・関数の実効可視性。宣言の可視性とモジュールの共通部分 (と re-export の経路)。
 fn collect_defs(
     module: &LoadedModule,
     parents: &ModuleParents,
     scopes: &Scopes,
+    extra: &HashMap<Key, EffectiveVisibility>,
     eff: &mut Effective,
 ) {
     let module_eff = eff.modules[&module.mod_id].clone();
-    let item = |vis: &biwac_ast::Visibility| {
-        scopes.through(&module_eff, parents.resolve(vis, module.mod_id).scope)
+    let item = |vis: &biwac_ast::Visibility, key: Key| {
+        with_extra(
+            scopes,
+            scopes.through(&module_eff, parents.resolve(vis, module.mod_id).scope),
+            extra,
+            key,
+        )
     };
     for g in &module.ast.globals {
         match g {
             Globals::TypeDef(t) => {
-                let (def_id, e) = match t {
-                    TypeDef::Struct(s) => (s.def_id.get(), item(&s.vis)),
-                    TypeDef::Enum(e) => (e.def_id.get(), item(&e.vis)),
-                    TypeDef::TypeAlias(a) => (a.def_id.get(), item(&a.vis)),
-                    TypeDef::NativeTypeAlias(a) => (a.def_id.get(), item(&a.vis)),
+                let (def_id, vis) = match t {
+                    TypeDef::Struct(s) => (s.def_id.get(), &s.vis),
+                    TypeDef::Enum(e) => (e.def_id.get(), &e.vis),
+                    TypeDef::TypeAlias(a) => (a.def_id.get(), &a.vis),
+                    TypeDef::NativeTypeAlias(a) => (a.def_id.get(), &a.vis),
                 };
                 if let Some(def_id) = def_id {
-                    eff.tys.insert(*def_id, e);
+                    eff.tys.insert(*def_id, item(vis, Key::Ty(*def_id)));
                 }
             }
             Globals::TraitDef(t) => {
                 if let Some(def_id) = t.def_id.get() {
-                    eff.traits.insert(*def_id, item(&t.vis));
+                    eff.traits
+                        .insert(*def_id, item(&t.vis, Key::Trait(*def_id)));
+                }
+            }
+            Globals::FnDef(f) => {
+                if let Some(def_id) = f.def_id.get() {
+                    eff.vals.insert(*def_id, item(&f.vis, Key::Val(*def_id)));
+                }
+            }
+            Globals::NativeFnDef(f) => {
+                if let Some(def_id) = f.def_id.get() {
+                    eff.vals.insert(*def_id, item(&f.vis, Key::Val(*def_id)));
+                }
+            }
+            Globals::NovelScene(sc) => {
+                if let Some(def_id) = sc.def_id.get() {
+                    eff.vals.insert(*def_id, item(&sc.vis, Key::Val(*def_id)));
                 }
             }
             _ => {}
@@ -235,6 +345,17 @@ struct Owner<'a> {
 }
 
 impl Checker<'_> {
+    /// 関数・scene の実効可視性 (re-export の経路を含む)。表に無ければ `fallback`。
+    fn val_eff(
+        &self,
+        def_id: Option<&ValDefId>,
+        fallback: impl FnOnce() -> EffectiveVisibility,
+    ) -> EffectiveVisibility {
+        def_id
+            .and_then(|id| self.eff.vals.get(id).cloned())
+            .unwrap_or_else(fallback)
+    }
+
     fn check_module(&mut self, module: &LoadedModule, parents: &ModuleParents) {
         let module_eff = self.eff.modules[&module.mod_id].clone();
         let home = module.mod_id;
@@ -247,21 +368,24 @@ impl Checker<'_> {
                 Globals::FnDef(f) => {
                     let owner = Owner {
                         name: &f.id,
-                        eff: through(self.scopes, &module_eff, &f.vis),
+                        eff: self
+                            .val_eff(f.def_id.get(), || through(self.scopes, &module_eff, &f.vis)),
                     };
                     self.check_signature(&owner, &f.args, &f.rtype, &f.genargs);
                 }
                 Globals::NativeFnDef(f) => {
                     let owner = Owner {
                         name: &f.id,
-                        eff: through(self.scopes, &module_eff, &f.vis),
+                        eff: self
+                            .val_eff(f.def_id.get(), || through(self.scopes, &module_eff, &f.vis)),
                     };
                     self.check_signature(&owner, &f.args, &f.rtype, &f.genargs);
                 }
                 Globals::NovelScene(s) => {
                     let owner = Owner {
                         name: &s.id,
-                        eff: through(self.scopes, &module_eff, &s.vis),
+                        eff: self
+                            .val_eff(s.def_id.get(), || through(self.scopes, &module_eff, &s.vis)),
                     };
                     self.check_signature::<biwac_span::LocalGenDefId>(
                         &owner, &s.args, &s.rtype, &None,

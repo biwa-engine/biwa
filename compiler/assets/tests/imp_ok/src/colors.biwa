@@ -1,0 +1,13 @@
+pub fn red_value() -> Int {
+  255
+}
+
+// pub(package) なので、ルートの `pub import colors::*;` では pub(package) で再 export される。
+pub(package) fn dim() -> Int {
+  1
+}
+
+// private なので、ルートの glob からは見えず、取り込まれない。
+fn hidden() -> Int {
+  0
+}

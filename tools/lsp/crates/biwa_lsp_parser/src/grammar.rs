@@ -141,11 +141,12 @@ fn parse_mod_decl(p: &mut Parser) {
 
 fn parse_import_decl(p: &mut Parser) {
     p.start_node(SyntaxKind::ImportDecl);
-    // `pub import` (再 export) はまだ無い。
-    reject_visibility(p, "an import (`pub import` is not supported yet)");
+    // 可視性を書けば re-export になる (`docs/useful-import-patterns-impl-status.md`)。
+    parse_opt_visibility(p);
     p.skip_trivia();
     p.expect(SyntaxKind::KwImport);
-    parse_identifier_path(p);
+    // 最後に `::*` (glob) を書ける。`*` は IdentPath ノードの中の `Star` トークンになる。
+    parse_path(p, true);
     // optional `as identifier`
     if p.at(SyntaxKind::KwAs) {
         p.skip_trivia();
@@ -861,6 +862,22 @@ fn parse_generics_arg_list(p: &mut Parser) {
 // ── identifier path ──────────────────────────────────────────────────────────
 
 fn parse_identifier_path(p: &mut Parser) {
+    parse_path(p, false);
+}
+
+/// `::` の直後が `*` (glob) なら読んで `true`。`allow_glob` でなければ読まない。
+fn eat_glob(p: &mut Parser, allow_glob: bool) -> bool {
+    if allow_glob && p.at(SyntaxKind::Star) {
+        p.skip_trivia();
+        p.bump(); // *
+        true
+    } else {
+        false
+    }
+}
+
+/// パス。`allow_glob` なら最後に `::*` を書ける (import だけ)。
+fn parse_path(p: &mut Parser, allow_glob: bool) {
     p.start_node(SyntaxKind::IdentPath);
     p.skip_trivia();
     // optional `package::`
@@ -868,14 +885,22 @@ fn parse_identifier_path(p: &mut Parser) {
         p.skip_trivia();
         p.bump();
         p.expect(SyntaxKind::ColonColon);
+        if eat_glob(p, allow_glob) {
+            p.finish_node();
+            return;
+        }
         p.skip_trivia();
         p.expect(SyntaxKind::Ident);
     } else if p.current_non_trivia() == SyntaxKind::KwSuper {
-        // `super::` (`super::super::..`)。後には必ず識別子が来る。
+        // `super::` (`super::super::..`)。後には必ず識別子 (import なら `*` でもよい) が来る。
         while p.current_non_trivia() == SyntaxKind::KwSuper {
             p.skip_trivia();
             p.bump();
             p.expect(SyntaxKind::ColonColon);
+        }
+        if eat_glob(p, allow_glob) {
+            p.finish_node();
+            return;
         }
         p.skip_trivia();
         p.expect(SyntaxKind::Ident);
@@ -901,6 +926,9 @@ fn parse_identifier_path(p: &mut Parser) {
     while p.at(SyntaxKind::ColonColon) {
         p.skip_trivia();
         p.bump(); // ::
+        if eat_glob(p, allow_glob) {
+            break;
+        }
         p.skip_trivia();
         p.expect(SyntaxKind::Ident);
     }
