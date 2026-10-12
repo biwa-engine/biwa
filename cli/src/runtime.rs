@@ -181,21 +181,54 @@ fn symlink_dir(_target: &Path, _link: &Path) -> Result<()> {
     bail!("this platform does not support symbolic links, which `biwa dev` needs for `assets/`")
 }
 
-fn npm_install(runtime_dir: &Path) -> Result<()> {
-    println!("Installing engine dependencies (npm install)");
+/// `dir` で `npm install` する。
+pub fn npm_install(dir: &Path) -> Result<()> {
+    println!("Installing dependencies in {} (npm install)", dir.display());
 
-    let status = std::process::Command::new("npm")
+    let status = std::process::Command::new(NPM)
         .arg("install")
-        .current_dir(runtime_dir)
+        .current_dir(dir)
         .status()
         .context("failed to run `npm`; Biwa requires Node.js (with npm) to be installed")?;
 
     if !status.success() {
-        bail!("`npm install` failed in {}", runtime_dir.display());
+        bail!("`npm install` failed in {}", dir.display());
     }
 
     Ok(())
 }
+
+/// npm の実行ファイル名。
+///
+/// Windows の npm はバッチファイル (`npm.cmd`) で、
+/// `Command` は拡張子 `.exe` しか補わないので名前を書き分ける。
+#[cfg(windows)]
+const NPM: &str = "npm.cmd";
+#[cfg(not(windows))]
+const NPM: &str = "npm";
+
+/// `node_modules` に入った Node.js 製のコマンドを、`node <スクリプト>` の形で用意する。
+///
+/// `node_modules/.bin/` の中身は Unix ではシェルスクリプト、Windows では `.cmd` で、
+/// OS ごとに呼び方が変わる。パッケージの実体 (JS) を node に渡せばどこでも同じになる。
+pub fn node_script(dir: &Path, script: &str) -> Result<std::process::Command> {
+    let path = dir.join("node_modules").join(script);
+
+    if !path.is_file() {
+        bail!(
+            "{} is not installed (try removing {} and running again)",
+            path.display(),
+            dir.join("node_modules").display()
+        );
+    }
+
+    let mut command = std::process::Command::new("node");
+    command.arg(path).current_dir(dir);
+    Ok(command)
+}
+
+/// Vite の CLI の実体 (`node_modules/` からの相対)。
+const VITE_SCRIPT: &str = "vite/bin/vite.js";
 
 /// コンパイル結果をエンジンから見える場所へ移し、エントリポイントのスタブを書く。
 ///
@@ -409,19 +442,7 @@ export default backend;
 
 /// Vite の開発サーバを起動する。
 pub fn spawn_vite(project: &Project, port: Option<u16>) -> Result<std::process::Child> {
-    let runtime_dir = project.runtime_dir();
-    let vite_bin = runtime_dir.join("node_modules").join(".bin").join("vite");
-
-    if !vite_bin.exists() {
-        bail!(
-            "vite is not installed at {} (try removing {} and running again)",
-            vite_bin.display(),
-            runtime_dir.display()
-        );
-    }
-
-    let mut command = std::process::Command::new(vite_bin);
-    command.current_dir(&runtime_dir);
+    let mut command = node_script(&project.runtime_dir(), VITE_SCRIPT)?;
     if let Some(port) = port {
         command
             .arg("--port")
@@ -431,7 +452,83 @@ pub fn spawn_vite(project: &Project, port: Option<u16>) -> Result<std::process::
 
     command
         .spawn()
-        .context("failed to start the vite dev server")
+        .context("failed to start the vite dev server (is Node.js installed?)")
+}
+
+/// Vite で静的ビルドし、`out_dir` に書き出す。
+///
+/// `base` を `./` にして、出力をどこに置いても (Web のサブディレクトリでも、
+/// デスクトップの WebView でも) 相対パスで解決されるようにする。
+/// 中身は丸ごと作り直す。
+pub fn vite_build(project: &Project, out_dir: &Path) -> Result<()> {
+    let status = node_script(&project.runtime_dir(), VITE_SCRIPT)?
+        .arg("build")
+        .arg("--base")
+        .arg("./")
+        .arg("--outDir")
+        .arg(out_dir)
+        .arg("--emptyOutDir")
+        .status()
+        .context("failed to run `vite build` (is Node.js installed?)")?;
+
+    if !status.success() {
+        bail!("`vite build` failed");
+    }
+
+    Ok(())
+}
+
+/// パッケージの `assets/` を、静的ビルドの出力 (`<out_dir>/assets`) へコピーする。
+///
+/// 開発時はリンク (`link_assets`) だが、配布物は自己完結していなければならない。
+/// Vite が `public/` の中のリンクをどう扱ったか (辿ってコピーしたか、
+/// リンクのまま置いたか) に依らないよう、出力側を消してから自分でコピーし直す。
+pub fn copy_assets(project: &Project, out_dir: &Path) -> Result<()> {
+    let dst = out_dir.join(crate::ASSETS_DIRECTORY_NAME);
+
+    match std::fs::symlink_metadata(&dst) {
+        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(&dst),
+        Ok(_) => std::fs::remove_file(&dst),
+        Err(_) => Ok(()),
+    }
+    .with_context(|| format!("failed to remove {}", dst.display()))?;
+
+    let src = project.assets_dir();
+    if src.is_dir() {
+        copy_dir(&src, &dst)?;
+    }
+
+    Ok(())
+}
+
+/// ディレクトリを再帰的にコピーする。リンクは辿る。
+pub fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst).with_context(|| format!("failed to create {}", dst.display()))?;
+
+    for entry in
+        std::fs::read_dir(src).with_context(|| format!("failed to read {}", src.display()))?
+    {
+        let path = entry?.path();
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        let target = dst.join(name);
+
+        if path.is_dir() {
+            copy_dir(&path, &target)?;
+        } else {
+            std::fs::copy(&path, &target).with_context(|| {
+                format!("failed to copy {} to {}", path.display(), target.display())
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
+/// wasm の生成物 (エンジンに渡したもの) の場所。
+pub fn placed_wasm(project: &Project) -> PathBuf {
+    project.runtime_dir().join(GAME_DIR).join(WASM_FILE)
 }
 
 /// 開発サーバが監視するディレクトリ。

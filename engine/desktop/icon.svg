@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- 仮のアイコン。ゲームごとのアイコンは `biwa build` で差し替えられるようにする予定。 -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#5b3a8c"/>
+  <circle cx="512" cy="560" r="250" fill="#f3e9d2"/>
+  <rect x="482" y="170" width="60" height="200" rx="30" fill="#f3e9d2"/>
+  <circle cx="512" cy="560" r="80" fill="#5b3a8c"/>
+</svg>

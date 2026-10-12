@@ -163,13 +163,16 @@ function createHandlers(): Record<string, SyscallHandler> {
  * 返る Promise はゲームが最後まで進んだときに解決する。
  */
 export function runWasm(url: string): Promise<void> {
-  if (
-    typeof SharedArrayBuffer === "undefined" ||
-    !globalThis.crossOriginIsolated
-  ) {
+  // 要るのは `SharedArrayBuffer` そのものなので、`crossOriginIsolated` ではなくこちらを見る。
+  // ブラウザは cross-origin isolated でないページから `SharedArrayBuffer` を隠すので、
+  // ふつうは同じ判定になる。違うのはデスクトップ版の WebView で、
+  // Linux (WebKitGTK) では Tauri の独自スキーム (`tauri://`) が isolated と見なされないまま、
+  // シェルが有効にした `SharedArrayBuffer` は使える (`engine/desktop`)。
+  if (typeof SharedArrayBuffer === "undefined") {
     return Promise.reject(
       new Error(
-        "[biwa] this page is not cross-origin isolated, so the wasm runtime cannot block on syscalls. " +
+        "[biwa] SharedArrayBuffer is unavailable (the page is not cross-origin isolated), " +
+        "so the wasm runtime cannot block on syscalls. " +
         "The server must send `Cross-Origin-Opener-Policy: same-origin` and " +
         "`Cross-Origin-Embedder-Policy: require-corp`.",
       ),

@@ -27,6 +27,11 @@ export default defineConfig({
       { find: /^@biwa\/engine\/(.*)$/, replacement: `${engineDir}/$1` },
     ],
   },
+  build: {
+    // 既定の `assets` は、パッケージの `assets/` を公開する位置 (`<base>assets/`) とぶつかる。
+    // Vite が出すもの (JS・wasm・Worker) はゲームのアセットと混ざらない名前の下に置く。
+    assetsDir: "_biwa",
+  },
   server: {
     open: false,
     headers: CROSS_ORIGIN_ISOLATION,

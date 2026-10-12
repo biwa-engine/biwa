@@ -5,6 +5,8 @@
 //! コンパイラ biwac はライブラリとして直接呼ぶ (`biwac` コマンドは経由しない)。
 
 mod assets;
+mod build;
+mod desktop;
 mod dev;
 mod project;
 mod publish;
@@ -14,6 +16,12 @@ use clap::{Parser, Subcommand};
 
 /// エンジンを展開するディレクトリ。Vite のルートでもある。
 pub const RUNTIME_DIRECTORY_NAME: &str = ".biwa_runtime";
+
+/// デスクトップ版のシェル (Tauri のプロジェクト) を展開するディレクトリ。
+pub const DESKTOP_DIRECTORY_NAME: &str = ".biwa_desktop";
+
+/// `biwa build` の出力先。
+pub const DIST_DIRECTORY_NAME: &str = "dist";
 
 /// アセットを置くディレクトリ。パッケージ直下、`src/` の兄弟である。
 ///
@@ -33,6 +41,9 @@ enum Command {
     /// 開発サーバを起動する
     Dev(dev::DevArgs),
 
+    /// 配布物をビルドする (Web の静的ファイル、またはデスクトップアプリ)
+    Build(build::BuildArgs),
+
     /// パッケージを Biwa Package Hub に公開する
     Publish(publish::PublishArgs),
 }
@@ -42,6 +53,7 @@ fn main() {
 
     let result = match cli.command {
         Command::Dev(args) => dev::run(args),
+        Command::Build(args) => build::run(args),
         Command::Publish(args) => publish::run(args),
     };
 

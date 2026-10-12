@@ -24,6 +24,17 @@ use rust_embed::RustEmbed;
 #[exclude = "CLAUDE.md"]
 pub struct Engine;
 
+/// デスクトップ版のシェル (Tauri v2 のプロジェクト) 一式。
+///
+/// ゲームに依らない共通の殻で、ゲームごとの値はビルド時に外から与える (`desktop.rs`)。
+#[derive(RustEmbed)]
+#[folder = "../engine/desktop"]
+#[exclude = "node_modules/*"]
+#[exclude = "src-tauri/target/*"]
+#[exclude = "src-tauri/gen/*"]
+#[exclude = "icon.svg"]
+pub struct Desktop;
+
 /// 標準ライブラリ `std` のソース。
 #[derive(RustEmbed)]
 #[folder = "../library/std"]
