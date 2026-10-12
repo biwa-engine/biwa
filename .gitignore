@@ -5,6 +5,7 @@
 **/.biwa_build
 **/.biwa_runtime
 **/.biwa_desktop
+**/dist
 
 # Tauri (engine/desktop) が生成するもの
 engine/desktop/src-tauri/gen
