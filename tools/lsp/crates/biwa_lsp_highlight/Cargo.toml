@@ -6,4 +6,6 @@ edition = "2024"
 [dependencies]
 biwa_lsp_parser = { path = "../biwa_lsp_parser" }
 biwa_lsp_lexer = { path = "../biwa_lsp_lexer" }
+# 改行の正規化 (`normalize_newlines`) を実コンパイラと共有するため。
+biwac_base = { path = "../../../../compiler/src/biwac_base" }
 rowan = "0.15"
