@@ -5,6 +5,8 @@
 Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン・標準ライブラリ) は
 すべてこのバイナリが持っている。利用者に用意させるのは Node.js だけで、
 `biwa dev` と打てばブラウザで動くところまで行けることを目標とする。
+(デスクトップ版のビルド `biwa build --platform desktop` だけは、
+加えて Rust と OS ごとのビルド環境が要る。後述)
 
 コンパイラ biwac は**ライブラリとして**呼ぶ (`biwac_driver::compile`)。
 `biwac` コマンドを起動することはない。
@@ -45,6 +47,75 @@ Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン�
 | `--port <PORT>`              | 開発サーバのポート                          |
 | `--target <TARGET>`          | コード生成のターゲット (既定: `wasm`)       |
 
+### `biwa build`
+
+配布物をビルドする。パッケージの探し方は `biwa dev` と同じ。
+
+```
+biwa build                       # → <project>/dist/web/
+biwa build --platform desktop    # → <project>/dist/desktop/
+```
+
+中身はどの配布形態でも同じ Web の静的ビルド (`vite build`) で、
+デスクトップ版はそれを OS の WebView で表示するアプリに包む。
+コード生成のターゲットは `wasm` に固定している。
+
+やることは順に:
+
+1. **同梱物を揃える** — `biwa dev` の 1. と同じ (std とエンジンの展開)。
+   ただし `assets/` のリンクは張らない (5. でコピーする)。
+2. **ビルドする** / **生成物をエンジンに渡す** — `biwa dev` の 2.〜3. と同じ。
+3. **静的ビルドする** — `.biwa_runtime/` で `vite build --base ./` を走らせる。
+   - `base` が `./` なので、出力はどこに置いても動く
+     (Web のサブディレクトリでも、デスクトップの WebView の独自スキームでも)。
+   - Vite が出すもの (JS・wasm・Worker) は `_biwa/` に入る
+     (`engine/nodejs/vite.config.ts` の `build.assetsDir`)。
+     既定の `assets/` だと、パッケージの `assets/` を公開する位置とぶつかるため。
+4. **アセットをコピーする** — `assets/` を出力の `assets/` へ丸ごとコピーする。
+   配布物は自己完結していなければならないので、リンクにはしない。
+5. **(`--platform desktop` のみ) アプリに包む** — 下記。
+
+`--platform web` の出力 (`dist/web/`) は静的ファイルなので、そのまま HTTP で配信できる。
+ただし wasm の実行に `SharedArrayBuffer` が要るので、配信側で
+`Cross-Origin-Opener-Policy: same-origin` と
+`Cross-Origin-Embedder-Policy: require-corp` を付けること (`file://` で開いても動かない)。
+
+#### デスクトップ版 (`--platform desktop`)
+
+デスクトップ向けのエンジン実装は今後増えうるが、当面 `desktop` は
+Tauri v2 のシェル (`engine/desktop-tauri/`) を使う。
+シェルはゲームに依らない共通の Tauri プロジェクトで、CLI に同梱されている。
+
+1. シェルを `<project>/.biwa_desktop_tauri/` に展開し、初回だけ `npm install` する
+   (Tauri の CLI が入る)。同梱物の内容が変わったときだけ展開し直す
+   (`.biwa-desktop-stamp` で判定)。
+2. 静的ビルド (上の 4.〜5.) を `.biwa_desktop_tauri/frontend/` に作り、
+   WebView の検証ページ (`__biwa_probe/`) とゲームの wasm の写しを足す。
+3. ゲームごとの値 (名前・版・識別子 `dev.biwa.game.<name>`・2. の場所) を
+   `.biwa_desktop_tauri/biwa.tauri.conf.json` に書き、`tauri build --config` で重ねてビルドする。
+   初回はシェルの Rust 側のビルドに数分かかる (2 回目以降は 1 分ほど)。
+4. 出来たものを `dist/desktop/` に集める。
+
+| OS      | `dist/desktop/` に出るもの                         |
+| ------- | -------------------------------------------------- |
+| Linux   | 実行ファイル, `.deb`, `.rpm`, `.AppImage`          |
+| macOS   | 実行ファイル, `.app`, `.dmg`                       |
+| Windows | `.exe` (実行ファイル), `-setup.exe` (NSIS), `.msi` |
+
+Tauri はクロスコンパイルをほぼ支援しないので、**各 OS のアプリはその OS の上でビルドする**。
+Node.js に加えて Rust と、OS ごとのビルド環境 (Linux なら WebKitGTK の開発パッケージなど) が要る。
+準備の詳細、アプリの起動オプション (`--probe` / `--localhost`)、
+各 OS の WebView での検証状況は [`docs/desktop-build.md`](../docs/desktop-build.md) にある。
+
+オプション:
+
+| オプション                   | 意味                                                                                                      |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `-p`, `--package-path <DIR>` | 対象パッケージ (既定: カレントディレクトリ)                                                               |
+| `-r`, `--rebuild`            | キャッシュを無視して最初から建て直す                                                                      |
+| `--platform <PLATFORM>`      | 配布形態。`web` (既定) か `desktop`                                                                       |
+| `--bundles <LIST>`           | デスクトップ版で作るインストーラ (Tauri の bundle target、カンマ区切り。既定はその OS で作れるものすべて) |
+
 ### `biwa publish`
 
 パッケージを Biwa Package Hub に公開する。対話的に確認を挟みながら進む。
@@ -79,11 +150,11 @@ biwa publish --commit <commit-hash>
 
 オプション:
 
-| オプション                   | 意味                                                |
-| ----------------------------- | --------------------------------------------------- |
-| `-p`, `--package-path <DIR>`  | 対象パッケージ (既定: カレントディレクトリ)          |
-| `--update`                    | 新規登録ではなく、既存パッケージへのバージョン追加   |
-| `--commit <HASH>`             | 公開するコミット (省略時は `HEAD` を使ってよいか確認)|
+| オプション                   | 意味                                                  |
+| ---------------------------- | ----------------------------------------------------- |
+| `-p`, `--package-path <DIR>` | 対象パッケージ (既定: カレントディレクトリ)           |
+| `--update`                   | 新規登録ではなく、既存パッケージへのバージョン追加    |
+| `--commit <HASH>`            | 公開するコミット (省略時は `HEAD` を使ってよいか確認) |
 
 `--update` を付けると、git remote の選択も新規登録もスキップし、
 「hub に既に登録されているか」だけを確認してバージョンの公開に進む。
@@ -135,16 +206,23 @@ repository はパッケージに 1 つしか持てず、hub 側にもそれを�
     wasm/<pkg>.wasm                ← biwac の出力 (--target wasm)
     typescript/{<pkg>.ts, std.ts}  ← biwac の出力 (--target typescript)
   .biwa_runtime/                   ← エンジン (Vite プロジェクト) の展開先
-    public/assets → ../../assets   ← 上の assets/ へのシンボリックリンク
+    public/assets → ../../assets   ← 上の assets/ へのシンボリックリンク (biwa dev)
     src/engine/{vm,api}/*.ts       ← kernel と syscall の実装
     src/game/{game.wasm, entry.ts} ← 配られた生成物 (typescript なら *.ts)
+  .biwa_desktop_tauri/             ← デスクトップ版のシェル (Tauri) の展開先 (biwa build --platform desktop)
+    frontend/                      ← アプリに入れる静的ビルド
+    src-tauri/target/              ← シェルの Rust のビルド (約 1 GB)
+  dist/
+    web/                           ← biwa build の出力
+      index.html, _biwa/, assets/
+    desktop/                       ← biwa build --platform desktop の出力
 ```
 
 `src/game/` には**今のターゲットの生成物だけ**が残る。
 ターゲットを切り替えたときに古いほうが型検査に混ざると、
 どちらが動いているのか分からなくなるためである。
 
-`.biwa_build/` も `.biwa_runtime/` も生成物なので、消してよい。
+`.biwa_build/`・`.biwa_runtime/`・`.biwa_desktop_tauri/`・`dist/` はどれも生成物なので、消してよい。
 
 ## アセット
 
@@ -164,6 +242,10 @@ assets/bg/room.png   に置いたものは   create_object("bg/room.png", 0, ...
 
 コピーではなくリンクにしているので、`assets/` にファイルを足しても
 `biwa dev` を建て直す必要はない。監視の対象にもしていない。
+(Windows ではリンクの作成に開発者モードか管理者権限が要る)
+
+`biwa build` はリンクを使わず、出力の `assets/` へコピーする。
+出力の中での位置は同じ `<base>assets/<path>` なので、エンジン側の解決は変わらない。
 
 ## エンジンとの規約
 
@@ -220,21 +302,24 @@ std の native TypeScript がエンジンを参照するときは
 
 ## 同梱物の扱い
 
-エンジンと std は [rust-embed](https://docs.rs/rust-embed) でバイナリに同梱する。
+エンジン (`engine/nodejs/`)・デスクトップ版のシェル (`engine/desktop-tauri/`)・std は
+[rust-embed](https://docs.rs/rust-embed) でバイナリに同梱する (`src/assets.rs`)。
+`node_modules/` やビルドの中間物 (`src-tauri/target/` など) は除く。
 
 デバッグビルドでは実行時にリポジトリ内のファイルを直接読むため、
-`engine/nodejs/` や `library/std/` を編集すればビルドし直さずに反映される。
+`engine/nodejs/`・`engine/desktop-tauri/`・`library/std/` を編集すればビルドし直さずに反映される。
 リリースビルドではバイナリに焼き込まれる。
 
 ## 今回の実装対象外
 
 - `biwa new <package>`
   `<package>/biwa-package.json` と `<package>/src/main.biwa` を作る。
-- `biwa build`
-  配布用にゲームを 1 つのアプリケーションとして出力する。
+- `biwa build` の残り
+  ゲームごとのアイコン・ウィンドウの設定、macOS の署名・公証、Windows のコード署名、
+  モバイル向けの出力 ([`docs/desktop-build.md`](../docs/desktop-build.md) §5)。
 - アセットの検査と選別
   将来はコンパイラがパッケージ内のパス文字列を巡回して `assets/` 以下の実在を検査し、
   必要なものの一覧を `.biwa_build/` に `.biwaassets` として吐く。
   CLI はそれを読み、`biwa dev` なら要るものだけをリンクし、
-  `biwa build` ならコピーすることになる。
-  今は検査をせず、`assets/` を丸ごとリンクしているだけである。
+  `biwa build` なら要るものだけをコピーすることになる。
+  今は検査をせず、`assets/` を丸ごとリンク (`biwa build` ではコピー) しているだけである。
