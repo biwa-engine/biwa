@@ -167,7 +167,7 @@ export function runWasm(url: string): Promise<void> {
   // ブラウザは cross-origin isolated でないページから `SharedArrayBuffer` を隠すので、
   // ふつうは同じ判定になる。違うのはデスクトップ版の WebView で、
   // Linux (WebKitGTK) では Tauri の独自スキーム (`tauri://`) が isolated と見なされないまま、
-  // シェルが有効にした `SharedArrayBuffer` は使える (`engine/desktop`)。
+  // シェルが有効にした `SharedArrayBuffer` は使える (`engine/desktop-tauri`)。
   if (typeof SharedArrayBuffer === "undefined") {
     return Promise.reject(
       new Error(

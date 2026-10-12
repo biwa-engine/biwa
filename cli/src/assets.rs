@@ -26,14 +26,14 @@ pub struct Engine;
 
 /// デスクトップ版のシェル (Tauri v2 のプロジェクト) 一式。
 ///
-/// ゲームに依らない共通の殻で、ゲームごとの値はビルド時に外から与える (`desktop.rs`)。
+/// ゲームに依らない共通の殻で、ゲームごとの値はビルド時に外から与える (`desktop_tauri.rs`)。
 #[derive(RustEmbed)]
-#[folder = "../engine/desktop"]
+#[folder = "../engine/desktop-tauri"]
 #[exclude = "node_modules/*"]
 #[exclude = "src-tauri/target/*"]
 #[exclude = "src-tauri/gen/*"]
 #[exclude = "icon.svg"]
-pub struct Desktop;
+pub struct DesktopTauri;
 
 /// 標準ライブラリ `std` のソース。
 #[derive(RustEmbed)]

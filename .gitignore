@@ -4,11 +4,11 @@
 # biwa
 **/.biwa_build
 **/.biwa_runtime
-**/.biwa_desktop
+**/.biwa_desktop_tauri
 **/dist
 
-# Tauri (engine/desktop) が生成するもの
-engine/desktop/src-tauri/gen
+# Tauri (engine/desktop-tauri) が生成するもの
+engine/desktop-tauri/src-tauri/gen
 
 *.bak
 .env

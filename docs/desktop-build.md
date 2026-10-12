@@ -19,12 +19,14 @@ biwa build --platform desktop  → <project>/dist/desktop/   アプリとイン�
   - Vite が出すもの (JS・wasm・Worker) は `_biwa/` に置く (`engine/nodejs/vite.config.ts` の `build.assetsDir`)。
     既定の `assets/` は、パッケージの `assets/` を公開する位置と重なるため。
   - パッケージの `assets/` は出力へコピーする (開発時のようなリンクにはしない)。
-- デスクトップ版のシェルは `engine/desktop/` (Tauri v2 のプロジェクト)。
-  - ゲームに依らない共通の殻で、`biwa` に同梱され、`<project>/.biwa_desktop/` に展開される。
+- デスクトップ版のシェルは `engine/desktop-tauri/` (Tauri v2 のプロジェクト)。
+  - デスクトップ向けの実装は今後増えうるので、ディレクトリ名は実装 (Tauri) に結びつけている。
+    当面、`--platform desktop` はこれを使う。
+  - ゲームに依らない共通の殻で、`biwa` に同梱され、`<project>/.biwa_desktop_tauri/` に展開される。
   - ゲームごとの値 (名前・版・識別子 `dev.biwa.game.<name>`・静的ビルドの場所) は
-    `.biwa_desktop/biwa.tauri.conf.json` に書き出し、`tauri build --config` で重ねる。
+    `.biwa_desktop_tauri/biwa.tauri.conf.json` に書き出し、`tauri build --config` で重ねる。
   - COOP / COEP のヘッダは `tauri.conf.json` の `app.security.headers` で付けている。
-- デスクトップ版の静的ビルド (`.biwa_desktop/frontend/`) には、WebView の検証ページ
+- デスクトップ版の静的ビルド (`.biwa_desktop_tauri/frontend/`) には、WebView の検証ページ
   (`__biwa_probe/`) とゲームの wasm の写しが入る (`dist/web/` には入らない)。
 - Tauri はクロスコンパイルをほぼ支援しない。**各 OS のアプリは、その OS の上でビルドする。**
 
@@ -45,7 +47,7 @@ biwa build --platform desktop  → <project>/dist/desktop/   アプリとイン�
 - Rust (rustup)。リポジトリの `cli/` で `cargo build --release` して `cli/target/release/biwa` を作る。
 - Node.js (npm 付き)。
 - 初回の `biwa build --platform desktop` は、シェルの Rust 側のビルドに数分かかる (4 コアで約 3.5 分)。
-  2 回目以降は約 1 分。ビルドの中間物はプロジェクトごと (`.biwa_desktop/src-tauri/target/`, 約 1 GB)。
+  2 回目以降は約 1 分。ビルドの中間物はプロジェクトごと (`.biwa_desktop_tauri/src-tauri/target/`, 約 1 GB)。
 
 ### Linux (Debian / Ubuntu)
 
@@ -131,7 +133,7 @@ WebKit 系の問題が 3 つあり、どれも対処済み:
 
 1. **WebKitGTK は既定で `SharedArrayBuffer` を出さない** (HTTP で COOP / COEP を付け、`crossOriginIsolated` が true でも)。
    JavaScriptCore の実行時オプション `JSC_useSharedArrayBuffer=1` で出る。
-   シェルが起動時に環境変数として置く (`engine/desktop/src-tauri/src/main.rs`。WebView のプロセスが引き継ぐ)。
+   シェルが起動時に環境変数として置く (`engine/desktop-tauri/src-tauri/src/main.rs`。WebView のプロセスが引き継ぐ)。
 2. **WebKitGTK では、`tauri://` に COOP / COEP を付けても `crossOriginIsolated` が false のまま**
    (`http://localhost` なら true)。
    それでも 1. の `SharedArrayBuffer` は作れて Worker にも渡せるので、
@@ -157,7 +159,7 @@ WebKit 系の問題が 3 つあり、どれも対処済み:
 ## 5. 残っていること
 
 - ゲームごとのアイコン・ウィンドウの大きさ・タイトルを `biwa-package.json` などから与える。
-  - アイコンはいま `engine/desktop/icon.svg` (仮) から作ったもの。作り直すには
+  - アイコンはいま `engine/desktop-tauri/icon.svg` (仮) から作ったもの。作り直すには
     `npx tauri icon icon.svg -o src-tauri/icons` を実行し、Android / iOS / Store 用は消す。
 - macOS の署名・公証、Windows のコード署名。
 - 検証が済んだら `devtools` feature と検証ページを配布物から外す (またはオプションにする)。

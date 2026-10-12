@@ -1,7 +1,7 @@
-//! デスクトップ版: Web の静的ビルドを Tauri v2 のシェルに入れて、OS ごとのアプリにする。
+//! デスクトップ版 (Tauri): Web の静的ビルドを Tauri v2 のシェルに入れて、OS ごとのアプリにする。
 //!
-//! シェル (`engine/desktop`) はゲームに依らない共通の Tauri プロジェクトで、
-//! `<project>/.biwa_desktop/` に展開して使う。ゲームごとの値 (名前・識別子・版・
+//! シェル (`engine/desktop-tauri`) はゲームに依らない共通の Tauri プロジェクトで、
+//! `<project>/.biwa_desktop_tauri/` に展開して使う。ゲームごとの値 (名前・識別子・版・
 //! 静的ビルドの場所) は `tauri build --config` で外から重ねる。
 //!
 //! Tauri はクロスコンパイルをほぼ支援しないので、各 OS のアプリはその OS の上でビルドする。
@@ -10,15 +10,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::assets::{self, Desktop};
+use crate::assets::{self, DesktopTauri};
 use crate::project::Project;
 use crate::runtime;
 
 /// シェルを展開したときの同一性を記録するファイル。
 const DESKTOP_STAMP_FILE: &str = ".biwa-desktop-stamp";
-/// 静的ビルドを置くディレクトリ (`.biwa_desktop/` からの相対)。
+/// 静的ビルドを置くディレクトリ (`.biwa_desktop_tauri/` からの相対)。
 const FRONTEND_DIR: &str = "frontend";
-/// ゲームごとの設定を書き出すファイル (`.biwa_desktop/` からの相対)。
+/// ゲームごとの設定を書き出すファイル (`.biwa_desktop_tauri/` からの相対)。
 const CONFIG_FILE: &str = "biwa.tauri.conf.json";
 /// 検証ページの置き場所 (シェルからの相対と、静的ビルドの中での位置)。
 const PROBE_SRC_DIR: &str = "probe";
@@ -29,17 +29,17 @@ const TAURI_SCRIPT: &str = "@tauri-apps/cli/tauri.js";
 const TAURI_DIR: &str = "src-tauri";
 const SHELL_BINARY: &str = "biwa-desktop";
 
-/// シェルを `.biwa_desktop/` に展開し、必要なら Tauri の CLI をインストールする。
+/// シェルを `.biwa_desktop_tauri/` に展開し、必要なら Tauri の CLI をインストールする。
 pub fn ensure_shell(project: &Project) -> Result<()> {
-    let dir = project.desktop_dir();
+    let dir = project.desktop_tauri_dir();
     let stamp_path = dir.join(DESKTOP_STAMP_FILE);
-    let stamp = assets::stamp::<Desktop>();
+    let stamp = assets::stamp::<DesktopTauri>();
 
     if std::fs::read_to_string(&stamp_path).ok().as_deref() != Some(stamp.as_str()) {
         println!("Placing desktop shell into {}", dir.display());
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("failed to create {}", dir.display()))?;
-        assets::extract::<Desktop>(&dir)?;
+        assets::extract::<DesktopTauri>(&dir)?;
         std::fs::write(&stamp_path, &stamp)
             .with_context(|| format!("failed to write {}", stamp_path.display()))?;
     }
@@ -55,7 +55,7 @@ pub fn ensure_shell(project: &Project) -> Result<()> {
 ///
 /// `dist/web/` とは分ける。検証ページなど、デスクトップ版にだけ入れるものがあるため。
 pub fn frontend_dir(project: &Project) -> PathBuf {
-    project.desktop_dir().join(FRONTEND_DIR)
+    project.desktop_tauri_dir().join(FRONTEND_DIR)
 }
 
 /// 静的ビルドに WebView の検証ページを足す。
@@ -64,7 +64,7 @@ pub fn frontend_dir(project: &Project) -> PathBuf {
 /// 実際のゲームの wasm を WebView がコンパイルできるかも見るので、それも添える。
 pub fn add_probe(project: &Project, frontend_dir: &Path) -> Result<()> {
     let dst = frontend_dir.join(PROBE_DST_DIR);
-    runtime::copy_dir(&project.desktop_dir().join(PROBE_SRC_DIR), &dst)?;
+    runtime::copy_dir(&project.desktop_tauri_dir().join(PROBE_SRC_DIR), &dst)?;
 
     let wasm = runtime::placed_wasm(project);
     std::fs::copy(&wasm, dst.join("game.wasm"))
@@ -75,7 +75,7 @@ pub fn add_probe(project: &Project, frontend_dir: &Path) -> Result<()> {
 
 /// `tauri build` でアプリとインストーラを作り、`dist/desktop/` に集める。
 pub fn bundle(project: &Project, frontend_dir: &Path, bundles: &[String]) -> Result<()> {
-    let dir = project.desktop_dir();
+    let dir = project.desktop_tauri_dir();
     let config_path = dir.join(CONFIG_FILE);
     let config = serde_json::json!({
         "productName": project.name,

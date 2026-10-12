@@ -2,7 +2,8 @@
 //!
 //! どの配布形態でも中身は同じ Web の静的ビルド (Vite) である。
 //!   - `web`: それをそのまま `dist/web/` に出す。HTTP で配信する。
-//!   - `desktop`: それを Tauri のシェルに入れて、OS ごとのアプリにする (`desktop.rs`)。
+//!   - `desktop`: それを Tauri のシェルに入れて、OS ごとのアプリにする (`desktop_tauri.rs`)。
+//!     デスクトップ向けの実装は今後増えうるが、当面 `desktop` は Tauri (`engine/desktop-tauri`) を指す。
 
 use std::path::PathBuf;
 
@@ -11,7 +12,7 @@ use biwac_base::Target;
 use clap::{Args, ValueEnum};
 
 use crate::project::Project;
-use crate::{desktop, dev, runtime};
+use crate::{desktop_tauri, dev, runtime};
 
 #[derive(Debug, Args)]
 pub struct BuildArgs {
@@ -78,11 +79,11 @@ pub fn run(args: BuildArgs) -> Result<()> {
             Ok(())
         }
         Platform::Desktop => {
-            desktop::ensure_shell(&project)?;
-            let frontend_dir = desktop::frontend_dir(&project);
+            desktop_tauri::ensure_shell(&project)?;
+            let frontend_dir = desktop_tauri::frontend_dir(&project);
             build_web(&project, &frontend_dir)?;
-            desktop::add_probe(&project, &frontend_dir)?;
-            desktop::bundle(&project, &frontend_dir, &args.bundles)
+            desktop_tauri::add_probe(&project, &frontend_dir)?;
+            desktop_tauri::bundle(&project, &frontend_dir, &args.bundles)
         }
     }
 }
