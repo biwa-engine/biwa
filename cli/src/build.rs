@@ -1,9 +1,11 @@
 //! `biwa build`: 配布物のビルド。
 //!
 //! どの配布形態でも中身は同じ Web の静的ビルド (Vite) である。
-//!   - `web`: それをそのまま `dist/web/` に出す。HTTP で配信する。
-//!   - `desktop`: それを Tauri のシェルに入れて、OS ごとのアプリにする (`desktop_tauri.rs`)。
+//!   - `desktop` (既定): それを Tauri のシェルに入れて、OS ごとのアプリにする (`desktop_tauri.rs`)。
 //!     デスクトップ向けの実装は今後増えうるが、当面 `desktop` は Tauri (`engine/desktop-tauri`) を指す。
+//!   - `web`: それをそのまま `dist/web/` に出す。HTTP で配信する。
+//!
+//! 既定が `desktop` なのは、配布形態の第一の目標がデスクトップアプリだからである。
 
 use std::path::PathBuf;
 
@@ -25,7 +27,7 @@ pub struct BuildArgs {
     pub rebuild: bool,
 
     /// 配布形態
-    #[arg(long, value_enum, default_value_t = Platform::Web)]
+    #[arg(long, value_enum, default_value_t = Platform::Desktop)]
     pub platform: Platform,
 
     /// デスクトップ版で作るインストーラの種類 (Tauri の bundle target、カンマ区切り)
@@ -38,10 +40,10 @@ pub struct BuildArgs {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Platform {
-    /// ブラウザで遊ぶ静的ファイル (`dist/web/`)
-    Web,
     /// Windows / macOS / Linux のデスクトップアプリ (`dist/desktop/`)
     Desktop,
+    /// ブラウザで遊ぶ静的ファイル (`dist/web/`)
+    Web,
 }
 
 /// 配布物のコード生成ターゲット。

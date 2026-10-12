@@ -1,6 +1,6 @@
 //! Biwa のゲームをデスクトップアプリとして包む Tauri のシェル。
 //!
-//! 中身は `biwa build --platform desktop` が作った Web の静的ビルドで、
+//! 中身は `biwa build` (`--platform desktop`、既定) が作った Web の静的ビルドで、
 //! このシェルはそれを OS の WebView に表示するだけである。
 //! ゲームごとの値 (名前・識別子・静的ビルドの場所) は、
 //! ビルド時に `tauri build --config` で外から与える。

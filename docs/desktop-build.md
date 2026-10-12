@@ -10,8 +10,8 @@ Windows と macOS は未検証 (ビルドもまだ)。
 ## 1. 構成
 
 ```
-biwa build                     → <project>/dist/web/       Web の静的ビルド (どこに置いても動く相対パス)
-biwa build --platform desktop  → <project>/dist/desktop/   アプリとインストーラ
+biwa build                     → <project>/dist/desktop/   アプリとインストーラ (既定。--platform desktop と同じ)
+biwa build --platform web      → <project>/dist/web/       Web の静的ビルド (どこに置いても動く相対パス)
 ```
 
 - 中身は配布形態によらず同じ Web の静的ビルド (`vite build`) である。
@@ -32,11 +32,11 @@ biwa build --platform desktop  → <project>/dist/desktop/   アプリとイン�
 
 ### 出力 (`dist/desktop/`)
 
-| OS | 出力 | 備考 |
-| --- | --- | --- |
-| Linux | `<name>` (実行ファイル), `.deb`, `.rpm`, `.AppImage` | deb / rpm は約 5 MB (システムの WebKitGTK を使う)。AppImage は WebKitGTK を抱えるので約 80 MB |
-| macOS | `<name>` (実行ファイル), `<name>.app`, `.dmg` | 署名・公証はしていない |
-| Windows | `<name>.exe` (実行ファイル), `-setup.exe` (NSIS), `.msi` | WebView2 は Windows 10/11 に入っている前提 |
+| OS      | 出力                                                     | 備考                                                                                          |
+| ------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Linux   | `<name>` (実行ファイル), `.deb`, `.rpm`, `.AppImage`     | deb / rpm は約 5 MB (システムの WebKitGTK を使う)。AppImage は WebKitGTK を抱えるので約 80 MB |
+| macOS   | `<name>` (実行ファイル), `<name>.app`, `.dmg`            | 署名・公証はしていない                                                                        |
+| Windows | `<name>.exe` (実行ファイル), `-setup.exe` (NSIS), `.msi` | WebView2 は Windows 10/11 に入っている前提                                                    |
 
 作るインストーラは `--bundles deb,appimage` のように絞れる (Tauri の bundle target の名前)。
 
@@ -46,7 +46,7 @@ biwa build --platform desktop  → <project>/dist/desktop/   アプリとイン�
 
 - Rust (rustup)。リポジトリの `cli/` で `cargo build --release` して `cli/target/release/biwa` を作る。
 - Node.js (npm 付き)。
-- 初回の `biwa build --platform desktop` は、シェルの Rust 側のビルドに数分かかる (4 コアで約 3.5 分)。
+- 初回の `biwa build` (デスクトップ版) は、シェルの Rust 側のビルドに数分かかる (4 コアで約 3.5 分)。
   2 回目以降は約 1 分。ビルドの中間物はプロジェクトごと (`.biwa_desktop_tauri/src-tauri/target/`, 約 1 GB)。
 
 ### Linux (Debian / Ubuntu)
@@ -74,15 +74,15 @@ AppImage を作るときは、Tauri が linuxdeploy などを GitHub から取�
 
 ```sh
 cd <project>
-biwa build --platform desktop
+biwa build
 ```
 
 できたアプリで、次の 3 通りを試す。
 
-| 起動 | 何が開くか |
-| --- | --- |
-| そのまま | ゲーム |
-| `--probe` (または環境変数 `BIWA_PROBE=1`) | WebView の検証ページ (ゲームの代わり) |
+| 起動                                      | 何が開くか                                                                  |
+| ----------------------------------------- | --------------------------------------------------------------------------- |
+| そのまま                                  | ゲーム                                                                      |
+| `--probe` (または環境変数 `BIWA_PROBE=1`) | WebView の検証ページ (ゲームの代わり)                                       |
 | `--localhost` (または `BIWA_LOCALHOST=1`) | 静的ビルドを `http://localhost:<空きポート>` で配る。`--probe` と併用できる |
 
 `--localhost` は、Tauri の独自スキーム (`tauri://localhost` / `http://tauri.localhost`) で
@@ -118,14 +118,14 @@ Ctrl+Shift+I (Linux / Windows)・Cmd+Option+I (macOS) で開く
 
 ### Linux (WebKitGTK 2.52, Ubuntu 24.04)
 
-| 項目 | `tauri://` (既定) | `--localhost` |
-| --- | --- | --- |
-| WasmGC・externref (最小モジュールとゲームの wasm) | OK | OK |
-| `crossOriginIsolated` | **false** | true |
-| `SharedArrayBuffer` | OK (シェルが有効にする) | OK (同) |
-| Worker + `Atomics.wait` / `notify` | OK | OK |
-| WebGL2 | OK | OK |
-| ゲーム (タイトル → シーン、画像) | OK | OK |
+| 項目                                              | `tauri://` (既定)       | `--localhost` |
+| ------------------------------------------------- | ----------------------- | ------------- |
+| WasmGC・externref (最小モジュールとゲームの wasm) | OK                      | OK            |
+| `crossOriginIsolated`                             | **false**               | true          |
+| `SharedArrayBuffer`                               | OK (シェルが有効にする) | OK (同)       |
+| Worker + `Atomics.wait` / `notify`                | OK                      | OK            |
+| WebGL2                                            | OK                      | OK            |
+| ゲーム (タイトル → シーン、画像)                  | OK                      | OK            |
 
 (Xvfb の上での確認。GPU は無く、WebGL はソフトウェア描画)
 

@@ -5,7 +5,7 @@
 Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン・標準ライブラリ) は
 すべてこのバイナリが持っている。利用者に用意させるのは Node.js だけで、
 `biwa dev` と打てばブラウザで動くところまで行けることを目標とする。
-(デスクトップ版のビルド `biwa build --platform desktop` だけは、
+(デスクトップ版のビルド、つまり既定の `biwa build` だけは、
 加えて Rust と OS ごとのビルド環境が要る。後述)
 
 コンパイラ biwac は**ライブラリとして**呼ぶ (`biwac_driver::compile`)。
@@ -52,9 +52,11 @@ Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン�
 配布物をビルドする。パッケージの探し方は `biwa dev` と同じ。
 
 ```
-biwa build                       # → <project>/dist/web/
-biwa build --platform desktop    # → <project>/dist/desktop/
+biwa build                    # → <project>/dist/desktop/ (--platform desktop と同じ)
+biwa build --platform web     # → <project>/dist/web/
 ```
+
+既定がデスクトップ版なのは、配布形態の第一の目標がデスクトップアプリだからである。
 
 中身はどの配布形態でも同じ Web の静的ビルド (`vite build`) で、
 デスクトップ版はそれを OS の WebView で表示するアプリに包む。
@@ -113,7 +115,7 @@ Node.js に加えて Rust と、OS ごとのビルド環境 (Linux なら WebKit
 | ---------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `-p`, `--package-path <DIR>` | 対象パッケージ (既定: カレントディレクトリ)                                                               |
 | `-r`, `--rebuild`            | キャッシュを無視して最初から建て直す                                                                      |
-| `--platform <PLATFORM>`      | 配布形態。`web` (既定) か `desktop`                                                                       |
+| `--platform <PLATFORM>`      | 配布形態。`desktop` (既定) か `web`                                                                       |
 | `--bundles <LIST>`           | デスクトップ版で作るインストーラ (Tauri の bundle target、カンマ区切り。既定はその OS で作れるものすべて) |
 
 ### `biwa publish`
@@ -209,13 +211,13 @@ repository はパッケージに 1 つしか持てず、hub 側にもそれを�
     public/assets → ../../assets   ← 上の assets/ へのシンボリックリンク (biwa dev)
     src/engine/{vm,api}/*.ts       ← kernel と syscall の実装
     src/game/{game.wasm, entry.ts} ← 配られた生成物 (typescript なら *.ts)
-  .biwa_desktop_tauri/             ← デスクトップ版のシェル (Tauri) の展開先 (biwa build --platform desktop)
+  .biwa_desktop_tauri/             ← デスクトップ版のシェル (Tauri) の展開先 (biwa build)
     frontend/                      ← アプリに入れる静的ビルド
     src-tauri/target/              ← シェルの Rust のビルド (約 1 GB)
   dist/
-    web/                           ← biwa build の出力
+    desktop/                       ← biwa build (--platform desktop) の出力
+    web/                           ← biwa build --platform web の出力
       index.html, _biwa/, assets/
-    desktop/                       ← biwa build --platform desktop の出力
 ```
 
 `src/game/` には**今のターゲットの生成物だけ**が残る。
