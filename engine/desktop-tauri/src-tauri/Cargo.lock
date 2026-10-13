@@ -137,12 +137,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "biwa-desktop"
+name = "biwa-player"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
- "tauri-plugin-localhost",
+ "tiny_http",
 ]
 
 [[package]]
@@ -3165,21 +3167,6 @@ dependencies = [
  "syn 2.0.119",
  "tauri-codegen",
  "tauri-utils",
-]
-
-[[package]]
-name = "tauri-plugin-localhost"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8c9c1c5b33e5f19317f30520a9ce542e231fabc1b793da70337151dc01f3bb4"
-dependencies = [
- "http",
- "log",
- "serde",
- "serde_json",
- "tauri",
- "thiserror 2.0.21",
- "tiny_http",
 ]
 
 [[package]]

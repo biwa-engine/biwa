@@ -6,8 +6,9 @@
 
 mod assets;
 mod build;
-mod desktop_tauri;
+mod desktop;
 mod dev;
+mod player;
 mod project;
 mod publish;
 mod runtime;
@@ -16,11 +17,6 @@ use clap::{Parser, Subcommand};
 
 /// エンジンを展開するディレクトリ。Vite のルートでもある。
 pub const RUNTIME_DIRECTORY_NAME: &str = ".biwa_runtime";
-
-/// デスクトップ版のシェル (Tauri のプロジェクト、`engine/desktop-tauri`) を展開するディレクトリ。
-///
-/// デスクトップ向けの実装は今後増えうるので、名前は実装 (Tauri) に結びつける。
-pub const DESKTOP_TAURI_DIRECTORY_NAME: &str = ".biwa_desktop_tauri";
 
 /// `biwa build` の出力先。
 pub const DIST_DIRECTORY_NAME: &str = "dist";

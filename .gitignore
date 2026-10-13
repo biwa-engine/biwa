@@ -4,7 +4,6 @@
 # biwa
 **/.biwa_build
 **/.biwa_runtime
-**/.biwa_desktop_tauri
 **/dist
 
 # Tauri (engine/desktop-tauri) が生成するもの

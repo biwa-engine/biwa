@@ -1,14 +1,20 @@
 <!doctype html>
-<!-- `biwa build` (`--platform desktop`) は build.frontendDist をゲームの静的ビルドに差し替える。
-     これが表示されたら、差し替えずにシェルを直接ビルドしている。 -->
+<!-- プレイヤーの横に `game/` が無いときに出す案内。
+     ゲームのデータは `biwa build` がプレイヤーの横 (macOS は .app/Contents/Resources/) に置く。 -->
 <html>
   <head>
     <meta charset="UTF-8" />
-    <title>biwa</title>
+    <title>Biwa Player</title>
   </head>
-  <body>
+  <body style="font-family: system-ui, sans-serif; margin: 2em">
+    <h1>Biwa Player</h1>
     <p>
-      No game is bundled. Build with <code>biwa build</code>.
+      No game data was found next to this player (a <code>game/</code> directory
+      is expected).
+    </p>
+    <p>
+      Build a game with <code>biwa build</code>, or run with
+      <code>--game-dir &lt;DIR&gt;</code>.
     </p>
   </body>
 </html>

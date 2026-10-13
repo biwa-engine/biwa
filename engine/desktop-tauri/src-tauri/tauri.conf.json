@@ -1,23 +1,19 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "biwa-game",
+  "productName": "Biwa Player",
   "version": "0.1.0",
-  "identifier": "dev.biwa.game",
+  "identifier": "dev.biwa.player",
   "build": {
     "frontendDist": "../placeholder"
   },
   "app": {
     "windows": [],
     "security": {
-      "csp": null,
-      "headers": {
-        "Cross-Origin-Opener-Policy": "same-origin",
-        "Cross-Origin-Embedder-Policy": "require-corp"
-      }
+      "csp": null
     }
   },
   "bundle": {
-    "active": true,
+    "active": false,
     "targets": "all",
     "icon": [
       "icons/32x32.png",

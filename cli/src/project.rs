@@ -86,11 +86,6 @@ impl Project {
         self.root.join(crate::RUNTIME_DIRECTORY_NAME)
     }
 
-    /// デスクトップ版のシェル (Tauri) を展開する先。
-    pub fn desktop_tauri_dir(&self) -> PathBuf {
-        self.root.join(crate::DESKTOP_TAURI_DIRECTORY_NAME)
-    }
-
     /// `biwa build` の出力先 (`<root>/dist`)。
     pub fn dist_dir(&self) -> PathBuf {
         self.root.join(crate::DIST_DIRECTORY_NAME)
