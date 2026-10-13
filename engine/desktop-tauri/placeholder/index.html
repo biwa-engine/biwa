@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- プレイヤーの横に `game/` が無いときに出す案内。
+     ゲームのデータは `biwa build` がプレイヤーの横 (macOS は .app/Contents/Resources/) に置く。 -->
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Biwa Player</title>
+  </head>
+  <body style="font-family: system-ui, sans-serif; margin: 2em">
+    <h1>Biwa Player</h1>
+    <p>
+      No game data was found next to this player (a <code>game/</code> directory
+      is expected).
+    </p>
+    <p>
+      Build a game with <code>biwa build</code>, or run with
+      <code>--game-dir &lt;DIR&gt;</code>.
+    </p>
+  </body>
+</html>

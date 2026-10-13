@@ -1,0 +1,31 @@
+[package]
+name = "biwa-player"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# 置かれた場所の親に Cargo workspace があっても巻き込まれないように、単独の workspace にする。
+[workspace]
+
+[[bin]]
+name = "biwa-player"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `devtools`: 配布版でも開発者ツールを開けるようにする (WebView の検証のため)。
+# 検証が済んだら外す。
+tauri = { version = "2", features = ["devtools"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# `--localhost` で起動したときに、`game/` を http://localhost で配る (src/main.rs)。
+tiny_http = "0.12"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

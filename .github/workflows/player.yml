@@ -1,0 +1,85 @@
+# Biwa のプレイヤー (engine/desktop-tauri) を 3 OS でビルドする。
+#
+# プレイヤーはゲームに依らない汎用の実行ファイルで、`biwa build` はこれにゲームのデータを添えて
+# 配布物を組み立てる (docs/biwa-prebuilt-player.md, cli/src/player.rs)。
+# 成果物は `biwa-player-<id>` という名前で上がる。取り出したものを
+# `~/.biwa/players/<id>/` (または `biwa build --players-dir`) に置いて使う。
+name: player
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "engine/desktop-tauri/src-tauri/**"
+      - "engine/desktop-tauri/placeholder/**"
+      - ".github/workflows/player.yml"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: windows-x86_64
+            os: windows-latest
+            file: biwa-player.exe
+          - id: macos-universal
+            os: macos-latest
+            file: biwa-player
+          # glibc の古い版でも動くように、なるべく古い runner でビルドする。
+          - id: linux-x86_64
+            os: ubuntu-22.04
+            file: biwa-player
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: engine/desktop-tauri/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine/desktop-tauri/src-tauri -> target
+
+      - name: Test
+        if: runner.os != 'macOS'
+        run: cargo test --release
+
+      - name: Build (Windows / Linux)
+        if: runner.os != 'macOS'
+        shell: bash
+        run: |
+          cargo build --release
+          mkdir -p out
+          cp target/release/${{ matrix.file }} out/
+
+      # Apple Silicon と Intel の両方で動く universal バイナリにする。
+      # 署名は `biwa build` が .app を組み立てたあとに付け直すので、ここではしない。
+      - name: Build (macOS universal)
+        if: runner.os == 'macOS'
+        run: |
+          cargo test --release
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          mkdir -p out
+          lipo -create -output out/biwa-player \
+            target/aarch64-apple-darwin/release/biwa-player \
+            target/x86_64-apple-darwin/release/biwa-player
+          lipo -info out/biwa-player
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: biwa-player-${{ matrix.id }}
+          path: engine/desktop-tauri/src-tauri/out/${{ matrix.file }}
+          if-no-files-found: error

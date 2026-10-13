@@ -24,6 +24,13 @@ use rust_embed::RustEmbed;
 #[exclude = "CLAUDE.md"]
 pub struct Engine;
 
+/// WebView の検証ページ。デスクトップ版のゲームのデータに同梱する (`build.rs`)。
+///
+/// プレイヤー本体 (`engine/desktop-tauri`) は同梱しない。CI でビルドしたものを使う (`player.rs`)。
+#[derive(RustEmbed)]
+#[folder = "../engine/desktop-tauri/probe"]
+pub struct Probe;
+
 /// 標準ライブラリ `std` のソース。
 #[derive(RustEmbed)]
 #[folder = "../library/std"]

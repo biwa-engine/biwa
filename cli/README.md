@@ -5,6 +5,9 @@
 Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン・標準ライブラリ) は
 すべてこのバイナリが持っている。利用者に用意させるのは Node.js だけで、
 `biwa dev` と打てばブラウザで動くところまで行けることを目標とする。
+デスクトップ版のビルド (`biwa build`) も Rust などのビルド環境を要らない。
+OS ごとのエンジン本体 (プレイヤー) は Biwa の CI がビルドしておき、
+`biwa build` はそれにゲームのデータを添えて組み立てるだけだからである (後述)。
 
 コンパイラ biwac は**ライブラリとして**呼ぶ (`biwac_driver::compile`)。
 `biwac` コマンドを起動することはない。
@@ -45,6 +48,96 @@ Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン�
 | `--port <PORT>`              | 開発サーバのポート                          |
 | `--target <TARGET>`          | コード生成のターゲット (既定: `wasm`)       |
 
+### `biwa build`
+
+配布物をビルドする。パッケージの探し方は `biwa dev` と同じ。
+
+```
+biwa build                                  # → dist/<この OS>/ (--platform desktop と同じ)
+biwa build --platform windows,macos,linux   # → dist/windows/ dist/macos/ dist/linux/
+biwa build --platform web                   # → dist/web/
+```
+
+既定がデスクトップ版なのは、配布形態の第一の目標がデスクトップアプリだからである。
+`--platform` はカンマ区切りで複数並べられる。`desktop` は `biwa` が動いている OS を指す。
+
+中身はどの配布形態でも同じ Web の静的ビルド (`vite build`) で、
+デスクトップ版はそれを OS の WebView で表示するプレイヤーに添える。
+コード生成のターゲットは `wasm` に固定している。
+
+やることは順に:
+
+1. **(デスクトップ版のみ) プレイヤーを探す** — 時間のかかるビルドの前に、
+   指定された OS のプレイヤーが揃っているかを確かめる (下記)。
+2. **同梱物を揃える** — `biwa dev` の 1. と同じ (std とエンジンの展開)。
+   ただし `assets/` のリンクは張らない (5. でコピーする)。
+3. **ビルドする** / **生成物をエンジンに渡す** — `biwa dev` の 2.〜3. と同じ。
+4. **静的ビルドする** — `.biwa_runtime/` で `vite build --base ./` を走らせる。
+   - `base` が `./` なので、出力はどこに置いても動く
+     (Web のサブディレクトリでも、デスクトップの WebView の独自スキームでも)。
+   - Vite が出すもの (JS・wasm・Worker) は `_biwa/` に入る
+     (`engine/nodejs/vite.config.ts` の `build.assetsDir`)。
+     既定の `assets/` だと、パッケージの `assets/` を公開する位置とぶつかるため。
+5. **アセットをコピーする** — `assets/` を出力の `assets/` へ丸ごとコピーする。
+   配布物は自己完結していなければならないので、リンクにはしない。
+6. **(デスクトップ版のみ) 組み立てる** — 下記。
+
+`--platform web` の出力 (`dist/web/`) は静的ファイルなので、そのまま HTTP で配信できる。
+ただし wasm の実行に `SharedArrayBuffer` が要るので、配信側で
+`Cross-Origin-Opener-Policy: same-origin` と
+`Cross-Origin-Embedder-Policy: require-corp` を付けること (`file://` で開いても動かない)。
+
+#### デスクトップ版 (`windows` / `macos` / `linux`)
+
+エンジン本体は、ゲームに依らない汎用の実行ファイル「プレイヤー」である
+(`engine/desktop-tauri/`。Tauri v2 の WebView)。
+プレイヤーは実行ファイルの横の `game/` を読んで動くので、ゲームごとにビルドし直す必要が無い。
+Biwa の CI (`.github/workflows/player.yml`) が OS ごとに 1 度だけビルドし、
+`biwa build` はそれにゲームのデータを添えて組み立てるだけである。
+**コンパイルが走らないので、どの OS の上でも全 OS 向けの配布物を作れる。**
+デスクトップ向けの実装は今後増えうるが、当面はこの Tauri のプレイヤーを使う。
+
+1. 静的ビルド (上の 4.〜5.) を `.biwa_runtime/dist-game/` に作り、
+   プレイヤーが読むゲームの情報 `biwa-game.json` (タイトル・版) と、
+   WebView の検証ページ (`__biwa_probe/`、ゲームの wasm の写し付き) を足す。これが `game/` になる。
+2. OS ごとに組み立てて固める。
+
+| OS      | `dist/<os>/` にできるもの                                                            |
+| ------- | ------------------------------------------------------------------------------------ |
+| Windows | `<name>/<name>.exe` + `<name>/game/`、それを固めた `<name>-windows-x86_64.zip`       |
+| macOS   | `<name>.app` (`Contents/Resources/game/`)、それを固めた `<name>-macos-universal.zip` |
+| Linux   | `<name>/<name>` + `<name>/game/`、それを固めた `<name>-linux-x86_64.tar.gz`          |
+
+- macOS の .app はデータを足すと署名が合わなくなるので、組み立てたあとで
+  [`apple-codesign`](https://crates.io/crates/apple-codesign) (純 Rust) で ad-hoc 署名し直す。
+  どの OS の上でもできる。Apple Silicon で起動するのに最低限要る。
+- zip / tar.gz に固めるのは、実行ビットと .app の構造を確実に残すためである。
+
+プレイヤーは次の順に探す。CI の成果物 `biwa-player-<id>` を取り出して `<players>/<id>/` に置く
+(将来は `biwa` に同梱するか、初回にダウンロードする)。
+
+1. `--players-dir <DIR>`
+2. 環境変数 `BIWA_PLAYERS_DIR`
+3. `~/.biwa/players`
+
+```
+<players>/windows-x86_64/biwa-player.exe
+<players>/macos-universal/biwa-player
+<players>/linux-x86_64/biwa-player
+```
+
+アプリの起動オプション (`--probe` / `--localhost`)、遊ぶ側に要るもの、
+各 OS の WebView での検証状況は [`docs/desktop-build.md`](../docs/desktop-build.md) にある。
+
+オプション:
+
+| オプション                   | 意味                                                                                   |
+| ---------------------------- | -------------------------------------------------------------------------------------- |
+| `-p`, `--package-path <DIR>` | 対象パッケージ (既定: カレントディレクトリ)                                            |
+| `-r`, `--rebuild`            | キャッシュを無視して最初から建て直す                                                   |
+| `--platform <LIST>`          | 配布形態 (カンマ区切り)。`desktop` (既定。この OS)・`windows`・`macos`・`linux`・`web` |
+| `--players-dir <DIR>`        | ビルド済みプレイヤーの置き場所 (既定: `BIWA_PLAYERS_DIR`、なければ `~/.biwa/players`)  |
+
 ### `biwa publish`
 
 パッケージを Biwa Package Hub に公開する。対話的に確認を挟みながら進む。
@@ -79,11 +172,11 @@ biwa publish --commit <commit-hash>
 
 オプション:
 
-| オプション                   | 意味                                                |
-| ----------------------------- | --------------------------------------------------- |
-| `-p`, `--package-path <DIR>`  | 対象パッケージ (既定: カレントディレクトリ)          |
-| `--update`                    | 新規登録ではなく、既存パッケージへのバージョン追加   |
-| `--commit <HASH>`             | 公開するコミット (省略時は `HEAD` を使ってよいか確認)|
+| オプション                   | 意味                                                  |
+| ---------------------------- | ----------------------------------------------------- |
+| `-p`, `--package-path <DIR>` | 対象パッケージ (既定: カレントディレクトリ)           |
+| `--update`                   | 新規登録ではなく、既存パッケージへのバージョン追加    |
+| `--commit <HASH>`            | 公開するコミット (省略時は `HEAD` を使ってよいか確認) |
 
 `--update` を付けると、git remote の選択も新規登録もスキップし、
 「hub に既に登録されているか」だけを確認してバージョンの公開に進む。
@@ -135,16 +228,27 @@ repository はパッケージに 1 つしか持てず、hub 側にもそれを�
     wasm/<pkg>.wasm                ← biwac の出力 (--target wasm)
     typescript/{<pkg>.ts, std.ts}  ← biwac の出力 (--target typescript)
   .biwa_runtime/                   ← エンジン (Vite プロジェクト) の展開先
-    public/assets → ../../assets   ← 上の assets/ へのシンボリックリンク
+    public/assets → ../../assets   ← 上の assets/ へのシンボリックリンク (biwa dev)
     src/engine/{vm,api}/*.ts       ← kernel と syscall の実装
     src/game/{game.wasm, entry.ts} ← 配られた生成物 (typescript なら *.ts)
+    dist-game/                     ← デスクトップ版の game/ の元 (biwa build)
+  dist/
+    windows/                       ← biwa build --platform windows の出力
+      <name>/{<name>.exe, game/}
+      <name>-windows-x86_64.zip
+    macos/                         ← --platform macos
+      <name>.app, <name>-macos-universal.zip
+    linux/                         ← --platform linux
+      <name>/{<name>, game/}, <name>-linux-x86_64.tar.gz
+    web/                           ← --platform web
+      index.html, _biwa/, assets/
 ```
 
 `src/game/` には**今のターゲットの生成物だけ**が残る。
 ターゲットを切り替えたときに古いほうが型検査に混ざると、
 どちらが動いているのか分からなくなるためである。
 
-`.biwa_build/` も `.biwa_runtime/` も生成物なので、消してよい。
+`.biwa_build/`・`.biwa_runtime/`・`dist/` はどれも生成物なので、消してよい。
 
 ## アセット
 
@@ -164,6 +268,10 @@ assets/bg/room.png   に置いたものは   create_object("bg/room.png", 0, ...
 
 コピーではなくリンクにしているので、`assets/` にファイルを足しても
 `biwa dev` を建て直す必要はない。監視の対象にもしていない。
+(Windows ではリンクの作成に開発者モードか管理者権限が要る)
+
+`biwa build` はリンクを使わず、出力の `assets/` へコピーする。
+出力の中での位置は同じ `<base>assets/<path>` なので、エンジン側の解決は変わらない。
 
 ## エンジンとの規約
 
@@ -220,21 +328,29 @@ std の native TypeScript がエンジンを参照するときは
 
 ## 同梱物の扱い
 
-エンジンと std は [rust-embed](https://docs.rs/rust-embed) でバイナリに同梱する。
+エンジン (`engine/nodejs/`)・std・WebView の検証ページ (`engine/desktop-tauri/probe/`) は
+[rust-embed](https://docs.rs/rust-embed) でバイナリに同梱する (`src/assets.rs`)。
+`node_modules/` などは除く。
+macOS の .app に入れるアイコンも `include_bytes!` で焼き込む (`src/desktop.rs`)。
+
+デスクトップ版のプレイヤー本体は同梱しない (CI でビルドしたものを使う。`src/player.rs`)。
 
 デバッグビルドでは実行時にリポジトリ内のファイルを直接読むため、
-`engine/nodejs/` や `library/std/` を編集すればビルドし直さずに反映される。
+`engine/nodejs/`・`library/std/`・検証ページを編集すればビルドし直さずに反映される。
 リリースビルドではバイナリに焼き込まれる。
 
 ## 今回の実装対象外
 
 - `biwa new <package>`
   `<package>/biwa-package.json` と `<package>/src/main.biwa` を作る。
-- `biwa build`
-  配布用にゲームを 1 つのアプリケーションとして出力する。
+- `biwa build` の残り
+  プレイヤーの同梱 (または初回のダウンロード)、Node.js を不要にすること
+  (エンジンの JS をビルド済みにする)、ゲームごとのアイコン・ウィンドウの設定、
+  macOS の Developer ID での署名・公証、Windows のコード署名、
+  モバイル向けの出力 ([`docs/desktop-build.md`](../docs/desktop-build.md) §5)。
 - アセットの検査と選別
   将来はコンパイラがパッケージ内のパス文字列を巡回して `assets/` 以下の実在を検査し、
   必要なものの一覧を `.biwa_build/` に `.biwaassets` として吐く。
   CLI はそれを読み、`biwa dev` なら要るものだけをリンクし、
-  `biwa build` ならコピーすることになる。
-  今は検査をせず、`assets/` を丸ごとリンクしているだけである。
+  `biwa build` なら要るものだけをコピーすることになる。
+  今は検査をせず、`assets/` を丸ごとリンク (`biwa build` ではコピー) しているだけである。

@@ -10,6 +10,9 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 struct PackageMetadata {
     name: String,
+    /// 配布物 (デスクトップアプリ) の版に使う。
+    #[serde(default)]
+    version: Option<String>,
 }
 
 /// 開発対象の biwa パッケージ。
@@ -19,12 +22,15 @@ pub struct Project {
     pub root: PathBuf,
     /// パッケージ名。生成物 `<name>.ts` のファイル名でもある。
     pub name: String,
+    /// パッケージの版 (`biwa-package.json` に書かれていれば)。
+    pub version: Option<String>,
 }
 
 impl Project {
     /// 指定パスから上へ辿って `biwa-package.json` を探す。
     pub fn discover(start: &Path) -> Result<Self> {
         let start = std::fs::canonicalize(start)
+            .map(strip_verbatim_prefix)
             .with_context(|| format!("no such directory: {}", start.display()))?;
 
         let mut dir = start.as_path();
@@ -53,6 +59,7 @@ impl Project {
         Ok(Self {
             root: root.to_path_buf(),
             name: metadata.name,
+            version: metadata.version,
         })
     }
 
@@ -79,6 +86,11 @@ impl Project {
         self.root.join(crate::RUNTIME_DIRECTORY_NAME)
     }
 
+    /// `biwa build` の出力先 (`<root>/dist`)。
+    pub fn dist_dir(&self) -> PathBuf {
+        self.root.join(crate::DIST_DIRECTORY_NAME)
+    }
+
     /// `.biwa` ソースが置かれるディレクトリ。開発サーバはここを監視する。
     pub fn src_dir(&self) -> PathBuf {
         self.root.join("src")
@@ -90,4 +102,25 @@ impl Project {
     pub fn assets_dir(&self) -> PathBuf {
         self.root.join(crate::ASSETS_DIRECTORY_NAME)
     }
+}
+
+/// Windows の `canonicalize` が付ける `\\?\` を外す。
+///
+/// このパスは子プロセス (node・Vite・Tauri) の引数にも渡るが、
+/// `\\?\C:\...` の形は Node.js のツール群がうまく扱えない。
+/// ドライブ文字で始まる普通のパスに戻せるときだけ戻す (UNC などはそのまま)。
+#[cfg(windows)]
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        return path;
+    };
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path,
+    }
+}
+
+#[cfg(not(windows))]
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    path
 }

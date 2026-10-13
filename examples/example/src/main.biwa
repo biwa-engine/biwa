@@ -1,0 +1,271 @@
+import std::string::String;
+import std::collections::Vec;
+import std::convert::Into;
+import std::time::Duration::ms;
+import std::game::Game;
+import std::game::config::Config;
+import std::game::config::DeveloperConfig;
+import std::game::Character;
+import std::game::image::Image;
+import std::game::color::Color;
+import std::game::color::Alpha;
+import std::game::ui::UiElement;
+import std::game::ui::Window;
+import std::game::ui::Page;
+import std::game::ui::ScenePage;
+import std::game::ui::SceneStartButton;
+import std::game::ui::Box;
+import std::game::ui::Link;
+import std::game::ui::Vertical;
+import std::game::ui::Canvas;
+import std::game::ui::MessageArea;
+import std::game::ui::Layers;
+import std::game::ui::vw;
+import std::game::ui::vh;
+import std::game::canvas::Cw;
+import std::game::canvas::Ch;
+import std::game::canvas::Cx::cx;
+import std::game::canvas::Cy::cy;
+import std::game::canvas::Cw::cw;
+import std::game::canvas::Ch::ch;
+
+// 装飾 API。埋め込み式で使うので、 import する。
+import std::game::content::red;
+import std::game::content::green;
+import std::game::content::silver;
+import std::game::content::aqua;
+import std::game::content::gray;
+import std::game::content::white;
+import std::game::content::yellow;
+import std::game::content::orange;
+import std::game::content::bold;
+import std::game::content::big;
+import std::game::content::slow;
+
+struct MyGameState {}
+
+type MyGame = Game[MyGameState];
+type MyUi = UiElement[MyGameState];
+
+// デモに登場する 琵琶 という少女のキャラクター
+struct BiwaCharacterProps {}
+type CharacterBiwa = Character[BiwaCharacterProps];
+
+// 特定のキャラクター限定のメソッドをtraitによって拡張
+trait CharacterBiwaBehavior {
+    fn smile(self);
+}
+
+// trait を実装
+impl CharacterBiwa: CharacterBiwaBehavior {
+    // 琵琶 が笑うメソッド
+    fn smile(self) {
+        let biwa_smile = Image::new("josei_20_b.png");
+        self.change_visual(biwa_smile);
+    }
+}
+
+fn add(x: Int, y: Int) -> Int { x + y }
+
+// 唯一の entrypoint
+// アプリ起動時に一番最初に呼び出される
+// ウィンドウ生成を記述するべき
+fn main() {
+    let title_box: MyUi = Box::new().
+        width(vw(80.0)).
+        height(vw(10.0)).
+        text("Biwa Engine 近況博覧会").
+        text_size(vw(6.0)).
+        text_color(Color::white()).
+        into();
+    let title_box2: MyUi = Box::new().
+        width(vw(80.0)).
+        height(vw(5.0)).
+        text("スーパーデモ").
+        text_size(vw(5.0)).
+        text_color(Color::white()).
+        margin_bottom(vh(10.0)).
+        into();
+    let link_to_scene: MyUi = SceneStartButton::new(fn (window) {
+            Game::new(window, "test1", MyGameState {}, Config::new(DeveloperConfig::default()))
+        }).
+        width(vw(30.0)).
+        height(vh(8.0)).
+        margin_top(vh(2.0)).
+        margin_bottom(vh(2.0)).
+        background_color(Color::blue()).
+        text("NEW GAME! なのです").
+        text_size(vh(3.0)).
+        text_weight(700).
+        text_color(Color::white()).
+        into();
+        let link_to_config: MyUi = Link::new("config").
+        width(vw(30.0)).
+        height(vh(8.0)).
+        background_image("sample.png").
+        text("CONFIG").
+        text_size(vh(3.0)).
+        text_weight(700).
+        text_color(Color::white()).
+        into();
+    let main_menu: MyUi = Vertical::new(Vec::new()).
+        push(title_box).
+        push(title_box2).
+        push(link_to_scene).
+        push(link_to_config).
+        width(vw(40.0)).
+        margin_left(vw(5.0)).
+        margin_top(vh(5.0)).
+        into();
+    let main_page = Page::new("main", Vec::of(main_menu));
+  
+    // config ページ
+    let config_title_box: MyUi = Box::new().
+        width(vw(80.0)).
+        height(vw(5.0)).
+        margin_bottom(vh(10.0)).
+        text("CONFIG").
+        text_size(vw(4.0)).
+        text_color(Color::white()).
+        into();
+    let link_to_main: MyUi = Link::new("main").
+        width(vw(30.0)).
+        height(vh(8.0)).
+        background_color(Color::red()).
+        text("もどる(CONFIGには今は何もないのです...)").
+        text_size(vh(2.0)).
+        text_weight(700).
+        text_color(Color::white()).
+        into();
+    let config_menu: MyUi = Vertical::new(Vec::new()).
+        push(config_title_box).
+        push(link_to_main).
+        width(vw(40.0)).
+        margin_left(vw(5.0)).
+        margin_top(vh(5.0)).
+        into();
+    let config_page = Page::new("config", Vec::of(config_menu)).
+        background_image("sample.png");
+    
+    // scene ページ
+    // 出力先の canvas, message_area の id を渡す必要がある
+    let scene_canvas = Canvas::new().
+        width(vw(100.0)).
+        height(vh(100.0));
+    let scene_message_area = MessageArea::new().
+        width(vw(94.0)).
+        height(vh(30.0)).
+        margin_top(vh(60.0)).
+        margin_left(vw(3.0)).
+        margin_right(vw(3.0)).
+        margin_bottom(vh(5.0)).
+        padding_top(vh(1.0)).
+        padding_bottom(vh(1.0)).
+        padding_left(vw(2.5)).
+        padding_right(vw(2.5)).
+        background_color(Color::new(0, 0, 0, 191));
+    let scene_page_body: MyUi = Layers::new(Vec::of(scene_canvas.into())).
+        push(scene_message_area.into()).
+        into();
+    let scene_page = ScenePage::new(
+        scene_canvas.canvas_id(),
+        scene_message_area.message_area_id(),
+        Vec::of(scene_page_body),
+    );
+  
+    Window::new(scenario, scene_page, Vec::new()).
+        push(main_page).
+        push(config_page).
+        show();
+}
+
+// シナリオ
+scene scenario(g: MyGame) -> MyGame {{    
+    // キャラクターを初期化する(琵琶というキャラクター)
+    #let biwa_normal = Image::new("josei_20_a.png")
+    #let biwa = CharacterBiwa::new(
+        g,
+        "言葉 琵琶", // (や,や.などで終わるコード行の次の行はコード行が継続される
+        "琵琶",
+        BiwaCharacterProps {},
+        biwa_normal,
+        biwa_normal)
+    // 背景描画
+    // 今はstdの低レベルAPIを直で叩いているがいずれ抽象化される予定
+    #let bg = Image::new("background-countryside.jpg").
+        show_in_canvas(g.canvas(), 0, cx(0.0), cy(0.0), Cw::Auto, ch(100.0), Alpha::opaque())
+    // 本文開始
+    Hello, Biwa World!
+    こんにちは、Biwaの世界。
+    Biwa Engine のデモへようこそ。
+    クリックで進みます。 >>
+    Biwa Engine は既存のオープンソースなビジュアルノベルゲームエンジンの諸問題をきっかけに開発を開始しました。
+    $aqua("https://github.com/biwa-engine/") にてオープンソースライセンスで開発されています。
+    ゲームの記述に用いられる Biwa言語 はノベルゲームを容易に記述する機能と汎用プログラミング言語に近い機能を併せ持ち、
+    初学者にもシナリオは記述しやすく、経験者はライブラリ構築をしやすいことを目指しています。
+    ツールチェーンの充実も目指しており、Biwa CLI(npmみたいな)やLSP(エディタの色付け、文法チェック、補完を支援するやつ)も開発中です。
+    >>
+    まあ、そんな説明はともかく。
+    とりあえず、デモとして(フリーの拾い絵ですが)美少女が動く様子を見てもらいましょう。 >>
+    // 琵琶が右から現れる
+    #biwa.
+        appear(1, cx(55.0), cy(0.0), Cw::Auto, ch(80.0), Alpha::transparent()).
+        and().
+        x_easeout_and(cx(20.0)).
+        be_visible_and().
+        animate_for(ms(900))
+    $gray("琵琶が右から入ってきます。")
+    $gray("この演出はテキストと同期しているので、途中でクリックすると")
+    $gray("まず演出が終わり、もう一度クリックすると先に進みます。") >>
+    こんにちは。
+    私は$red(bold("言葉 琵琶"))(ことのは びわ)。
+    $big(slow(slow("ゆっくり大きく")))話すこともできます。 >>
+    ソースコードはこんな感じかな:
+
+    // ソースコードをメッセージウィンドウに表示したいがために頑張ってセルフシンタックスハイライトをしている部分:
+    // 文字列の中の `//` はコメントにならないし、`\"` で `"` も書ける。
+    $gray("// コメントも書けるよ")
+    $white("私は") $yellow("$")$aqua("red")$silver("(")$aqua("bold")$silver("(")$green("\"言葉 琵琶\"")$silver("))") $white("(ことのは びわ)。")
+    $yellow("$")$aqua("big")$silver("(")$aqua("slow")$silver("(")$aqua("slow")$silver("(")$green("\"ゆっくり大きく\"")$silver(")))") $white("話すこともできます。") $red(">>")
+    >>
+
+    #biwa.and().
+        x_move_and(cx(-20.0)).y_sin_and(ch(2.5), ms(500)).animate_for(ms(2000))
+    $gray("揺れながら左へ歩いていきます。") >>
+
+    今のコードはこんな感じ:
+    
+    $yellow("#")$aqua("biwa")$silver(".")$aqua("and")$silver("().")
+        $aqua("x_move_and")$silver("(")$aqua("cx")$silver("(-")$orange("20.0")$silver(")).")$aqua("y_sin_and")$silver("(")$aqua("ch")$silver("(")$orange("2.5")$silver("), ")$aqua("ms")$silver("(")$orange("500")$silver(")).")$aqua("animate_for")$silver("(")$aqua("ms")$silver("(")$orange("2000")$silver("))")
+    $white("揺れながら左へ歩いていきます。") $red(">>")
+    >>
+
+    #if add(1, 2) > 2 {
+         この文章が見えていますか?
+        見えているならばif文の分岐が成功しています!
+        今のコード例はコンパイル時に決定可能な定数の比較ですが、
+        本質的に動的に分岐可能です。バイナリが動いているのですから。
+         いずれ選択肢を出すAPIなどが作られて真に動的な実行がされることでしょう。 >>
+    }
+
+    // コメントです
+    #biwa.smile() // ここもコメント
+    Biwa Engine はまだ開発の途上ですが、今のところこんな感じに動作します。
+    シナリオ記述言語からほとんどすべてを制御でき、自由度の高さとそれなりに良さそうな開発体験になりそうだと思っていただけたでしょうか。
+    今後の開発でさらなるパワーアップがされていくことでしょう。 >>
+
+    #biwa.
+        alpha_then().
+        easeout_then(Alpha::transparent(), ms(1200)).
+        animate()
+    #bg.
+        alpha_then().
+        sleep_then(ms(300)).
+        linear_then(Alpha::transparent(), ms(1200)).
+        animate()
+    #biwa.disappear(ms(1200))
+    #bg.delete(ms(1500))
+    おしまい。 >>
+
+    #endscene g
+}}
