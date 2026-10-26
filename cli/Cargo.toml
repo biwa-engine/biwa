@@ -19,3 +19,10 @@ notify = "8.2.0"
 rust-embed = { version = "8.12.0", features = ["include-exclude"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+# `biwa build` が配布物を固める (Windows / macOS は zip、Linux は tar.gz)。
+zip = { version = "9.0.2", default-features = false, features = ["deflate"] }
+tar = "0.4.46"
+flate2 = "1.1.10"
+# `biwa build` が組み立てた macOS の .app に ad-hoc 署名する (どの OS の上でも)。
+# 公証 (notarize) は使わないので既定の feature は切る。
+apple-codesign = { version = "0.29.0", default-features = false }

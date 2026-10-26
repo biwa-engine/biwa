@@ -56,6 +56,10 @@
   `biwa dev` がそれを `.biwa_runtime/public/assets` にリンクしている。
 - wasm を動かすにはページが cross-origin isolated である必要がある
   (`vite.config.ts` が COOP/COEP を送っている)。外すと `SharedArrayBuffer` が消える。
+  ただしエンジンが検査するのは `SharedArrayBuffer` の有無だけである
+  (デスクトップ版の WebView の事情。`docs/desktop-build.md` §4)。
+- `WebAssembly.Module.imports()` は JavaScriptCore (Safari・WebKitGTK) で投げることがある。
+  それに頼る処理には必ず逃げ道を用意する (`wasm/worker.ts` の `declaredImports`)。
 - std から参照される import は `@biwa/engine/<path>` という論理パスで書く規約
   (alias で `src/engine/` に解決される)。
 - パッケージマネージャは npm。利用者の環境に Node.js しか仮定しない。

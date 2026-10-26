@@ -94,7 +94,7 @@ pub fn run(args: DevArgs) -> Result<()> {
 }
 
 /// biwac を呼んで、生成物をエンジン側へ配る。
-fn build(project: &Project, target: Target, force_rebuild: bool) -> Result<()> {
+pub(crate) fn build(project: &Project, target: Target, force_rebuild: bool) -> Result<()> {
     compile(project, target, force_rebuild)?;
     runtime::sync_generated(project, target)
 }
