@@ -76,8 +76,15 @@ biwa build  : コンパイル → 対象 OS のプレイヤー + エンジンの
    - **進捗 (2026-10-13)**: プレイヤー・`biwa build --platform windows,macos,linux,web`・Actions のワークフロー
      (`.github/workflows/player.yml`) を実装。Linux ではプレイヤーのビルドから配布物の起動まで確認済み。
      Windows / macOS は、この Linux の上で仮の実行ファイルを使って組み立て (macOS は ad-hoc 署名の形式も) を確認。
-     次は、利用者に Actions を走らせてもらい、成果物で本物の配布物を組み立てて各 OS の実機で確かめる。
      詳細は `docs/desktop-build.md`。
+   - **進捗 (2026-10-14)**: Actions で 3 OS のプレイヤーのビルドに成功 (run 38347793801)。
+     その成果物から、この Linux の上で `~/test1` の 3 OS 分の配布物を組み立てた
+     (macOS は universal の両アーキテクチャに ad-hoc 署名)。CI 製の Linux 版は起動しシーンまで進む。
+     次は、Windows / macOS の実機での起動の確認 (利用者に依頼)。
+   - **進捗 (2026-10-22〜26)**: Windows は実機で動いた (SmartScreen の警告のみ)。
+     macOS は Safari を 18.2 以上にする必要があり (WasmGC)、さらに WKWebView は独自スキームで
+     SharedArrayBuffer を出さないので、macOS ではプレイヤーが localhost (127.0.0.1、パッケージ名から決まるポート) で
+     配るのを既定にした。更新したプレイヤーでの macOS の実機確認が次 (CI の再実行は利用者に依頼)。
    - プレイヤー: 実行ファイルの横 (macOS は `.app/Contents/Resources/`) の `game/` を配信し、COOP / COEP を付ける。
      ゲームを焼き込まないので、一度ビルドすればどのゲームにも使える。
    - GitHub Actions の 3 OS でプレイヤーをビルドする (**ワークフローの実行と成果物の取得は利用者に依頼する**)。
@@ -85,7 +92,7 @@ biwa build  : コンパイル → 対象 OS のプレイヤー + エンジンの
      macOS は `apple-codesign` で ad-hoc 署名する。
    - 確かめること: この Linux から作った 3 OS 分の配布物が、各 OS の実機で動くか。
 3. エンジンの JS をビルド済みにし、開発サーバを `biwa` に内蔵する (Node.js も不要にする)。
-4. `--platform` を `windows|macos|linux|web` に分ける (段階 2 で着手)。
+4. `--platform` を `windows|macos|linux|web` に分ける (段階 2 で済み。`desktop` はホスト OS)。
 
 ## 不確かな点
 

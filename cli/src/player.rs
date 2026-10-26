@@ -2,7 +2,7 @@
 //!
 //! プレイヤーはゲームに依らない汎用の実行ファイルで、Biwa の CI が OS ごとに 1 度だけビルドする。
 //! `biwa build` は利用者の手元でそれをビルドせず、置いてあるものを使う
-//! (`~/memo/biwa-prebuilt-player.md`)。
+//! (`docs/biwa-prebuilt-player.md`)。
 //!
 //! 置き場所 (上から順に探す):
 //!   1. `--players-dir <DIR>`
@@ -21,7 +21,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 /// デスクトップの配布先の OS。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

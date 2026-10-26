@@ -2,18 +2,24 @@
 //!
 //! ゲームを焼き込まない汎用の実行ファイルで、Biwa の CI が OS ごとに 1 度だけビルドする。
 //! `biwa build` は、これにゲームのデータ (`game/`) を添えて配布物を組み立てる
-//! (利用者の手元で Rust のビルドは走らない。`~/memo/biwa-prebuilt-player.md`)。
+//! (利用者の手元で Rust のビルドは走らない。`docs/biwa-prebuilt-player.md`)。
 //!
 //! ゲームのデータの場所:
 //!   - Windows / Linux: 実行ファイルと同じディレクトリの `game/`
 //!   - macOS: `<name>.app/Contents/Resources/game/`
 //!   - `--game-dir <DIR>` (または環境変数 `BIWA_GAME_DIR`) で上書きできる
 //!
+//! ゲームのデータの配り方 (どちらでも COOP / COEP を付ける):
+//!   - 独自スキーム `biwa://localhost/` (Windows は `http://biwa.localhost/`)。Windows / Linux の既定。
+//!   - `http://localhost:<port>/` (プレイヤーの中の HTTP サーバ)。macOS の既定。
+//!     WKWebView は独自スキームのページで `SharedArrayBuffer` を出さない
+//!     (`crossOriginIsolated` は true になるのに。macOS 27 / Safari 22625 で確認)。
+//!     HTTP で配れば出る。`docs/desktop-build.md` §4。
+//!
 //! 起動時の引数 (検証用):
 //!   - `--probe` (または `BIWA_PROBE=1`): ゲームの代わりに WebView の検証ページを開く。
-//!   - `--localhost` (または `BIWA_LOCALHOST=1`): `game/` を独自スキーム (`biwa://`) ではなく
-//!     `http://localhost:<port>` で配る。独自スキームで cross-origin isolation が効かない
-//!     WebView のための逃げ道。
+//!   - `--localhost` (または `BIWA_LOCALHOST=1`): どの OS でも localhost で配る。
+//!   - `--custom-scheme` (または `BIWA_CUSTOM_SCHEME=1`): どの OS でも独自スキームで配る。
 
 // Windows の配布版でコンソールウィンドウを出さない。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -37,6 +43,8 @@ const GAME_INFO_FILE: &str = "biwa-game.json";
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct GameInfo {
+    /// パッケージ名。localhost で配るときのポートを決めるのに使う。
+    name: Option<String>,
     /// ウィンドウのタイトル。
     title: Option<String>,
     /// ウィンドウの最初の大きさ (論理ピクセル)。
@@ -46,7 +54,11 @@ struct GameInfo {
 
 fn main() {
     let probe = flag("--probe", "BIWA_PROBE");
-    let localhost = flag("--localhost", "BIWA_LOCALHOST");
+    let localhost = if flag("--custom-scheme", "BIWA_CUSTOM_SCHEME") {
+        false
+    } else {
+        flag("--localhost", "BIWA_LOCALHOST") || LOCALHOST_BY_DEFAULT
+    };
     let page = if probe { PROBE_PAGE } else { GAME_PAGE };
 
     enable_shared_array_buffer();
@@ -58,7 +70,12 @@ fn main() {
         // データが無ければ、同梱のプレースホルダ (案内のページ) を出す。
         None => WebviewUrl::App("index.html".into()),
         Some(dir) if localhost => {
-            let port = serve_localhost(dir.clone());
+            let key = info
+                .name
+                .as_deref()
+                .or(info.title.as_deref())
+                .unwrap_or("biwa");
+            let port = serve_localhost(dir.clone(), key);
             external(&format!("http://localhost:{port}/{page}"))
         }
         Some(_) => external(&format!("{}{page}", custom_protocol_origin())),
@@ -93,6 +110,9 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running the Biwa player");
 }
+
+/// 既定で localhost で配るか。macOS の WKWebView は独自スキームで `SharedArrayBuffer` を出さない。
+const LOCALHOST_BY_DEFAULT: bool = cfg!(target_os = "macos");
 
 /// 引数か環境変数のどちらかで立つフラグ。
 fn flag(arg: &str, env: &str) -> bool {
@@ -168,10 +188,21 @@ fn custom_protocol_origin() -> String {
     format!("{SCHEME}://localhost/")
 }
 
-/// `game/` を `http://localhost:<空きポート>` で配るサーバを裏で立てる。
-fn serve_localhost(root: PathBuf) -> u16 {
-    let server =
-        tiny_http::Server::http(("127.0.0.1", 0)).expect("failed to start the localhost server");
+/// `game/` を `http://localhost:<port>` で配るサーバを裏で立てる。
+///
+/// ポートはゲームごとに決まった値を使う。オリジン (`http://localhost:<port>`) が
+/// 起動のたびに変わると、WebView のストレージ (localStorage・IndexedDB) が
+/// 前回のものを読めなくなるため。塞がっていれば次を試し、だめなら空いているものにする。
+fn serve_localhost(root: PathBuf, key: &str) -> u16 {
+    let preferred = preferred_port(key);
+    let server = (0..PORT_ATTEMPTS)
+        .map(|i| preferred_port_offset(preferred, i))
+        .find_map(|port| tiny_http::Server::http(("127.0.0.1", port)).ok())
+        .or_else(|| {
+            eprintln!("biwa-player: ports from {preferred} are in use; using a random port");
+            tiny_http::Server::http(("127.0.0.1", 0)).ok()
+        })
+        .expect("failed to start the localhost server");
     let port = server
         .server_addr()
         .to_ip()
@@ -202,6 +233,26 @@ fn serve_localhost(root: PathBuf) -> u16 {
     port
 }
 
+/// ゲームごとのポートを選ぶ範囲。動的ポート (49152-65535) を避け、登録ポートの上の方を使う。
+const PORT_BASE: u16 = 40000;
+const PORT_RANGE: u16 = 9000;
+/// 決まったポートが塞がっていたときに、次を試す回数。
+const PORT_ATTEMPTS: u16 = 8;
+
+/// `key` (パッケージ名) から決まるポート。FNV-1a。
+fn preferred_port(key: &str) -> u16 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for b in key.bytes() {
+        hash ^= u32::from(b);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    PORT_BASE + (hash % u32::from(PORT_RANGE)) as u16
+}
+
+fn preferred_port_offset(preferred: u16, i: u16) -> u16 {
+    PORT_BASE + (preferred - PORT_BASE + i) % PORT_RANGE
+}
+
 /// WebKitGTK (Linux) は、cross-origin isolated なページでも既定では
 /// `SharedArrayBuffer` を出さない。JavaScriptCore の実行時オプションで有効にする。
 ///
@@ -218,3 +269,20 @@ fn enable_shared_array_buffer() {
 
 #[cfg(not(target_os = "linux"))]
 fn enable_shared_array_buffer() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ports_are_stable_and_in_range() {
+        let port = preferred_port("test1");
+        assert_eq!(port, preferred_port("test1"));
+        assert!((PORT_BASE..PORT_BASE + PORT_RANGE).contains(&port));
+        assert_ne!(port, preferred_port("test2"));
+
+        // 範囲の端で折り返す。
+        let last = PORT_BASE + PORT_RANGE - 1;
+        assert_eq!(preferred_port_offset(last, 1), PORT_BASE);
+    }
+}
