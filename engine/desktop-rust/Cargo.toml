@@ -1,0 +1,45 @@
+# Biwa のゲームを動かすネイティブのデスクトップのプレイヤー (Rust)。
+#
+# 外部の crate は、それを担当する sub crate の中に閉じ込める。
+# 上位の crate (core・player) からは下位の具体的な crate (wgpu・parley・winit ...) の型が見えない。
+# 例外は wasmtime で、差し替える見込みがほぼ無いので vm の公開 API に出てよい。
+# 構成と方針は README.md。
+[workspace]
+resolver = "3"
+members = [
+  "crates/core",
+  "crates/vm",
+  "crates/player",
+  # 以下は段階的に足す。
+  # "crates/text", "crates/render", "crates/platform",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+biwa-player-core = { path = "crates/core" }
+biwa-player-vm = { path = "crates/vm" }
+biwa-player-text = { path = "crates/text" }
+biwa-player-render = { path = "crates/render" }
+biwa-player-platform = { path = "crates/platform" }
+
+# 外部 crate。どれを誰が使うかは各 crate の Cargo.toml を見ること。
+wasmtime = "50"
+wgpu = "30"
+winit = "0.30"
+parley = "0.12"
+swash = "0.2"
+etagere = "0.3"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "1"
+raw-window-handle = "0.6"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
