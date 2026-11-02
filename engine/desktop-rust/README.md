@@ -28,29 +28,29 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
  └ platform   winit                     (ウィンドウ・入力・イベントループ)
 ```
 
-| crate | 中身 |
-| --- | --- |
-| `core` | ゲームからの依頼 (`syscall`)、それを受けて状態を変え描画の指示を組み立てるエンジン (`engine`)、Message Window の中身と文字送り (`content`)、canvas オブジェクトと遷移 (`canvas` / `transition`)、画像の番号と読み込みの依頼 (`image`)、UI のレイアウトのインターフェース (`layout`)、UI Element の木 (`ui`。Page の切り替え・Link・SceneStartButton・文字の書式の継承)、文字の整形とラスタライズのインターフェース (`text`)、描画の指示 (`draw`) |
-| `vm` | game.wasm を専用の OS スレッドで動かす。import (`biwa:engine` / `biwa:runtime`) を実装し、エンジンに用がある syscall を `core::syscall::Syscall` にして送る |
-| `text` | 断片の列を 1 つの段落として parley で整形し、グリフを swash でラスタライズする。禁則処理 (`kinsoku.rs`) |
-| `image` | 画像のアセットを裏のスレッドで読んでデコードし、`core::image::DecodedImage` で返す |
-| `layout` | `core` が作ったレイアウト用の木を taffy (block / flex / grid) で計算する。CSS への写し方は TypeScript 版の DOM と同じ |
-| `render` | 描画の指示を wgpu で描く。塗りの矩形・グリフ・画像を「中心・大きさ・回転を持つインスタンスの矩形」として 1 本のパイプラインで描く。グリフはアルファだけのアトラス (etagere) に、画像は 1 枚ずつテクスチャに載せ、テクスチャが替わるところで描画の呼び出しを区切る。切り取りは scissor |
-| `platform` | winit のイベントループを、自前のイベント (大きさの変化・クリック (位置つき)・進む・描き直し・起こされた・閉じる) にして渡す |
-| `player` | 起動時の引数、ウィンドウを出す動かし方 (`windowed.rs`)、出さない動かし方 (`--headless`) |
+| crate      | 中身                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `core`     | ゲームからの依頼 (`syscall`)、それを受けて状態を変え描画の指示を組み立てるエンジン (`engine`)、Message Window の中身と文字送り (`content`)、canvas オブジェクトと遷移 (`canvas` / `transition`)、画像の番号と読み込みの依頼 (`image`)、UI のレイアウトのインターフェース (`layout`)、UI Element の木 (`ui`。Page の切り替え・Link・SceneStartButton・文字の書式の継承)、文字の整形とラスタライズのインターフェース (`text`)、描画の指示 (`draw`) |
+| `vm`       | game.wasm を専用の OS スレッドで動かす。import (`biwa:engine` / `biwa:runtime`) を実装し、エンジンに用がある syscall を `core::syscall::Syscall` にして送る                                                                                                                                                                                                                                                                                      |
+| `text`     | 断片の列を 1 つの段落として parley で整形し、グリフを swash でラスタライズする。禁則処理 (`kinsoku.rs`)                                                                                                                                                                                                                                                                                                                                          |
+| `image`    | 画像のアセットを裏のスレッドで読んでデコードし、`core::image::DecodedImage` で返す                                                                                                                                                                                                                                                                                                                                                               |
+| `layout`   | `core` が作ったレイアウト用の木を taffy (block / flex / grid) で計算する。CSS への写し方は TypeScript 版の DOM と同じ                                                                                                                                                                                                                                                                                                                            |
+| `render`   | 描画の指示を wgpu で描く。塗りの矩形・グリフ・画像を「中心・大きさ・回転を持つインスタンスの矩形」として 1 本のパイプラインで描く。グリフはアルファだけのアトラス (etagere) に、画像は 1 枚ずつテクスチャに載せ、テクスチャが替わるところで描画の呼び出しを区切る。切り取りは scissor                                                                                                                                                            |
+| `platform` | winit のイベントループを、自前のイベント (大きさの変化・クリック (位置つき)・進む・描き直し・起こされた・閉じる) にして渡す                                                                                                                                                                                                                                                                                                                      |
+| `player`   | 起動時の引数、ウィンドウを出す動かし方 (`windowed.rs`)、出さない動かし方 (`--headless`)                                                                                                                                                                                                                                                                                                                                                          |
 
 各 crate が直接依存する外部 crate (`cargo tree --depth 1` で確かめた):
 
-| crate | 外部 crate |
-| --- | --- |
-| `core` | なし |
-| `vm` | wasmtime |
-| `text` | parley, swash (と、ICU の警告を黙らせるための icu_provider の feature) |
-| `image` | image |
-| `layout` | taffy |
-| `render` | wgpu, etagere, bytemuck, pollster, raw-window-handle |
-| `platform` | winit, raw-window-handle |
-| `player` | なし (自前の crate だけ) |
+| crate      | 外部 crate                                                             |
+| ---------- | ---------------------------------------------------------------------- |
+| `core`     | なし                                                                   |
+| `vm`       | wasmtime                                                               |
+| `text`     | parley, swash (と、ICU の警告を黙らせるための icu_provider の feature) |
+| `image`    | image                                                                  |
+| `layout`   | taffy                                                                  |
+| `render`   | wgpu, etagere, bytemuck, pollster, raw-window-handle                   |
+| `platform` | winit, raw-window-handle                                               |
+| `player`   | なし (自前の crate だけ)                                               |
 
 `render` と `platform` の境目は raw-window-handle のトレイト (ウィンドウの handle の受け渡しの標準) だけで、
 `player` は名前を出さない。
@@ -62,8 +62,8 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
   -------------------------                    ----------------------
   core::Engine                                  wasmtime の Store / game.wasm
      ^  止まらない syscall のまとまり (Batch) ---|
-     |  止まる syscall (Call) ------------------|  返事が来るまで recv() で止まる
-     |---------- 返事 (CallReply) ------------->|
+     |  止まる syscall (Call) -------------------|  返事が来るまで recv() で止まる
+     |---------- 返事 (CallReply) -------------->|
 ```
 
 - TypeScript 版の Worker とメインスレッドの分担 (`engine/nodejs/src/engine/vm/wasm/`) と同じ形で、輸送路だけが違う。
@@ -121,11 +121,11 @@ WasmGC の struct・externref の文字列・funcref のハンドラ・止まる
 `bench/gc-churn` (文字列と struct を大量に作って捨てる。ホスト呼び出し 約 600 万回、文字列 約 590 万個) を
 4 コアの Linux サーバ、リリースビルドで 3 回ずつ。比較に同じ wasm を V8 (node 24) で動かした (`bench/run-v8.mjs`)。
 
-| | wasm の実行 | 最大の間隔 (GC の停止) | 1 ms 超の間隔 | 全体 | 最大 RSS |
-| --- | --- | --- | --- | --- | --- |
-| wasmtime 50 (既定 = 遅延参照カウント) | 410〜430 ms | 3.8〜4.1 ms | 2〜3 回 | 2.5〜2.9 s | 55 MB |
-| wasmtime 50 (null = 回収しない) | 440〜460 ms | 0.1〜0.2 ms | 0 回 | 2.8〜2.9 s | 596 MB |
-| V8 (node 24) | 630〜670 ms | 5.2〜6.8 ms | 31〜39 回 | 2.2〜2.4 s | — |
+|                                       | wasm の実行 | 最大の間隔 (GC の停止) | 1 ms 超の間隔 | 全体       | 最大 RSS |
+| ------------------------------------- | ----------- | ---------------------- | ------------- | ---------- | -------- |
+| wasmtime 50 (既定 = 遅延参照カウント) | 410〜430 ms | 3.8〜4.1 ms            | 2〜3 回       | 2.5〜2.9 s | 55 MB    |
+| wasmtime 50 (null = 回収しない)       | 440〜460 ms | 0.1〜0.2 ms            | 0 回          | 2.8〜2.9 s | 596 MB   |
+| V8 (node 24)                          | 630〜670 ms | 5.2〜6.8 ms            | 31〜39 回     | 2.2〜2.4 s | —        |
 
 - 「wasm の実行」はホスト呼び出しの間の時間の合計、「全体」はホスト側の処理 (文字列の確保など) も含む。
 - 既定の GC は 590 万個の文字列を回収しきって 55 MB に収まり、停止は最大 4 ms で V8 より短い。
