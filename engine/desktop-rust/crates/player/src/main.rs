@@ -5,6 +5,7 @@
 //! - `biwa-player-core`: エンジンの論理 (syscall・Message Window・時計・クリック)
 //! - `biwa-player-vm`: game.wasm を wasmtime で動かす
 //! - `biwa-player-text`: 文字の整形とラスタライズ
+//! - `biwa-player-image`: 画像の読み込みとデコード
 //! - `biwa-player-render`: 描画
 //! - `biwa-player-platform`: ウィンドウ・入力・イベントループ
 //!

@@ -5,8 +5,8 @@ wasm ランタイム (wasmtime) を同梱するので、WasmGC が動くかど�
 方針とクレートの選定は `~/memo/biwa-native-runtime-rust.md` (以下「メモ」)、
 配布の仕組み (ゲームを焼き込まないプレイヤーを CI でビルドしておく) は `docs/biwa-prebuilt-player.md`。
 
-状況: メモ §11 の **段 1 (wasmtime で動かす)・段 2 (GC の性能)・段 3 (文字) が済み**。
-段 4 (canvas)・段 5 (UI) はまだなので、画面に出るのは scene の Message Window だけである。
+状況: メモ §11 の **段 1 (wasmtime で動かす)・段 2 (GC の性能)・段 3 (文字)・段 4 (canvas) が済み**。
+段 5 (UI) はまだなので、画面に出るのは scene の Canvas と Message Window だけである (タイトルなどの Page は出ない)。
 
 ## crate の構成
 
@@ -20,16 +20,18 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
  ├ core       エンジンの論理と、文字・描画のインターフェース。外部 crate に依存しない
  ├ vm         wasmtime
  ├ text       parley + swash            (core::text のトレイトを実装する)
+ ├ image      image                     (画像の読み込みとデコード。裏のスレッドで)
  ├ render     wgpu + etagere            (core::draw の描画リストを描く)
  └ platform   winit                     (ウィンドウ・入力・イベントループ)
 ```
 
 | crate | 中身 |
 | --- | --- |
-| `core` | ゲームからの依頼 (`syscall`)、それを受けて状態を変え描画の指示を組み立てるエンジン (`engine`)、Message Window の中身と文字送り (`content`)、UI Element の木 (`ui`。段 3 までは scene を始めるのに要る分だけ)、文字の整形とラスタライズのインターフェース (`text`)、描画の指示 (`draw`) |
+| `core` | ゲームからの依頼 (`syscall`)、それを受けて状態を変え描画の指示を組み立てるエンジン (`engine`)、Message Window の中身と文字送り (`content`)、canvas オブジェクトと遷移 (`canvas` / `transition`)、画像の番号と読み込みの依頼 (`image`)、UI Element の木 (`ui`。段 3 までは scene を始めるのに要る分だけ)、文字の整形とラスタライズのインターフェース (`text`)、描画の指示 (`draw`) |
 | `vm` | game.wasm を専用の OS スレッドで動かす。import (`biwa:engine` / `biwa:runtime`) を実装し、エンジンに用がある syscall を `core::syscall::Syscall` にして送る |
 | `text` | 断片の列を 1 つの段落として parley で整形し、グリフを swash でラスタライズする。禁則処理 (`kinsoku.rs`) |
-| `render` | 描画の指示を wgpu で描く。塗りの矩形もグリフも「インスタンスの矩形」として 1 回の描画呼び出しで描き、グリフはアルファだけのアトラス (etagere) に載せる |
+| `image` | 画像のアセットを裏のスレッドで読んでデコードし、`core::image::DecodedImage` で返す |
+| `render` | 描画の指示を wgpu で描く。塗りの矩形・グリフ・画像を「中心・大きさ・回転を持つインスタンスの矩形」として 1 本のパイプラインで描く。グリフはアルファだけのアトラス (etagere) に、画像は 1 枚ずつテクスチャに載せ、テクスチャが替わるところで描画の呼び出しを区切る。切り取りは scissor |
 | `platform` | winit のイベントループを、自前のイベント (大きさの変化・進む・描き直し・起こされた・閉じる) にして渡す |
 | `player` | 起動時の引数、ウィンドウを出す動かし方 (`windowed.rs`)、出さない動かし方 (`--headless`) |
 
@@ -40,6 +42,7 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
 | `core` | なし |
 | `vm` | wasmtime |
 | `text` | parley, swash (と、ICU の警告を黙らせるための icu_provider の feature) |
+| `image` | image |
 | `render` | wgpu, etagere, bytemuck, pollster, raw-window-handle |
 | `platform` | winit, raw-window-handle |
 | `player` | なし (自前の crate だけ) |
@@ -72,7 +75,7 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
 cargo build --release -p biwa-player
 
 # ウィンドウを出す。クリック (か Enter / Space) で進む
-./target/release/biwa-player --wasm <game.wasm>
+./target/release/biwa-player --wasm <game.wasm> [--assets <DIR>]
 
 # ウィンドウを出さずに最後まで進める (クリック待ちは自動で進め、Message Window の文字をログに出す)
 ./target/release/biwa-player --headless --wasm <game.wasm>
@@ -82,6 +85,15 @@ cargo build --release -p biwa-player
 
 wasm は `biwa build --platform web` などでできる `<project>/.biwa_build/wasm/<package>.wasm` を使う。
 `--game-dir <DIR>` (その中の `game.wasm`) でもよく、何も指定しなければ実行ファイルの横の `game/` を探す。
+
+アセット (画像) の置き場所は `--assets <DIR>`、無ければ `<game>/assets`。
+`--wasm` で `<project>/.biwa_build/wasm/<package>.wasm` を指したときは `<project>/assets` を使う。
+
+確かめ用のゲーム:
+
+- `examples/canvas-check`: canvas の回転の向き・Canvas の範囲での切り取り・レイヤーの前後
+  (`biwa build --platform web` で wasm を作ってから `--wasm` で指す)
+- `bench/gc-churn`: GC の性能 (段 2)
 (`biwa build` から native のプレイヤー用の配布物を組み立てる経路はまだ無い)
 
 ## 段ごとの状況
@@ -128,16 +140,36 @@ test1 の scene の Message Window をウィンドウに描き、クリックで
 - ICU4X は日本語の分かち書きの辞書が無いと整形のたびに警告を出す (改行位置には影響しない)。
   `icu_provider` の `logging` feature で `log` crate 経由にして黙らせている。辞書 (parley の `complex-scripts`) は数 MB あるので入れていない。
 
-段 3 での仮の扱い (段 4・5 で本物にする):
+### 段 4: canvas — 済
+
+test1 の scene の背景・立ち絵の出入り・揺れながらの移動・消え方を描き、`examples/canvas-check` で
+回転の向き・切り取り・レイヤーを確かめた (Xvfb + lavapipe)。
+
+- `CanvasObjects.ts` の規則をそのまま移した (`core::canvas`):
+  biwa 側のパラメータを正として毎フレーム射影する、積まれた `(オブジェクト, パラメータ)` だけを置き換える、
+  次の区間が前の区間の値を引き継ぐ、周期系は偏差だけを乗せる、sync 印の束をクリックで終端まで飛ばす
+  (時計ではなく区間の開始時刻をずらす)、大きさを指定しない w / h を画像の元の大きさから 1 度だけ決める。
+- 区間は番号で持つ表に置き、走っている列と sync の束は番号で指す (TypeScript 版は同じオブジェクトを両方から参照していた)。
+  どこからも指されなくなった区間は毎フレーム捨てる。
+- 演出待ち (`sys_await_transitions`) は sync の束が終わるまで返事を保留する。クリック待ちの途中のクリックは、
+  文字送りと sync の演出を両方畳む (短絡させない)。
+- 画像はエンジンが番号を振って読み込みを依頼するだけで (`Engine::take_image_requests`)、
+  `image` crate が裏のスレッドで読み、player がエンジン (元の大きさ) と `render` (テクスチャ) に渡す。
+  同じパスは 1 度だけ読む。読み込みが終わるまでそのオブジェクトは描かない (TypeScript 版と同じ)。
+- パスは `assets/` 基準の相対パスで、`..` や絶対パスは拒む (`api/assets.ts` と同じ)。
+- Canvas の外にはみ出した分は描かない (scissor)。レイヤーは番号順、同じレイヤーの中は作った順。
+
+段 4 までの仮の扱い (段 5 で本物にする):
 
 - UI を描かないので、エントリポイントが終わると最初の SceneStartButton を押したことにして scene を始める。
-- scene の MessageArea は、親を画面全体とみなして自分の大きさ・margin (左と上)・padding・背景色だけで置く
-  (`core::ui::UiTree::message_area_box`)。taffy のレイアウトは段 5。
-- canvas の syscall は受け取るだけで描かない。演出待ち (`sys_await_transitions`) はすぐ返る。
+- scene の Canvas と MessageArea は、親を画面全体とみなして自分の大きさ・margin (左と上)・padding・背景色だけで置き
+  (`core::ui::UiTree::element_box`)、Canvas → MessageArea の順に重ねる。taffy のレイアウトと本当の重なりの順は段 5。
+- ScenePage や Page の背景画像など、UI の画像は出ない。
 
 ## まだ無いもの
 
-- canvas (段 4)、UI (段 5)、サウンド・IME・ルビ・動画 (段 7〜10)。
+- UI (段 5)、サウンド・IME・ルビ・動画 (段 7〜10)。
+- アニメーションする GIF / WebP、画像の mipmap (大きく縮めるとちらつきうる)。
 - ゲームに同梱したフォントの登録と、`TextFont` property。
 - `biwa build` からこのプレイヤー用の配布物を組み立てる経路 (今は Tauri 版のプレイヤー用)。
 - 実機 (Windows / macOS / Linux の GPU、HiDPI、Wayland) での確認。

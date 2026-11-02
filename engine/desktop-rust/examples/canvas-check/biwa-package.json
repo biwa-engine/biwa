@@ -1,0 +1,14 @@
+{
+  "name": "canvascheck",
+  "version": "0.1.0",
+  "description": "Checks the native player's canvas: rotation direction, clipping to the Canvas element, layers.",
+  "dependencies": [
+    {
+      "name": "std",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

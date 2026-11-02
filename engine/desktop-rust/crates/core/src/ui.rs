@@ -1,12 +1,12 @@
 //! UI Element の木 (`docs/ui-api.md`)。
 //!
-//! 今は**段 3 までの仮の実装**で、レイアウトをしない (taffy による本物のレイアウトは段 5)。
+//! 今は**段 4 までの仮の実装**で、レイアウトをしない (taffy による本物のレイアウトは段 5)。
 //! 持っているのは次の 2 つだけである。
 //!
 //! - scene を始めるのに要るもの: Element の親子、預けたハンドラの番号、Window の ScenePage と
 //!   ScenePage の出力先 (`engine/nodejs/src/engine/ui/UIObjects.ts` の `handleSceneStartClick`)。
-//! - MessageArea の箱の property (大きさ・余白・背景)。Message Window を描くのに使う。
-//!   位置は親を画面全体とみなして決める ([`UiTree::message_area_box`])。
+//! - 箱の property (大きさ・余白・背景)。scene の MessageArea と Canvas を描くのに使う。
+//!   位置は親を画面全体とみなして決める ([`UiTree::element_box`])。
 //!
 //! kind の番号は `engine/nodejs/src/engine/api/ui.ts` が正で、std はそれを `.wat` に直書きしている。
 
@@ -139,6 +139,14 @@ struct Node {
     scene_message_area: Option<UiId>,
 }
 
+/// ScenePage と、その scene の出力先。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SceneOutputs {
+    pub page: UiId,
+    pub canvas: Option<UiId>,
+    pub message_area: Option<UiId>,
+}
+
 /// UI の契約違反 (std とエンジンの食い違い)。止まらない syscall から来るので、ログに出して捨てる。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiError(pub String);
@@ -149,9 +157,9 @@ impl std::fmt::Display for UiError {
     }
 }
 
-/// MessageArea を描くための箱。
+/// Element を描くための箱。
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MessageAreaBox {
+pub struct ElementBox {
     /// 背景を塗る範囲 (論理ピクセル)。
     pub frame: Rect,
     /// 文字を置く範囲 (padding の内側)。
@@ -296,22 +304,19 @@ impl UiTree {
         })
     }
 
-    /// Window の ScenePage と、その出力先の MessageArea。
-    pub fn scene_outputs_of_window(&self, window: UiId) -> Option<(UiId, UiId)> {
+    /// Window の ScenePage の出力先。
+    pub fn scene_outputs_of_window(&self, window: UiId) -> Option<SceneOutputs> {
         let page = self.nodes.get(&window)?.scene_page?;
-        let message_area = self.nodes.get(&page)?.scene_message_area?;
-        Some((page, message_area))
+        let node = self.nodes.get(&page)?;
+        Some(SceneOutputs { page, canvas: node.scene_canvas, message_area: node.scene_message_area })
     }
 
-    /// MessageArea `id` の箱。
+    /// Element `id` の箱。
     ///
-    /// **段 3 の仮の配置。** 親を画面全体とみなし、自分の大きさ・margin (左と上)・padding だけで決める。
+    /// **段 4 までの仮の配置。** 親を画面全体とみなし、自分の大きさ・margin (左と上)・padding だけで決める。
     /// percent の基準は CSS と同じく、幅・左右・上下の余白はどれも親の幅、高さは親の高さ。
-    pub fn message_area_box(&self, id: UiId, viewport: Viewport) -> Option<MessageAreaBox> {
+    pub fn element_box(&self, id: UiId, viewport: Viewport) -> Option<ElementBox> {
         let node = self.nodes.get(&id)?;
-        if node.kind != ElementKind::MessageArea {
-            return None;
-        }
         let p = &node.props;
         let (pw, ph) = (viewport.width, viewport.height);
         let w = p.width.map_or(pw, |s| s.resolve(viewport, pw));
@@ -324,7 +329,7 @@ impl UiTree {
             side(p.padding[2]),
             side(p.padding[3]),
         );
-        Some(MessageAreaBox { frame, content, background: p.background })
+        Some(ElementBox { frame, content, background: p.background })
     }
 
     fn node(&self, id: UiId) -> Result<&Node, UiError> {
@@ -406,7 +411,7 @@ mod tests {
         t.set_property(5, property::MARGIN_TOP, [1, 0, 0, 0], [0, 0], 63.888_9).unwrap();
         t.set_property(5, property::PADDING_LEFT, [2, 0, 0, 0], [0, 0], 2.5).unwrap();
         t.set_property(5, property::PADDING_TOP, [2, 0, 0, 0], [0, 0], 1.875).unwrap();
-        let b = t.message_area_box(5, vp).unwrap();
+        let b = t.element_box(5, vp).unwrap();
         assert!((b.frame.y - 460.0).abs() < 0.01);
         assert!((b.frame.height - 260.0).abs() < 0.01);
         assert!((b.content.x - 32.0).abs() < 0.01);

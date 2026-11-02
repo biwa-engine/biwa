@@ -1,7 +1,8 @@
 //! ウィンドウを出さずに動かす (段 1・段 2 の確認と計測、CI 用)。
 //!
 //! クリック待ちのたびに Message Window の文字をログに出し、自動でクリックして進める。
-//! sleep はエンジン時計をその分だけ進めて終わらせる (実時間は待たない)。
+//! sleep はエンジン時計をその分だけ進めて終わらせる (実時間は待たない)。演出待ちは演出を飛ばして終わらせる。
+//! 画像は読まない (読み込みの依頼は捨てる)。
 
 use std::time::{Duration, Instant};
 
@@ -33,6 +34,7 @@ pub fn run(options: &Options, wasm: Vec<u8>) -> Result<(), String> {
                         eprintln!("[biwa] {e}");
                     }
                 }
+                engine.take_image_requests();
             }
             VmEvent::Call(call, reply) => {
                 trace(options, &call);
@@ -66,6 +68,8 @@ fn drive(engine: &mut Engine, call: &Syscall, waits: &mut u32) {
             engine.click();
         }
         Syscall::Sleep { ms } => engine.update(*ms as f32),
+        // sync 印の演出を飛ばして終わらせる (クリックと同じ)。
+        Syscall::AwaitTransitions => engine.click(),
         _ => {}
     }
     if !engine.take_finished_call() {

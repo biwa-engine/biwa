@@ -11,6 +11,7 @@ members = [
   "crates/vm",
   "crates/player",
   "crates/text",
+  "crates/image",
   "crates/render",
   "crates/platform",
 ]
@@ -24,6 +25,7 @@ publish = false
 biwa-player-core = { path = "crates/core" }
 biwa-player-vm = { path = "crates/vm" }
 biwa-player-text = { path = "crates/text" }
+biwa-player-image = { path = "crates/image" }
 biwa-player-render = { path = "crates/render" }
 biwa-player-platform = { path = "crates/platform" }
 
@@ -37,6 +39,8 @@ etagere = "0.3"
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "1"
 raw-window-handle = "0.6"
+# ゲームの画像に使う形式だけを有効にする (アニメーションの GIF / WebP は後で)。
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 
 [profile.release]
 codegen-units = 1

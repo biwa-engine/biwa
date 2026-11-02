@@ -3,6 +3,7 @@
 //! 部品をつなぐだけである:
 //! - `platform` のイベントループから来るイベントを、エンジン (`core`) への操作に直す
 //! - `vm` からの知らせ (syscall) をエンジンに当て、止まる syscall の返事を保留する
+//! - エンジンの画像の読み込みの依頼を `image` に渡し、読めた画像をエンジン (大きさ) と `render` (テクスチャ) に渡す
 //! - 描き直しが要るときだけ、エンジンの描画の指示を `render` で描く (文字は `text`)
 
 use std::sync::Arc;
@@ -10,6 +11,8 @@ use std::time::{Duration, Instant};
 
 use biwa_player_core::engine::{CallStatus, Engine};
 use biwa_player_core::geometry::Viewport;
+use biwa_player_core::image::{DecodedImage, ImageHandle};
+use biwa_player_image::ImageLoader;
 use biwa_player_platform::{App, Event, Flow, Window, WindowOptions, WindowSize};
 use biwa_player_render::Renderer;
 use biwa_player_text::TextSystem;
@@ -24,12 +27,22 @@ pub fn run(options: &Options, wasm: Vec<u8>) -> Result<(), String> {
     let window = WindowOptions { title: "Biwa".into(), width: 1280.0, height: 720.0 };
     let collector = options.collector;
     let trace = options.trace;
+    let assets = options.assets.clone();
+    if assets.is_none() {
+        eprintln!("[biwa] no assets directory found; images will not be shown (pass --assets)");
+    }
     let mut spawn_error = None;
     let result = biwa_player_platform::run(window, |waker| {
+        let images = assets.and_then(|dir| {
+            let waker = waker.clone();
+            ImageLoader::new(dir, move || waker.wake())
+                .map_err(|e| eprintln!("[biwa] failed to start the image loader: {e}"))
+                .ok()
+        });
         let vm = Vm::spawn(wasm, VmOptions { collector }, move || waker.wake())
             .map_err(|e| spawn_error = Some(format!("failed to start the vm thread: {e}")))
             .ok();
-        Player::new(vm, trace)
+        Player::new(vm, images, trace)
     });
     if let Some(e) = spawn_error {
         return Err(e);
@@ -39,6 +52,9 @@ pub fn run(options: &Options, wasm: Vec<u8>) -> Result<(), String> {
 
 struct Player {
     vm: Option<Vm>,
+    images: Option<ImageLoader>,
+    /// 読めたが、描画の準備 (ウィンドウ) の前に届いた画像。
+    unuploaded: Vec<(ImageHandle, DecodedImage)>,
     engine: Engine,
     text: TextSystem,
     window: Option<Arc<Window>>,
@@ -52,9 +68,11 @@ struct Player {
 }
 
 impl Player {
-    fn new(vm: Option<Vm>, trace: bool) -> Self {
+    fn new(vm: Option<Vm>, images: Option<ImageLoader>, trace: bool) -> Self {
         Self {
             vm,
+            images,
+            unuploaded: Vec::new(),
             engine: Engine::new(),
             text: TextSystem::new(),
             window: None,
@@ -82,6 +100,7 @@ impl Player {
                             eprintln!("[biwa] {e}");
                         }
                     }
+                    self.request_images();
                 }
                 VmEvent::Call(call, reply) => {
                     if self.trace {
@@ -109,6 +128,35 @@ impl Player {
             }
             self.request_redraw();
         }
+    }
+
+    /// エンジンの画像の読み込みの依頼を、読む者に渡す。
+    fn request_images(&mut self) {
+        let requests = self.engine.take_image_requests();
+        if let Some(images) = &self.images {
+            for request in requests {
+                images.request(request);
+            }
+        }
+    }
+
+    /// 読めた画像を、エンジン (大きさ) と描画 (テクスチャ) に渡す。
+    fn drain_images(&mut self) {
+        while let Some((image, result)) = self.images.as_ref().and_then(ImageLoader::try_recv) {
+            match result {
+                Ok(decoded) => {
+                    self.engine.image_loaded(image, decoded.width, decoded.height);
+                    self.unuploaded.push((image, decoded));
+                }
+                Err(e) => eprintln!("[biwa] {e}"),
+            }
+        }
+        if let Some(renderer) = &mut self.renderer {
+            for (image, decoded) in self.unuploaded.drain(..) {
+                renderer.upload_image(image, &decoded);
+            }
+        }
+        self.request_redraw();
     }
 
     /// 保留中の止まる syscall が終わっていれば返事をする。
@@ -167,6 +215,7 @@ impl App for Player {
         }
         self.size = Some(size);
         self.window = Some(window);
+        self.drain_images();
         self.drain_vm()
     }
 
@@ -185,7 +234,10 @@ impl App for Player {
                 self.last_tick = None;
                 self.request_redraw();
             }
-            Event::Woken => return self.drain_vm(),
+            Event::Woken => {
+                self.drain_images();
+                return self.drain_vm();
+            }
             Event::Redraw => self.redraw(),
             Event::CloseRequested => return Flow::Exit,
         }
