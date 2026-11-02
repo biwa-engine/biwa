@@ -187,6 +187,7 @@ version = "0.1.0"
 dependencies = [
  "biwa-player-core",
  "biwa-player-image",
+ "biwa-player-layout",
  "biwa-player-platform",
  "biwa-player-render",
  "biwa-player-text",
@@ -203,6 +204,14 @@ version = "0.1.0"
 dependencies = [
  "biwa-player-core",
  "image",
+]
+
+[[package]]
+name = "biwa-player-layout"
+version = "0.1.0"
+dependencies = [
+ "biwa-player-core",
+ "taffy",
 ]
 
 [[package]]
@@ -2852,6 +2861,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "taffy"
+version = "0.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31f7bd2d97198df05186f93a3a3c306845f40e8b3c22bf9279cdd7e5cf5fea7d"
+dependencies = [
+ "serde",
+ "slotmap",
+ "smallvec",
 ]
 
 [[package]]

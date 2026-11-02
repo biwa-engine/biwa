@@ -9,10 +9,11 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use biwa_player_core::engine::{CallStatus, Engine};
+use biwa_player_core::engine::{CallStatus, Click, Engine};
 use biwa_player_core::geometry::Viewport;
 use biwa_player_core::image::{DecodedImage, ImageHandle};
 use biwa_player_image::ImageLoader;
+use biwa_player_layout::TaffyLayouter;
 use biwa_player_platform::{App, Event, Flow, Window, WindowOptions, WindowSize};
 use biwa_player_render::Renderer;
 use biwa_player_text::TextSystem;
@@ -57,6 +58,7 @@ struct Player {
     unuploaded: Vec<(ImageHandle, DecodedImage)>,
     engine: Engine,
     text: TextSystem,
+    layouter: TaffyLayouter,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     size: Option<WindowSize>,
@@ -75,6 +77,7 @@ impl Player {
             unuploaded: Vec::new(),
             engine: Engine::new(),
             text: TextSystem::new(),
+            layouter: TaffyLayouter::new(),
             window: None,
             renderer: None,
             size: None,
@@ -101,6 +104,7 @@ impl Player {
                         }
                     }
                     self.request_images();
+                    self.release_handlers();
                 }
                 VmEvent::Call(call, reply) => {
                     if self.trace {
@@ -111,15 +115,8 @@ impl Player {
                         CallStatus::Pending => self.pending = Some(reply),
                     }
                 }
-                VmEvent::AwaitingScene => match self.engine.first_scene_start() {
-                    // 段 3 までは UI を描かないので、最初の SceneStartButton を押したことにする。
-                    Ok(start) => {
-                        if let Some(vm) = &self.vm {
-                            vm.send(HostCommand::StartScene(start));
-                        }
-                    }
-                    Err(e) => eprintln!("[biwa] cannot start a scene: {e}"),
-                },
+                // UI が出揃った。scene は SceneStartButton が押されたら始める。
+                VmEvent::AwaitingScene => {}
                 VmEvent::Exited(_) => println!("[biwa] the scene finished"),
                 VmEvent::Failed(message) => {
                     eprintln!("error: {message}");
@@ -127,6 +124,16 @@ impl Player {
                 }
             }
             self.request_redraw();
+        }
+    }
+
+    /// 手放してよくなった関数の番号を vm に伝える (Element が消えたとき)。
+    fn release_handlers(&mut self) {
+        let released = self.engine.take_released_handlers();
+        if !released.is_empty()
+            && let Some(vm) = &self.vm
+        {
+            vm.send(HostCommand::Release(released));
         }
     }
 
@@ -183,10 +190,17 @@ impl Player {
         };
         let (width, height) = size.logical();
         let viewport = Viewport::new(width as f32, height as f32, size.scale as f32);
-        let list = self.engine.frame(viewport, &mut self.text);
+        let list = self.engine.frame(viewport, &mut self.text, &mut self.layouter);
         if let Err(e) = renderer.render(&list, &mut self.text) {
             eprintln!("[biwa] {e}");
         }
+    }
+
+    /// クリックや「進む」のあと。止まっている syscall を進め、描き直す。
+    fn after_input(&mut self) {
+        self.settle_call();
+        self.last_tick = None;
+        self.request_redraw();
     }
 
     fn request_redraw(&self) {
@@ -228,11 +242,21 @@ impl App for Player {
                 }
                 self.request_redraw();
             }
+            Event::Click { x, y } => {
+                match self.engine.click_at(x, y) {
+                    Ok(Click::StartScene(start)) => {
+                        if let Some(vm) = &self.vm {
+                            vm.send(HostCommand::StartScene(start));
+                        }
+                    }
+                    Ok(Click::Handled) => {}
+                    Err(e) => eprintln!("[biwa] {e}"),
+                }
+                self.after_input();
+            }
             Event::Advance => {
-                self.engine.click();
-                self.settle_call();
-                self.last_tick = None;
-                self.request_redraw();
+                self.engine.advance();
+                self.after_input();
             }
             Event::Woken => {
                 self.drain_images();

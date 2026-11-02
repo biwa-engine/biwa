@@ -15,5 +15,6 @@ biwa-player-core.workspace = true
 biwa-player-vm.workspace = true
 biwa-player-text.workspace = true
 biwa-player-image.workspace = true
+biwa-player-layout.workspace = true
 biwa-player-render.workspace = true
 biwa-player-platform.workspace = true

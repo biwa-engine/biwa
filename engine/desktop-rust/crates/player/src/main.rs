@@ -6,6 +6,7 @@
 //! - `biwa-player-vm`: game.wasm を wasmtime で動かす
 //! - `biwa-player-text`: 文字の整形とラスタライズ
 //! - `biwa-player-image`: 画像の読み込みとデコード
+//! - `biwa-player-layout`: UI のレイアウト
 //! - `biwa-player-render`: 描画
 //! - `biwa-player-platform`: ウィンドウ・入力・イベントループ
 //!

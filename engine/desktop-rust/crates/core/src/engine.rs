@@ -5,9 +5,8 @@
 //! 呼んだ側 (player) が返事を保留する。エンジンは返事の手段 (チャネル) を知らない。
 //! 画像も同じで、エンジンは番号を振って読み込みを依頼するだけである ([`Engine::take_image_requests`])。
 //!
-//! 段 4 までの範囲:
-//! - Content API (Message Window と文字送り) と Canvas API (オブジェクトと遷移) は本物。
-//! - UI は scene を始めるのに要る分と、scene の出力先 (Canvas・MessageArea) の箱だけ (`ui.rs`)。
+//! 画面は UI の木 (`ui.rs`) をレイアウトして (`Layouter`)、木の順に描く。
+//! 背景・画像・文字のほか、Canvas の中に canvas オブジェクトを、MessageArea の中に Message Window を描く。
 
 use std::collections::HashMap;
 
@@ -16,12 +15,13 @@ use crate::content::{Fragment, MessageContent, SizeUnit};
 use crate::draw::{DrawItem, DrawList};
 use crate::geometry::{Color, Rect, Viewport};
 use crate::image::{ImageHandle, ImageRequest, normalize_asset_path};
+use crate::layout::{LayoutBox, LayoutTree, Layouter};
 use crate::syscall::{SceneStart, Syscall, UiId};
-use crate::text::{ParagraphStyle, ShapedText, TextShaper, TextSpan, TextStyle};
-use crate::ui::{ElementKind, SceneOutputs, UiError, UiTree};
+use crate::text::{LineHeight, ParagraphStyle, ShapedText, TextShaper, TextSpan, TextStyle};
+use crate::ui::{Background, ElementKind, LayoutSlot, SceneOutputs, UiAction, UiError, UiTree};
 
-/// 文字の行の高さ (文字の大きさに対する倍率)。TypeScript 版の `line-height: 1.8` と揃える。
-const LINE_HEIGHT: f32 = 1.8;
+/// Message Window の文字の行の高さ (文字の大きさに対する倍率)。TypeScript 版の `line-height: 1.8` と揃える。
+const LINE_HEIGHT: LineHeight = LineHeight::Relative(1.8);
 
 /// 止まる syscall の進み具合。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +30,15 @@ pub enum CallStatus {
     Done,
     /// まだ。終わったら [`Engine::take_finished_call`] が true を返す。
     Pending,
+}
+
+/// 画面を押した結果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Click {
+    /// 何も起きなかったか、エンジンの中で済んだ (Page の切り替え・文字送りの完了など)。
+    Handled,
+    /// SceneStartButton が押された。呼んだ側が vm に scene を始めさせる。
+    StartScene(SceneStart),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -46,9 +55,19 @@ enum PendingCall {
 #[derive(Debug)]
 struct ShapeCache {
     generation: u64,
-    width: f32,
-    viewport: (u32, u32, u32),
+    width: u32,
+    scale: u32,
     shaped: ShapedText,
+}
+
+/// レイアウトの結果の使い回し。UI と画面の大きさが同じなら計算し直さない。
+#[derive(Debug)]
+struct LayoutCache {
+    generation: u64,
+    viewport: (u32, u32),
+    tree: LayoutTree,
+    slots: Vec<LayoutSlot>,
+    boxes: Vec<LayoutBox>,
 }
 
 #[derive(Debug, Default)]
@@ -62,7 +81,13 @@ pub struct Engine {
     call_finished: bool,
     /// 今見えている ScenePage とその出力先。scene が始まると決まる。
     scene: Option<SceneOutputs>,
-    shapes: HashMap<UiId, ShapeCache>,
+    /// Message Window の整形の使い回し (MessageArea ごと)。
+    message_shapes: HashMap<UiId, ShapeCache>,
+    /// UI の文字の整形の使い回し (Element ごと)。
+    text_shapes: HashMap<UiId, ShapeCache>,
+    layout: Option<LayoutCache>,
+    /// 最後に描いたフレームの、押せる Element とその範囲 (論理ピクセル、描いた順)。
+    targets: Vec<(UiId, Rect)>,
     /// パス → 画像の番号。同じパスは 1 度だけ読む。
     images: HashMap<String, ImageHandle>,
     /// 読めた画像の元の大きさ。
@@ -78,6 +103,17 @@ impl Engine {
 
     /// 止まらない syscall を当てる。契約違反はエラーで返す (呼んだ側はログに出して続ける)。
     pub fn apply(&mut self, syscall: Syscall) -> Result<(), UiError> {
+        let result = self.apply_inner(syscall);
+        // 消えた Element に紐づく状態を捨てる (Box に積み直したときなど)。
+        for id in self.ui.take_destroyed() {
+            self.contents.remove(&id);
+            self.message_shapes.remove(&id);
+            self.text_shapes.remove(&id);
+        }
+        result
+    }
+
+    fn apply_inner(&mut self, syscall: Syscall) -> Result<(), UiError> {
         match syscall {
             Syscall::ContentPushText {
                 ui,
@@ -107,8 +143,7 @@ impl Engine {
                 if self.ui.kind(canvas) != Some(ElementKind::Canvas) {
                     return Err(UiError(format!("ui element {canvas} is not a Canvas")));
                 }
-                let path = normalize_asset_path(&path).map_err(UiError)?;
-                let image = self.image_handle(path);
+                let image = register_image(&mut self.images, &mut self.image_requests, &path).map_err(UiError)?;
                 let values = [
                     f64::from(x),
                     f64::from(y),
@@ -136,11 +171,13 @@ impl Engine {
             Syscall::UiSetProperty { id, kind, u1, u2, u3, u4, i1, i2, f } => {
                 self.ui.set_property(id, kind, [u1, u2, u3, u4], [i1, i2], f)?;
             }
-            // 文字列の property (Text・画像・id ...) は段 5 で扱う。
-            Syscall::UiSetPropertyWithString { .. } => {}
+            Syscall::UiSetPropertyWithString { id, kind, s, .. } => {
+                let (images, requests) = (&mut self.images, &mut self.image_requests);
+                self.ui.set_string_property(id, kind, s, &mut |path| register_image(images, requests, path))?;
+            }
             Syscall::UiPushChild { parent, child } => self.ui.push_child(parent, child)?,
             Syscall::UiSetHandler { id, kind, handle } => self.ui.set_handler(id, kind, handle)?,
-            Syscall::EnterScenePage { window } => self.enter_scene_page(window),
+            Syscall::EnterScenePage { window } => self.scene = Some(self.ui.enter_scene_page(window)?),
 
             Syscall::Wait | Syscall::AwaitTransitions | Syscall::Sleep { .. } => {
                 return Err(UiError(format!(
@@ -190,11 +227,32 @@ impl Engine {
         }
     }
 
-    /// 画面がクリックされた。
+    /// 画面の (`x`, `y`) (論理ピクセル) が押された。
     ///
-    /// 進行中のもの (文字送り・sync 印の演出) があれば、まずそれを畳む。テキストを進めるにはもう一度クリックが要る
+    /// 押せる Element (Link・SceneStartButton) に当たればそれを押す。当たらなければ「進む」([`Engine::advance`])。
+    /// Link・SceneStartButton のクリックは進むには使われない (TypeScript 版でクリックを host に伝えないのと同じ)。
+    pub fn click_at(&mut self, x: f32, y: f32) -> Result<Click, UiError> {
+        let hit = self
+            .targets
+            .iter()
+            .rev()
+            .find(|(_, r)| x >= r.x && y >= r.y && x < r.x + r.width && y < r.y + r.height)
+            .map(|(id, _)| *id);
+        let Some(id) = hit else {
+            self.advance();
+            return Ok(Click::Handled);
+        };
+        match self.ui.click(id)? {
+            Some(UiAction::StartScene(start)) => Ok(Click::StartScene(start)),
+            Some(UiAction::Navigated) | None => Ok(Click::Handled),
+        }
+    }
+
+    /// 「進む」(画面のクリック・Enter など)。
+    ///
+    /// 進行中のもの (文字送り・sync 印の演出) があれば、まずそれを畳む。テキストを進めるにはもう一度要る
     /// (`engine/nodejs/src/engine/api/message.ts` の `waitForClick`)。
-    pub fn click(&mut self) {
+    pub fn advance(&mut self) {
         let mut skipped = false;
         // 短絡させない。どの MessageArea の送りも、sync の演出も畳む。
         for content in self.contents.values_mut() {
@@ -223,13 +281,18 @@ impl Engine {
         std::mem::take(&mut self.image_requests)
     }
 
+    /// 手放してよくなった関数の番号 (vm に伝える)。
+    pub fn take_released_handlers(&mut self) -> Vec<u32> {
+        self.ui.take_released_handlers()
+    }
+
     /// 画像が読めた。
     pub fn image_loaded(&mut self, image: ImageHandle, width: u32, height: u32) {
         self.image_sizes.insert(image, (width, height));
         self.canvas.image_loaded(image, width, height);
     }
 
-    /// 最初の SceneStartButton で scene を始めるのに要るもの (段 5 までは UI を描かないので自動で押す)。
+    /// 最初の SceneStartButton で scene を始めるのに要るもの (ウィンドウを持たない動かし方で自動で押す)。
     pub fn first_scene_start(&self) -> Result<SceneStart, UiError> {
         self.ui.first_scene_start()
     }
@@ -244,89 +307,178 @@ impl Engine {
     }
 
     /// 1 フレームぶんの描画の指示を組み立てる。
-    ///
-    /// scene の Canvas を描いてから Message Window を重ねる (test1 などの `Layers` の push 順。
-    /// 本物の重なりの順は UI のレイアウトと一緒に段 5 で決める)。
-    pub fn frame(&mut self, viewport: Viewport, shaper: &mut dyn TextShaper) -> DrawList {
+    pub fn frame(&mut self, viewport: Viewport, shaper: &mut dyn TextShaper, layouter: &mut dyn Layouter) -> DrawList {
+        self.ensure_layout(viewport, shaper, layouter);
         let mut list = DrawList { clear: Color::BLACK, items: Vec::new() };
-        let Some(scene) = self.scene else {
+        self.targets.clear();
+        let Some(layout) = self.layout.take() else {
             return list;
         };
-        let s = viewport.scale;
-
-        if let Some(canvas) = scene.canvas
-            && let Some(canvas_box) = self.ui.element_box(canvas, viewport)
-        {
-            let area = scaled(canvas_box.frame, s);
-            if let Some(color) = canvas_box.background {
-                list.items.push(DrawItem::Rect { rect: area, color });
-            }
-            // canvas の外にはみ出した分は描かない。
-            list.items.push(DrawItem::Clip(Some(area)));
-            self.canvas.draw(canvas, area, &mut list.items);
-            list.items.push(DrawItem::Clip(None));
-        }
-
-        if let Some(area) = scene.message_area {
-            self.draw_message_area(area, viewport, shaper, &mut list.items);
-        }
+        self.draw_layout_node(&layout, layout.tree.root, viewport, shaper, &mut list.items);
+        self.layout = Some(layout);
         list
     }
 
-    fn draw_message_area(
+    fn ensure_layout(&mut self, viewport: Viewport, shaper: &mut dyn TextShaper, layouter: &mut dyn Layouter) {
+        let key = (viewport.width.to_bits(), viewport.height.to_bits());
+        if self.layout.as_ref().is_some_and(|l| l.generation == self.ui.generation() && l.viewport == key) {
+            return;
+        }
+        let (tree, slots) = self.ui.layout_tree(viewport);
+        let boxes = layouter.layout(&tree, viewport, shaper);
+        self.layout = Some(LayoutCache { generation: self.ui.generation(), viewport: key, tree, slots, boxes });
+    }
+
+    fn draw_layout_node(
         &mut self,
-        area: UiId,
+        layout: &LayoutCache,
+        index: usize,
         viewport: Viewport,
         shaper: &mut dyn TextShaper,
         out: &mut Vec<DrawItem>,
     ) {
-        let Some(area_box) = self.ui.element_box(area, viewport) else {
+        let node = &layout.tree.nodes[index];
+        if node.style.hidden {
             return;
-        };
-        let s = viewport.scale;
-        if let Some(color) = area_box.background {
-            out.push(DrawItem::Rect { rect: scaled(area_box.frame, s), color });
         }
+        let s = viewport.scale;
+        let b = layout.boxes.get(index).copied().unwrap_or_default();
+        match layout.slots[index] {
+            LayoutSlot::Root => {}
+            LayoutSlot::Element(id) => {
+                let Some(view) = self.ui.node_view(id) else { return };
+                let frame = scaled(b.frame, s);
+                match view.background {
+                    Some(Background::Color(color)) => out.push(DrawItem::Rect { rect: frame, color }),
+                    Some(Background::Image(image)) => self.draw_cover(image, frame, out),
+                    None => {}
+                }
+                match view.kind {
+                    ElementKind::Image => {
+                        if let Some(image) = view.image {
+                            self.draw_cover(image, frame, out);
+                        }
+                    }
+                    ElementKind::Canvas => {
+                        // canvas の外にはみ出した分は描かない。
+                        out.push(DrawItem::Clip(Some(frame)));
+                        self.canvas.draw(id, frame, out);
+                        out.push(DrawItem::Clip(None));
+                    }
+                    ElementKind::MessageArea => self.draw_message_area(id, scaled(b.content, s), viewport, shaper, out),
+                    _ => {}
+                }
+                if view.clickable {
+                    self.targets.push((id, b.frame));
+                }
+            }
+            LayoutSlot::Text(id) => {
+                if let Some(text) = &node.text {
+                    self.draw_text(id, text, scaled(b.content, s), s, shaper, out);
+                }
+            }
+        }
+        for child in &node.children {
+            self.draw_layout_node(layout, *child, viewport, shaper, out);
+        }
+    }
 
-        let Some(content) = self.contents.get(&area) else {
+    /// 画像を `area` いっぱいに、縦横比を保って敷く (`background-size: cover; background-position: center`)。
+    fn draw_cover(&self, image: ImageHandle, area: Rect, out: &mut Vec<DrawItem>) {
+        let Some(&(w, h)) = self.image_sizes.get(&image) else { return };
+        if w == 0 || h == 0 || area.width <= 0.0 || area.height <= 0.0 {
             return;
-        };
-        let content_rect = scaled(area_box.content, s);
-        let key = (
-            viewport.width.to_bits(),
-            viewport.height.to_bits(),
-            viewport.scale.to_bits(),
-        );
-        let fresh = self.shapes.get(&area).is_some_and(|c| {
-            c.generation == content.generation() && c.width == content_rect.width && c.viewport == key
+        }
+        let scale = (area.width / w as f32).max(area.height / h as f32);
+        out.push(DrawItem::Clip(Some(area)));
+        out.push(DrawItem::Image {
+            image,
+            center_x: area.x + area.width / 2.0,
+            center_y: area.y + area.height / 2.0,
+            width: w as f32 * scale,
+            height: h as f32 * scale,
+            rotation: 0.0,
+            alpha: 1.0,
+        });
+        out.push(DrawItem::Clip(None));
+    }
+
+    /// UI の文字 (Box・Link の `text`) を `area` (物理ピクセル) に描く。
+    fn draw_text(
+        &mut self,
+        id: UiId,
+        text: &crate::layout::LayoutText,
+        area: Rect,
+        scale: f32,
+        shaper: &mut dyn TextShaper,
+        out: &mut Vec<DrawItem>,
+    ) {
+        let generation = self.ui.generation();
+        let fresh = self.text_shapes.get(&id).is_some_and(|c| {
+            c.generation == generation && c.width == area.width.to_bits() && c.scale == scale.to_bits()
+        });
+        if !fresh {
+            let spans: Vec<TextSpan> = text
+                .spans
+                .iter()
+                .map(|span| TextSpan {
+                    text: span.text.clone(),
+                    style: TextStyle { size: span.style.size * scale, ..span.style.clone() },
+                })
+                .collect();
+            // レイアウトが測った幅で折り返す。少しの誤差で余計に折り返さないよう 1 px 足す。
+            let shaped = shaper.shape(
+                &spans,
+                ParagraphStyle { max_width: area.width + 1.0, line_height: text.line_height, center: text.center },
+            );
+            self.text_shapes.insert(
+                id,
+                ShapeCache { generation, width: area.width.to_bits(), scale: scale.to_bits(), shaped },
+            );
+        }
+        for glyph in &self.text_shapes[&id].shaped.glyphs {
+            out.push(DrawItem::Glyph { key: glyph.key, x: area.x + glyph.x, y: area.y + glyph.y, color: glyph.color });
+        }
+    }
+
+    /// Message Window を `area` (MessageArea の padding の内側。物理ピクセル) に描く。
+    fn draw_message_area(
+        &mut self,
+        id: UiId,
+        area: Rect,
+        viewport: Viewport,
+        shaper: &mut dyn TextShaper,
+        out: &mut Vec<DrawItem>,
+    ) {
+        let Some(content) = self.contents.get(&id) else { return };
+        let s = viewport.scale;
+        let fresh = self.message_shapes.get(&id).is_some_and(|c| {
+            c.generation == content.generation() && c.width == area.width.to_bits() && c.scale == s.to_bits()
         });
         if !fresh {
             let spans: Vec<TextSpan> = content
                 .fragments()
                 .map(|f| TextSpan {
                     text: f.text.clone(),
-                    style: TextStyle { size: font_size(f, viewport) * s, weight: f.weight, color: f.color },
+                    style: TextStyle { size: font_size(f, viewport) * s, weight: f.weight, color: f.color, family: None },
                 })
                 .collect();
-            let shaped = shaper.shape(
-                &spans,
-                ParagraphStyle { max_width: content_rect.width, line_height: LINE_HEIGHT },
-            );
-            self.shapes.insert(
-                area,
-                ShapeCache { generation: content.generation(), width: content_rect.width, viewport: key, shaped },
+            let shaped =
+                shaper.shape(&spans, ParagraphStyle { max_width: area.width, line_height: LINE_HEIGHT, center: false });
+            self.message_shapes.insert(
+                id,
+                ShapeCache { generation: content.generation(), width: area.width.to_bits(), scale: s.to_bits(), shaped },
             );
         }
-
-        for glyph in &self.shapes[&area].shaped.glyphs {
+        for glyph in &self.message_shapes[&id].shaped.glyphs {
             // まだ出ていない文字は描かない (場所は整形で取ってあるので行は動かない)。
             if glyph.char_index >= content.revealed(glyph.span) {
                 continue;
             }
             out.push(DrawItem::Glyph {
                 key: glyph.key,
-                x: content_rect.x + glyph.x,
-                y: content_rect.y + glyph.y,
+                x: area.x + glyph.x,
+                y: area.y + glyph.y,
                 color: glyph.color,
             });
         }
@@ -338,28 +490,26 @@ impl Engine {
             .ok_or_else(|| UiError(format!("ui element {ui} is not a MessageArea")))
     }
 
-    /// パスの画像の番号。初めてのパスなら番号を振って読み込みを依頼する。
-    fn image_handle(&mut self, path: String) -> ImageHandle {
-        if let Some(image) = self.images.get(&path) {
-            return *image;
-        }
-        let image = ImageHandle(self.images.len() as u32 + 1);
-        self.images.insert(path.clone(), image);
-        self.image_requests.push(ImageRequest { image, path });
-        image
-    }
-
-    fn enter_scene_page(&mut self, window: UiId) {
-        match self.ui.scene_outputs_of_window(window) {
-            Some(outputs) => self.scene = Some(outputs),
-            None => eprintln!("[biwa] Window {window} has no ScenePage to enter"),
-        }
-    }
-
     fn finish_call(&mut self) {
         self.call = None;
         self.call_finished = true;
     }
+}
+
+/// パスの画像の番号。初めてのパスなら番号を振って読み込みを依頼する。
+fn register_image(
+    images: &mut HashMap<String, ImageHandle>,
+    requests: &mut Vec<ImageRequest>,
+    path: &str,
+) -> Result<ImageHandle, String> {
+    let path = normalize_asset_path(path)?;
+    if let Some(image) = images.get(&path) {
+        return Ok(*image);
+    }
+    let image = ImageHandle(images.len() as u32 + 1);
+    images.insert(path.clone(), image);
+    requests.push(ImageRequest { image, path });
+    Ok(image)
 }
 
 fn font_size(fragment: &Fragment, viewport: Viewport) -> f32 {
@@ -397,7 +547,17 @@ mod tests {
                     });
                 }
             }
-            ShapedText { glyphs, height: 20.0 }
+            ShapedText { glyphs, width: 100.0, height: 20.0 }
+        }
+    }
+
+    /// どのノードも画面全体に置くだけのレイアウト。
+    struct Full;
+
+    impl Layouter for Full {
+        fn layout(&mut self, tree: &LayoutTree, viewport: Viewport, _: &mut dyn TextShaper) -> Vec<LayoutBox> {
+            let r = Rect::new(0.0, 0.0, viewport.width, viewport.height);
+            vec![LayoutBox { frame: r, content: r }; tree.nodes.len()]
         }
     }
 
@@ -438,7 +598,7 @@ mod tests {
     }
 
     fn glyph_count(e: &mut Engine) -> usize {
-        let list = e.frame(Viewport::new(1280.0, 720.0, 1.0), &mut Mono);
+        let list = e.frame(Viewport::new(1280.0, 720.0, 1.0), &mut Mono, &mut Full);
         list.items.iter().filter(|i| matches!(i, DrawItem::Glyph { .. })).count()
     }
 
@@ -461,7 +621,7 @@ mod tests {
         push(&mut e, "ab", 0.0);
         e.apply(Syscall::ContentFlush { ui: 4 }).unwrap();
         e.update(0.0);
-        let list = e.frame(Viewport::new(1280.0, 720.0, 2.0), &mut Mono);
+        let list = e.frame(Viewport::new(1280.0, 720.0, 2.0), &mut Mono, &mut Full);
         // canvas (切り取りの範囲だけ) の上に、背景が先 (下)、文字が後 (上)。HiDPI では物理ピクセルに直っている。
         let full = Rect::new(0.0, 0.0, 2560.0, 1440.0);
         assert_eq!(list.items[0], DrawItem::Clip(Some(full)));
@@ -477,11 +637,11 @@ mod tests {
         e.apply(Syscall::ContentFlush { ui: 4 }).unwrap();
         assert_eq!(e.begin_call(&Syscall::Wait), CallStatus::Pending);
 
-        e.click(); // 1 回目は送りを畳むだけ
+        e.advance(); // 1 回目は送りを畳むだけ
         assert!(!e.take_finished_call());
         assert_eq!(glyph_count(&mut e), 4);
 
-        e.click(); // 2 回目で進む
+        e.advance(); // 2 回目で進む
         assert!(e.take_finished_call());
         assert!(!e.take_finished_call());
     }
@@ -521,7 +681,7 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].path, "a.png");
         let images = |e: &mut Engine| {
-            e.frame(Viewport::new(100.0, 100.0, 1.0), &mut Mono)
+            e.frame(Viewport::new(100.0, 100.0, 1.0), &mut Mono, &mut Full)
                 .items
                 .iter()
                 .filter(|i| matches!(i, DrawItem::Image { .. }))
@@ -572,10 +732,10 @@ mod tests {
             .unwrap();
         e.apply(Syscall::StartTransitions { sync: 1 }).unwrap();
         assert_eq!(e.begin_call(&Syscall::Wait), CallStatus::Pending);
-        e.click();
+        e.advance();
         assert!(!e.take_finished_call());
         assert!(!e.is_animating());
-        e.click();
+        e.advance();
         assert!(e.take_finished_call());
     }
 
@@ -583,6 +743,47 @@ mod tests {
     fn await_without_sync_returns_at_once() {
         let mut e = engine_with_scene();
         assert_eq!(e.begin_call(&Syscall::AwaitTransitions), CallStatus::Done);
+    }
+
+    /// 画面の右半分を SceneStartButton、ほかを画面全体に置くレイアウト。
+    struct ButtonOnRight;
+
+    impl Layouter for ButtonOnRight {
+        fn layout(&mut self, tree: &LayoutTree, viewport: Viewport, _: &mut dyn TextShaper) -> Vec<LayoutBox> {
+            let full = Rect::new(0.0, 0.0, viewport.width, viewport.height);
+            let right = Rect::new(viewport.width / 2.0, 0.0, viewport.width / 2.0, viewport.height);
+            (0..tree.nodes.len())
+                .map(|i| {
+                    let r = if i == tree.nodes.len() - 1 { right } else { full };
+                    LayoutBox { frame: r, content: r }
+                })
+                .collect()
+        }
+    }
+
+    #[test]
+    fn clicks_hit_buttons_or_advance() {
+        let mut e = engine_with_scene();
+        // Window 1 に Page 5 と SceneStartButton 6 を足す (ScenePage は scene に入るまで隠れる)。
+        let calls = [
+            Syscall::UiCreate { id: 5, kind: 1 },
+            Syscall::UiCreate { id: 6, kind: 12 },
+            Syscall::UiSetHandler { id: 1, kind: 0, handle: 10 },
+            Syscall::UiSetHandler { id: 6, kind: 1, handle: 11 },
+            Syscall::UiPushChild { parent: 5, child: 6 },
+            Syscall::UiPushChild { parent: 1, child: 5 },
+        ];
+        for c in calls {
+            e.apply(c).unwrap();
+        }
+        e.frame(Viewport::new(100.0, 100.0, 1.0), &mut Mono, &mut ButtonOnRight);
+        let Click::StartScene(start) = e.click_at(75.0, 50.0).unwrap() else { panic!("the button was not hit") };
+        assert_eq!((start.on_click, start.main_scene, start.message_area), (11, 10, 4));
+
+        // ボタンの外のクリックは「進む」(クリック待ちを終わらせる)。
+        assert_eq!(e.begin_call(&Syscall::Wait), CallStatus::Pending);
+        assert_eq!(e.click_at(25.0, 50.0).unwrap(), Click::Handled);
+        assert!(e.take_finished_call());
     }
 
     #[test]

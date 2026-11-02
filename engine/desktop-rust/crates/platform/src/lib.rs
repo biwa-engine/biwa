@@ -55,7 +55,9 @@ impl WindowSize {
 pub enum Event {
     /// 大きさ (か HiDPI の倍率) が変わった。
     Resized(WindowSize),
-    /// クリック (か Enter / Space)。ノベルの「進む」。
+    /// 画面のクリック。位置は論理ピクセル (ウィンドウの左上が原点)。
+    Click { x: f32, y: f32 },
+    /// Enter / Space。ノベルの「進む」。
     Advance,
     /// 描く時が来た。
     Redraw,
@@ -144,7 +146,7 @@ pub fn run<A: App>(options: WindowOptions, make_app: impl FnOnce(Waker) -> A) ->
         .map_err(|e| PlatformError(format!("failed to start the event loop: {e}")))?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let app = make_app(Waker(event_loop.create_proxy()));
-    let mut handler = Handler { options, app, window: None, error: None };
+    let mut handler = Handler { options, app, window: None, cursor: (0.0, 0.0), error: None };
     event_loop
         .run_app(&mut handler)
         .map_err(|e| PlatformError(format!("the event loop failed: {e}")))?;
@@ -155,6 +157,8 @@ struct Handler<A> {
     options: WindowOptions,
     app: A,
     window: Option<Arc<Window>>,
+    /// マウスの位置 (物理ピクセル)。
+    cursor: (f64, f64),
     error: Option<PlatformError>,
 }
 
@@ -197,7 +201,14 @@ impl<A: App> ApplicationHandler for Handler<A> {
                 Event::Resized(window.size())
             }
             WindowEvent::RedrawRequested => Event::Redraw,
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => Event::Advance,
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor = (position.x, position.y);
+                return;
+            }
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
+                let scale = self.window.as_ref().map_or(1.0, |w| w.size().scale);
+                Event::Click { x: (self.cursor.0 / scale) as f32, y: (self.cursor.1 / scale) as f32 }
+            }
             WindowEvent::KeyboardInput {
                 event: KeyEvent { state: ElementState::Pressed, logical_key, repeat: false, .. },
                 ..

@@ -5,8 +5,9 @@ wasm ランタイム (wasmtime) を同梱するので、WasmGC が動くかど�
 方針とクレートの選定は `~/memo/biwa-native-runtime-rust.md` (以下「メモ」)、
 配布の仕組み (ゲームを焼き込まないプレイヤーを CI でビルドしておく) は `docs/biwa-prebuilt-player.md`。
 
-状況: メモ §11 の **段 1 (wasmtime で動かす)・段 2 (GC の性能)・段 3 (文字)・段 4 (canvas) が済み**。
-段 5 (UI) はまだなので、画面に出るのは scene の Canvas と Message Window だけである (タイトルなどの Page は出ない)。
+状況: メモ §11 の **段 1 (wasmtime で動かす)〜段 5 (UI) が済み**。今の TypeScript 版のエンジンと同じ機能が揃った
+(タイトルなどの Page・Link での遷移・SceneStartButton で scene を始める・Canvas・Message Window)。
+次は段 6 (3 OS の実機)。
 
 ## crate の構成
 
@@ -21,18 +22,20 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
  ├ vm         wasmtime
  ├ text       parley + swash            (core::text のトレイトを実装する)
  ├ image      image                     (画像の読み込みとデコード。裏のスレッドで)
+ ├ layout     taffy                     (UI のレイアウト。core::layout のトレイトを実装する)
  ├ render     wgpu + etagere            (core::draw の描画リストを描く)
  └ platform   winit                     (ウィンドウ・入力・イベントループ)
 ```
 
 | crate | 中身 |
 | --- | --- |
-| `core` | ゲームからの依頼 (`syscall`)、それを受けて状態を変え描画の指示を組み立てるエンジン (`engine`)、Message Window の中身と文字送り (`content`)、canvas オブジェクトと遷移 (`canvas` / `transition`)、画像の番号と読み込みの依頼 (`image`)、UI Element の木 (`ui`。段 3 までは scene を始めるのに要る分だけ)、文字の整形とラスタライズのインターフェース (`text`)、描画の指示 (`draw`) |
+| `core` | ゲームからの依頼 (`syscall`)、それを受けて状態を変え描画の指示を組み立てるエンジン (`engine`)、Message Window の中身と文字送り (`content`)、canvas オブジェクトと遷移 (`canvas` / `transition`)、画像の番号と読み込みの依頼 (`image`)、UI のレイアウトのインターフェース (`layout`)、UI Element の木 (`ui`。Page の切り替え・Link・SceneStartButton・文字の書式の継承)、文字の整形とラスタライズのインターフェース (`text`)、描画の指示 (`draw`) |
 | `vm` | game.wasm を専用の OS スレッドで動かす。import (`biwa:engine` / `biwa:runtime`) を実装し、エンジンに用がある syscall を `core::syscall::Syscall` にして送る |
 | `text` | 断片の列を 1 つの段落として parley で整形し、グリフを swash でラスタライズする。禁則処理 (`kinsoku.rs`) |
 | `image` | 画像のアセットを裏のスレッドで読んでデコードし、`core::image::DecodedImage` で返す |
+| `layout` | `core` が作ったレイアウト用の木を taffy (block / flex / grid) で計算する。CSS への写し方は TypeScript 版の DOM と同じ |
 | `render` | 描画の指示を wgpu で描く。塗りの矩形・グリフ・画像を「中心・大きさ・回転を持つインスタンスの矩形」として 1 本のパイプラインで描く。グリフはアルファだけのアトラス (etagere) に、画像は 1 枚ずつテクスチャに載せ、テクスチャが替わるところで描画の呼び出しを区切る。切り取りは scissor |
-| `platform` | winit のイベントループを、自前のイベント (大きさの変化・進む・描き直し・起こされた・閉じる) にして渡す |
+| `platform` | winit のイベントループを、自前のイベント (大きさの変化・クリック (位置つき)・進む・描き直し・起こされた・閉じる) にして渡す |
 | `player` | 起動時の引数、ウィンドウを出す動かし方 (`windowed.rs`)、出さない動かし方 (`--headless`) |
 
 各 crate が直接依存する外部 crate (`cargo tree --depth 1` で確かめた):
@@ -43,6 +46,7 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
 | `vm` | wasmtime |
 | `text` | parley, swash (と、ICU の警告を黙らせるための icu_provider の feature) |
 | `image` | image |
+| `layout` | taffy |
 | `render` | wgpu, etagere, bytemuck, pollster, raw-window-handle |
 | `platform` | winit, raw-window-handle |
 | `player` | なし (自前の crate だけ) |
@@ -74,10 +78,11 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
 ```sh
 cargo build --release -p biwa-player
 
-# ウィンドウを出す。クリック (か Enter / Space) で進む
+# ウィンドウを出す。Link・SceneStartButton はクリックで押し、それ以外のクリック (か Enter / Space) で進む
 ./target/release/biwa-player --wasm <game.wasm> [--assets <DIR>]
 
-# ウィンドウを出さずに最後まで進める (クリック待ちは自動で進め、Message Window の文字をログに出す)
+# ウィンドウを出さずに最後まで進める (最初の SceneStartButton を自動で押し、クリック待ちは自動で進め、
+# Message Window の文字をログに出す)
 ./target/release/biwa-player --headless --wasm <game.wasm>
 #   --trace         syscall を 1 つずつ出す
 #   --collector X   wasmtime の GC の方式 (auto / drc / null)
@@ -159,16 +164,41 @@ test1 の scene の背景・立ち絵の出入り・揺れながらの移動・�
 - パスは `assets/` 基準の相対パスで、`..` や絶対パスは拒む (`api/assets.ts` と同じ)。
 - Canvas の外にはみ出した分は描かない (scissor)。レイヤーは番号順、同じレイヤーの中は作った順。
 
-段 4 までの仮の扱い (段 5 で本物にする):
+### 段 5: UI — 済
 
-- UI を描かないので、エントリポイントが終わると最初の SceneStartButton を押したことにして scene を始める。
-- scene の Canvas と MessageArea は、親を画面全体とみなして自分の大きさ・margin (左と上)・padding・背景色だけで置き
-  (`core::ui::UiTree::element_box`)、Canvas → MessageArea の順に重ねる。taffy のレイアウトと本当の重なりの順は段 5。
-- ScenePage や Page の背景画像など、UI の画像は出ない。
+test1 のタイトル (Box の文字・Image・Link)、2 ページ目 (Page の背景画像・`Layers` で重ねた画像・2 つのボタン)、
+SceneStartButton のクリックで scene に入るところまでを描いて確かめた (Xvfb + lavapipe)。
+WebKit 版のスクリーンショットと並べて、タイトル画面の位置が数 px 以内で一致した。
+
+- UI の木 (`core::ui`) は `UIObjects.ts` の規則をそのまま移した:
+  Window は作った時点で出る、親が子をいくつ持てるか (多数 / 1 つ / 持てない) と、それによる Element の破棄・預けた関数の手放し、
+  最初に積まれた Page が見える、Link で page_id の Page に替わる、ScenePage は scene が始まるときに見える、
+  Window は Page を積む前に ScenePage と `main_scene` を持っていなければならない、Canvas / MessageArea を 2 か所に置けない、
+  `id` の逆引き、文字の書式 (大きさ・太さ・色・フォント) の親からの継承 (既定は 16 px・400・黒・sans-serif)。
+- レイアウトは、`core` が UI の木を素朴な木 (`core::layout`: 並べ方・大きさ・余白・文字) にし、`layout` crate が taffy で計算する。
+  CSS への写し方は TypeScript 版の DOM と同じ (表は `crates/layout/src/lib.rs`)。
+  Element の `text` は子より前に置いた「文字だけの葉」にして、整形 (`core::text::TextShaper`) で大きさを測る。
+- 描画は、レイアウトの木の順に、背景 (色 / 画像は `cover`)・Image Element・Canvas (の中に canvas オブジェクト)・
+  MessageArea (の中に Message Window)・文字を積む。重なりの順は木の順 (= `Layers` の push 順)。
+- レイアウトは UI が変わったときか画面の大きさが変わったときだけ計算し直す (UI の木の世代番号で見分ける)。
+- クリックは、最後に描いたフレームの押せる Element (Link・SceneStartButton) に当たり判定する。
+  当たれば押し (Link は Page を替え、SceneStartButton は vm に scene を始めさせる)、当たらなければ「進む」。
+  Link・ボタンのクリックは「進む」には使わない (TypeScript 版でクリックを host に伝えないのと同じ)。
+- UI の文字の行の高さは CSS の既定と同じく、フォント自身の値 (`line-height: normal`) で決める。
+  Message Window は TypeScript 版と同じく文字の大きさの 1.8 倍。
+- 疑似ボールドを少し太くした (文字の大きさの 1/16、0.6〜2.5 px)。Chromium の太字に近づけるため。
+
+段 5 での違い (TypeScript 版の DOM とずれうるところ):
+
+- Link / SceneStartButton は CSS では inline-flex (行の中に横に並ぶ) だが、taffy には行の中の配置が無いので、
+  block の親の中では 1 行を占める (flex / grid の親の中では同じ)。幅を指定しないと親の幅いっぱいに伸びる。
+- マウスを載せたときのカーソルの形 (pointer) は変えていない。
+- 中身があふれたときのスクロール (`overflow-y: auto`) は無い。
+- `TextFont` はフォント名として fontique に渡す (CSS の font-family と同じくカンマ区切りの候補)。見つからなければ sans-serif。
 
 ## まだ無いもの
 
-- UI (段 5)、サウンド・IME・ルビ・動画 (段 7〜10)。
+- 3 OS の実機での確認 (段 6)、サウンド・IME・ルビ・動画 (段 7〜10)。
 - アニメーションする GIF / WebP、画像の mipmap (大きく縮めるとちらつきうる)。
 - ゲームに同梱したフォントの登録と、`TextFont` property。
 - `biwa build` からこのプレイヤー用の配布物を組み立てる経路 (今は Tauri 版のプレイヤー用)。

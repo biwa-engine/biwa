@@ -2,7 +2,7 @@
 //!
 //! クリック待ちのたびに Message Window の文字をログに出し、自動でクリックして進める。
 //! sleep はエンジン時計をその分だけ進めて終わらせる (実時間は待たない)。演出待ちは演出を飛ばして終わらせる。
-//! 画像は読まない (読み込みの依頼は捨てる)。
+//! 画像は読まない (読み込みの依頼は捨てる)。UI は描かないので、最初の SceneStartButton を押したことにして scene を始める。
 
 use std::time::{Duration, Instant};
 
@@ -35,6 +35,10 @@ pub fn run(options: &Options, wasm: Vec<u8>) -> Result<(), String> {
                     }
                 }
                 engine.take_image_requests();
+                let released = engine.take_released_handlers();
+                if !released.is_empty() {
+                    vm.send(HostCommand::Release(released));
+                }
             }
             VmEvent::Call(call, reply) => {
                 trace(options, &call);
@@ -62,14 +66,14 @@ fn drive(engine: &mut Engine, call: &Syscall, waits: &mut u32) {
     match call {
         Syscall::Wait => {
             *waits += 1;
-            // 1 回目のクリックで文字送りを畳み、2 回目で進む。
-            engine.click();
+            // 1 回目で文字送りを畳み、2 回目で進む。
+            engine.advance();
             println!("[wait #{waits}] {}", engine.scene_text().replace('\n', "\n           "));
-            engine.click();
+            engine.advance();
         }
         Syscall::Sleep { ms } => engine.update(*ms as f32),
         // sync 印の演出を飛ばして終わらせる (クリックと同じ)。
-        Syscall::AwaitTransitions => engine.click(),
+        Syscall::AwaitTransitions => engine.advance(),
         _ => {}
     }
     if !engine.take_finished_call() {

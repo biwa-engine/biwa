@@ -10,13 +10,15 @@
 use crate::geometry::Color;
 
 /// 断片の書式。
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TextStyle {
-    /// 文字の大きさ (物理ピクセル)。
+    /// 文字の大きさ (物理ピクセル。レイアウトで大きさを測るときは論理ピクセル)。
     pub size: f32,
     /// 100〜900。
     pub weight: u16,
     pub color: Color,
+    /// フォント名 (CSS の font-family と同じく、カンマ区切りで候補を並べてよい)。`None` はシステムの sans-serif。
+    pub family: Option<String>,
 }
 
 /// 書式付きの断片。
@@ -29,10 +31,20 @@ pub struct TextSpan {
 /// 整形の条件。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParagraphStyle {
-    /// 折り返す幅 (物理ピクセル)。
+    /// 折り返す幅 (物理ピクセル)。`f32::INFINITY` なら折り返さない。
     pub max_width: f32,
-    /// 行の高さ。文字の大きさに対する倍率。
-    pub line_height: f32,
+    pub line_height: LineHeight,
+    /// 各行を `max_width` の中で中央に寄せる (Link・ボタンの文字)。
+    pub center: bool,
+}
+
+/// 行の高さ。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LineHeight {
+    /// フォント自身の値 (上下の高さと行間) で決める。CSS の `line-height: normal`。
+    Normal,
+    /// 文字の大きさに対する倍率。CSS の単位の無い `line-height`。
+    Relative(f32),
 }
 
 /// グリフを指す鍵。同じ鍵のグリフは同じ画像になる (グリフアトラスの鍵に使う)。
@@ -68,6 +80,8 @@ pub struct ShapedGlyph {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ShapedText {
     pub glyphs: Vec<ShapedGlyph>,
+    /// いちばん長い行の幅 (物理ピクセル)。内容に合わせて箱の大きさを決めるのに使う。
+    pub width: f32,
     /// 段落全体の高さ (物理ピクセル)。
     pub height: f32,
 }

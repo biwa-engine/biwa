@@ -20,9 +20,9 @@ use biwa_player_core::text::{
     TextSpan,
 };
 use parley::{
-    CHROMIUM_LINE_BREAK_OVERRIDE, FontContext, FontData, FontFamily, FontFamilyName, FontWeight,
-    GenericFamily, Language, Layout, LayoutContext, LineBreakContext, LineBreakOverrideFn,
-    LineHeight, PositionedLayoutItem, StyleProperty,
+    Alignment, AlignmentOptions, CHROMIUM_LINE_BREAK_OVERRIDE, FontContext, FontData, FontFamily,
+    FontFamilyName, FontWeight, GenericFamily, Language, Layout, LayoutContext, LineBreakContext,
+    LineBreakOverrideFn, LineHeight, PositionedLayoutItem, StyleProperty,
 };
 use swash::scale::{Render, ScaleContext, Source, StrikeWith};
 use swash::zeno::Format;
@@ -120,9 +120,10 @@ impl TextShaper for TextSystem {
                 FontFamilyName::Generic(GenericFamily::SansSerif),
             )));
             builder.push_default(StyleProperty::Locale(Some(self.japanese.clone())));
-            builder.push_default(StyleProperty::LineHeight(LineHeight::FontSizeRelative(
-                paragraph.line_height,
-            )));
+            builder.push_default(StyleProperty::LineHeight(match paragraph.line_height {
+                biwa_player_core::text::LineHeight::Normal => LineHeight::MetricsRelative(1.0),
+                biwa_player_core::text::LineHeight::Relative(r) => LineHeight::FontSizeRelative(r),
+            }));
             for (i, (span, range)) in spans.iter().zip(&ranges).enumerate() {
                 builder.push(StyleProperty::Brush(SpanTag(i)), range.clone());
                 builder.push(StyleProperty::FontSize(span.style.size), range.clone());
@@ -130,11 +131,20 @@ impl TextShaper for TextSystem {
                     StyleProperty::FontWeight(FontWeight::new(f32::from(span.style.weight))),
                     range.clone(),
                 );
+                if let Some(family) = &span.style.family {
+                    // CSS の font-family と同じ書き方 (候補をカンマで並べる)。見つからなければ sans-serif に落ちる。
+                    let source = format!("{family}, sans-serif");
+                    builder.push(StyleProperty::FontFamily(FontFamily::Source(source.into())), range.clone());
+                }
             }
             builder.build(&text)
         };
         let mut layout = layout;
-        layout.break_all_lines(Some(paragraph.max_width.max(1.0)));
+        let max_width = paragraph.max_width.is_finite().then(|| paragraph.max_width.max(1.0));
+        layout.break_all_lines(max_width);
+        if paragraph.center {
+            layout.align(Alignment::Center, AlignmentOptions::default());
+        }
 
         let mut glyphs = Vec::new();
         for line in layout.lines() {
@@ -191,7 +201,7 @@ impl TextShaper for TextSystem {
             }
         }
 
-        ShapedText { glyphs, height: layout.height() }
+        ShapedText { glyphs, width: layout.width(), height: layout.height() }
     }
 }
 
@@ -215,7 +225,9 @@ impl GlyphRasterizer for TextSystem {
         ]);
         render.format(Format::Alpha);
         if variant.is_some_and(|v| v.embolden) {
-            render.embolden(key.size as f32 / 64.0 / 24.0);
+            // 太らせる幅。Chromium (Skia) の疑似ボールドに近い強さ (小さい字ほど相対的に太く)。
+            let size = key.size as f32 / 64.0;
+            render.embolden((size / 16.0).clamp(0.6, 2.5));
         }
         let image = render.render(&mut scaler, key.glyph as u16)?;
         let p = image.placement;
@@ -239,11 +251,11 @@ mod tests {
     use biwa_player_core::text::TextStyle;
 
     fn span(text: &str, size: f32) -> TextSpan {
-        TextSpan { text: text.into(), style: TextStyle { size, weight: 400, color: Color::WHITE } }
+        TextSpan { text: text.into(), style: TextStyle { size, weight: 400, color: Color::WHITE, family: None } }
     }
 
     fn paragraph(width: f32) -> ParagraphStyle {
-        ParagraphStyle { max_width: width, line_height: 1.8 }
+        ParagraphStyle { max_width: width, line_height: biwa_player_core::text::LineHeight::Relative(1.8), center: false }
     }
 
     #[test]
@@ -312,6 +324,17 @@ mod tests {
         };
         let (r, b) = (ink(&mut t, regular), ink(&mut t, bold));
         assert!(b > r * 11 / 10, "bold is not thicker: {b} vs {r}");
+    }
+
+    #[test]
+    fn measures_width_and_centers_lines() {
+        let mut t = TextSystem::new();
+        let free = t.shape(&[span("あいう", 20.0)], paragraph(f32::INFINITY));
+        assert!(free.width > 50.0 && free.width < 70.0, "width {}", free.width);
+        let centered =
+            t.shape(&[span("あいう", 20.0)], ParagraphStyle { center: true, ..paragraph(200.0) });
+        let left = centered.glyphs.first().unwrap().x;
+        assert!((left - (200.0 - free.width) / 2.0).abs() < 1.0, "left {left}");
     }
 
     #[test]

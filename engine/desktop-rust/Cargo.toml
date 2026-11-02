@@ -12,6 +12,7 @@ members = [
   "crates/player",
   "crates/text",
   "crates/image",
+  "crates/layout",
   "crates/render",
   "crates/platform",
 ]
@@ -26,6 +27,7 @@ biwa-player-core = { path = "crates/core" }
 biwa-player-vm = { path = "crates/vm" }
 biwa-player-text = { path = "crates/text" }
 biwa-player-image = { path = "crates/image" }
+biwa-player-layout = { path = "crates/layout" }
 biwa-player-render = { path = "crates/render" }
 biwa-player-platform = { path = "crates/platform" }
 
@@ -34,6 +36,7 @@ wasmtime = "50"
 wgpu = "30"
 winit = "0.30"
 parley = "0.12"
+taffy = "0.15"
 swash = "0.2"
 etagere = "0.3"
 bytemuck = { version = "1", features = ["derive"] }
