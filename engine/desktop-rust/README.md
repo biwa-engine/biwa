@@ -199,7 +199,7 @@ WebKit 版のスクリーンショットと並べて、タイトル画面の位�
   block の親の中では 1 行を占める (flex / grid の親の中では同じ)。幅を指定しないと親の幅いっぱいに伸びる。
 - マウスを載せたときのカーソルの形 (pointer) は変えていない。
 - 中身があふれたときのスクロール (`overflow-y: auto`) は無い。
-- `TextFont` はフォント名として fontique に渡す (CSS の font-family と同じくカンマ区切りの候補)。見つからなければ sans-serif。
+- `TextFont` はフォント名として fontique に渡す (CSS の font-family と同じくカンマ区切りの候補)。見つからなければ既定のフォント (Windows は Yu Gothic・Meiryo、macOS は Hiragino Sans、Linux は sans-serif)。
 
 ### 段 6: 3 OS の実機 — 準備済み (実機での確認待ち)
 
