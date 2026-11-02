@@ -74,7 +74,7 @@ biwa build  : コンパイル → 対象 OS のプレイヤー + エンジンの
    そのまま ① のプレイヤーの検証にもなる。
 2. **汎用プレイヤーのスパイク** (着手 2026-10-12)
    - **進捗 (2026-10-13)**: プレイヤー・`biwa build --platform windows,macos,linux,web`・Actions のワークフロー
-     (`.github/workflows/player.yml`) を実装。Linux ではプレイヤーのビルドから配布物の起動まで確認済み。
+     (`.github/workflows/player.yml`、いまは `player-webview.yml`) を実装。Linux ではプレイヤーのビルドから配布物の起動まで確認済み。
      Windows / macOS は、この Linux の上で仮の実行ファイルを使って組み立て (macOS は ad-hoc 署名の形式も) を確認。
      詳細は `docs/desktop-build.md`。
    - **進捗 (2026-10-14)**: Actions で 3 OS のプレイヤーのビルドに成功 (run 38347793801)。
@@ -93,6 +93,17 @@ biwa build  : コンパイル → 対象 OS のプレイヤー + エンジンの
    - 確かめること: この Linux から作った 3 OS 分の配布物が、各 OS の実機で動くか。
 3. エンジンの JS をビルド済みにし、開発サーバを `biwa` に内蔵する (Node.js も不要にする)。
 4. `--platform` を `windows|macos|linux|web` に分ける (段階 2 で済み。`desktop` はホスト OS)。
+5. **④ Rust ネイティブのプレイヤー** (`engine/desktop-rust`。2026-10 末〜。段階ごとの記録は `engine/desktop-rust/README.md`)
+   - **進捗 (2026-11-02)**: 既定のデスクトップ版をネイティブに切り替えた。
+     - `--platform windows|macos|linux` (と既定の `desktop`) はネイティブのプレイヤー、
+       `--platform windows-webview|macos-webview|linux-webview` は ① の Tauri のプレイヤーを使う。
+     - プレイヤーの置き場所の id は、ネイティブが `windows-x86_64` / `macos-universal` / `linux-x86_64`、
+       Tauri が `windows-webview-x86_64` / `macos-webview-universal` / `linux-webview-x86_64`
+       (それまで Tauri が使っていた id をネイティブに譲った)。
+     - Actions は `.github/workflows/player-native.yml` (ネイティブ) と `player-webview.yml` (Tauri。旧 `player.yml`)。
+     - ネイティブ版の `game/` は `game.wasm` + `assets/` + `biwa-game.json` だけで、Node.js (Vite) は要らない。
+     - 組み立て (zip / tar.gz / .app と ad-hoc 署名) は ① と共通。
+     - Linux (Xvfb + lavapipe) で配布物の起動まで確認済み。次は Actions でのビルドと Windows / macOS の実機確認 (段階 6)。
 
 ## 不確かな点
 

@@ -13,6 +13,9 @@
 //! ゲームを焼き込まない汎用の実行ファイルで、`game/game.wasm` を読んで動く
 //! (`docs/biwa-prebuilt-player.md` の方式)。
 
+// リリースビルドの Windows では、ダブルクリックで起動したときにコンソールを開かない。
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod headless;
 mod options;
 mod windowed;
@@ -30,8 +33,17 @@ fn main() {
 
     if let Err(message) = run(&options) {
         eprintln!("error: {message}");
+        write_error_log(&message);
         std::process::exit(1);
     }
+}
+
+/// エラーを一時ディレクトリの `biwa-player-error.log` にも書く。
+///
+/// Windows のリリースビルドはコンソールを持たず、ダブルクリックで起動すると標準エラーが見えないため。
+fn write_error_log(message: &str) {
+    let path = std::env::temp_dir().join("biwa-player-error.log");
+    let _ = std::fs::write(&path, format!("error: {message}\n"));
 }
 
 fn run(options: &Options) -> Result<(), String> {

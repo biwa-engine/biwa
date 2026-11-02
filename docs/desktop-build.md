@@ -1,14 +1,30 @@
-# デスクトップ版のビルド (ビルド済みプレイヤー方式) と WebView の検証
+# デスクトップ版のビルド (ビルド済みプレイヤー方式) と実機の検証
 
 ゲームを Windows / macOS / Linux のデスクトップアプリとしてビルドする仕組みと手順、
-各 OS の WebView で Biwa が動くかを確かめる手順のメモ。
+各 OS で Biwa が動くかを確かめる手順のメモ。
+
+プレイヤー (ランタイム) は 2 種類ある (2026-11-02 から)。
+
+| `--platform`                                      | プレイヤー                                         | `game/` の中身                     |
+| ------------------------------------------------- | -------------------------------------------------- | ---------------------------------- |
+| `windows` / `macos` / `linux` (既定の `desktop`)  | **ネイティブ** (`engine/desktop-rust`。wasmtime + wgpu) | `game.wasm` + `assets/`            |
+| `windows-webview` / `macos-webview` / `linux-webview` | WebView (`engine/desktop-tauri`。Tauri)            | Web の静的ビルド (Vite)            |
+
+ネイティブのプレイヤーの中身と段階ごとの記録は `engine/desktop-rust/README.md` にある。
+この文書の §2 以降の WebView の話 (検証ページ・独自スキーム・localhost) は WebView 版だけのものである。
 方針は `docs/biwa-distribution-targets.md` (なぜ WebView か) と
 `docs/biwa-prebuilt-player.md` (なぜビルド済みプレイヤーか) にある。
 
-状況:
+状況 (ネイティブ):
+
+- **Linux**: Xvfb + lavapipe の上で、`biwa build --platform linux` の tar.gz を展開して起動し、
+  タイトル (ウィンドウのタイトルはパッケージ名) が出ることを確認済み (2026-11-02)。
+- **Windows / macOS**: CI (`.github/workflows/player-native.yml`) でプレイヤーをビルドして実機で試す (段階 6)。
+
+状況 (WebView):
 
 - **Linux (Ubuntu 24.04, WebKitGTK 2.52)**: プレイヤーのビルド、配布物の組み立て、起動、タイトルからシーンまでの進行を確認済み。
-- **CI**: 3 OS のプレイヤーのビルドに成功 (2026-10-13)。
+- **CI**: 3 OS のプレイヤーのビルドに成功 (2026-10-13。当時は `player.yml`、いまは `player-webview.yml`)。
 - **Windows / macOS**: CI でビルドしたプレイヤーから、Linux の上で配布物を組み立てた
   (macOS は universal バイナリの両方のアーキテクチャに ad-hoc 署名が付くことを確認)。
   - Windows: 実機で動いた (SmartScreen の警告は出る)。§4
@@ -20,15 +36,29 @@
 ## 1. 構成
 
 ```
-biwa build                              → dist/<host OS>/   (既定。--platform desktop と同じ)
+biwa build                              → dist/<host OS>/   (既定。--platform desktop と同じ。ネイティブ)
 biwa build --platform windows,macos,linux → dist/windows/ dist/macos/ dist/linux/
+biwa build --platform windows-webview,macos-webview,linux-webview
+                                        → dist/windows-webview/ dist/macos-webview/ dist/linux-webview/
 biwa build --platform web               → dist/web/
 ```
 
-### プレイヤー (`engine/desktop-tauri/`)
+### ネイティブのプレイヤー (`engine/desktop-rust/`)
+
+- ゲームを焼き込まない汎用の実行ファイル (`biwa-player`)。**Biwa の CI が OS ごとに 1 度だけビルドする**
+  (`.github/workflows/player-native.yml`)。
+- 実行ファイルの横の `game/` (macOS は `<name>.app/Contents/Resources/game/`) の `game.wasm` を読み、
+  wasmtime で動かす。画像などは `game/assets/` から読む。`--game-dir <DIR>` / `--wasm <FILE>` で場所を上書きできる。
+- `game/biwa-game.json` の `title` をウィンドウのタイトルにする (無ければ `Biwa`)。
+- 描画は wgpu (Windows: DX12 / Vulkan、macOS: Metal、Linux: Vulkan / GL)。
+- Windows のリリースビルドはコンソールを開かない。起動に失敗したときのエラーは
+  一時ディレクトリの `biwa-player-error.log` (Windows なら `%TEMP%\biwa-player-error.log`) にも書く。
+- 実行ファイルの大きさ: Linux で約 22 MB (wasmtime の Cranelift を含むため)。
+
+### WebView のプレイヤー (`engine/desktop-tauri/`)
 
 - ゲームを焼き込まない汎用の実行ファイル (Tauri v2)。**Biwa の CI が OS ごとに 1 度だけビルドする**
-  (`.github/workflows/player.yml`)。利用者の手元で Rust のビルドは走らない。
+  (`.github/workflows/player-webview.yml`)。利用者の手元で Rust のビルドは走らない。
   - デスクトップ向けの実装は今後増えうるので、ディレクトリ名は実装 (Tauri) に結びつけている。
 - 実行ファイルの横の `game/` (macOS は `<name>.app/Contents/Resources/game/`) を配る。
   `--game-dir <DIR>` (または `BIWA_GAME_DIR`) で場所を上書きできる。配り方は OS で違う。
@@ -47,6 +77,14 @@ biwa build --platform web               → dist/web/
 
 ### `biwa build` (`cli/src/build.rs`, `desktop.rs`, `player.rs`)
 
+ネイティブ版:
+
+1. コンパイルし、wasm (`.biwa_runtime/game/game.wasm`) とパッケージの `assets/`、`biwa-game.json` を
+   ゲームのデータにする (`.biwa_runtime/dist-game-native/`)。Node.js (Vite) は使わない。
+2. OS ごとに、ビルド済みのプレイヤーにゲームのデータを添えて組み立て、固める (下の表)。
+
+WebView 版:
+
 1. コンパイルし、Web の静的ビルド (`vite build`) を作る。
    - `base` は `./`。Vite が出すもの (JS・wasm・Worker) は `_biwa/` に置く
      (`engine/nodejs/vite.config.ts` の `build.assetsDir`。既定の `assets/` はパッケージの `assets/` と重なるため)。
@@ -61,6 +99,8 @@ biwa build --platform web               → dist/web/
 | macOS   | `<name>.app` (ad-hoc 署名済み)、それを固めた `<name>-macos-universal.zip`      |
 | Linux   | `<name>/<name>` + `<name>/game/`、それを固めた `<name>-linux-x86_64.tar.gz`    |
 
+WebView 版は `dist/<os>-webview/` に、`<name>-<os>-webview-<arch>.{zip,tar.gz}` という名前でできる。
+
 - **組み立てにコンパイルは要らないので、どの OS の上でも全 OS 向けに作れる。**
 - macOS の .app はデータを足すと署名が合わなくなるので、組み立てたあとで `apple-codesign` (純 Rust) で
   ad-hoc 署名し直す (Apple Silicon で起動するのに最低限要る)。
@@ -69,7 +109,18 @@ biwa build --platform web               → dist/web/
 
 ### 配布物の中身 (`game/` の構成)
 
-`game/` は Web の静的ビルド (`biwa build --platform web` の `dist/web/` と同じもの) に、
+ネイティブ版:
+
+```
+<name>/                       (macOS は <name>.app/Contents/)
+  <name>[.exe]                ← プレイヤー (biwa-player を改名したもの。macOS は MacOS/<name>)
+  game/                       (macOS は Resources/game/)
+    game.wasm                 ← ゲーム (必須)
+    assets/                   ← パッケージの assets/ のコピー
+    biwa-game.json            ← プレイヤーが読むゲームの情報 (無くても動く。いまは title だけ読む)
+```
+
+WebView 版: `game/` は Web の静的ビルド (`biwa build --platform web` の `dist/web/` と同じもの) に、
 プレイヤー用の 2 つを足しただけである。
 
 ```
@@ -131,15 +182,25 @@ echo '{ "title": "mygame" }' > mygame/game/biwa-game.json   # 任意
 3. `~/.biwa/players`
 
 ```
-<players>/windows-x86_64/biwa-player.exe
+<players>/windows-x86_64/biwa-player.exe            ← ネイティブ (player-native.yml)
 <players>/macos-universal/biwa-player
 <players>/linux-x86_64/biwa-player
+<players>/windows-webview-x86_64/biwa-player.exe    ← WebView (player-webview.yml)
+<players>/macos-webview-universal/biwa-player
+<players>/linux-webview-x86_64/biwa-player
 ```
+
+(2026-11-02 より前は WebView 版が `windows-x86_64` などに置かれていた。いまはそこがネイティブ版の場所である)
 
 CI の成果物 `biwa-player-<id>` を取り出して、`<players>/<id>/` に置く。`gh` を使うなら:
 
 ```sh
+# ネイティブ (player-native.yml の実行)
 for id in windows-x86_64 macos-universal linux-x86_64; do
+  gh run download <run-id> -R biwa-engine/biwa -n biwa-player-$id -D ~/.biwa/players/$id
+done
+# WebView (player-webview.yml の実行)
+for id in windows-webview-x86_64 macos-webview-universal linux-webview-x86_64; do
   gh run download <run-id> -R biwa-engine/biwa -n biwa-player-$id -D ~/.biwa/players/$id
 done
 ```
@@ -151,12 +212,20 @@ done
 ### ゲームをビルドする人
 
 - `biwa` (リポジトリの `cli/` で `cargo build --release`。いまは手元でビルドする)。
-- Node.js (npm 付き)。静的ビルドに使う (いずれ不要にする。メモの段階 3)。
+- Node.js (npm 付き)。WebView 版と Web 版の静的ビルドに使う (ネイティブ版だけなら要らない)。
 - ビルド済みのプレイヤー (上記)。
 - **Rust も C++ Build Tools も Xcode も要らない** (プレイヤーをビルドしないため)。
 - `biwa build` はリンクを作らないので、Windows の開発者モードは要らない (`biwa dev` は `assets/` のリンクに要る)。
 
 ### 遊ぶ人
+
+ネイティブ版:
+
+- GPU のドライバ (Windows: DX12 か Vulkan、macOS: Metal、Linux: Vulkan か OpenGL ES)。
+- Linux: `libfontconfig1`、X11 なら `libxkbcommon-x11-0` (デスクトップ環境なら普通は入っている)。
+- macOS: 13 以降 (Info.plist の下限。ネイティブ版は WebKit に依らないので、もっと下げられる見込み)。
+
+WebView 版:
 
 - Windows: WebView2 Runtime (Windows 10 1803 以降 / 11 には入っている)。
 - macOS: WasmGC が要るので、Safari 18.2 以上 (WKWebView は Safari と同じ WebKit を使う)。
@@ -165,7 +234,13 @@ done
 
 ### プレイヤーをビルドする (Biwa の開発者)
 
-CI (`.github/workflows/player.yml`) が 3 OS でビルドする。手元でビルドするときは:
+ネイティブ版は CI (`.github/workflows/player-native.yml`) が 3 OS でビルドする。手元でビルドするときは:
+
+- 共通: Rust。`engine/desktop-rust` で `cargo build --release -p biwa-player`。
+- Linux: `sudo apt install build-essential pkg-config libfontconfig1-dev`
+- macOS: Xcode Command Line Tools。universal にするなら 2 つのターゲットでビルドして `lipo -create`。
+
+WebView 版は CI (`.github/workflows/player-webview.yml`) が 3 OS でビルドする。手元でビルドするときは:
 
 - 共通: Rust。`engine/desktop-tauri/src-tauri` で `cargo build --release`。
 - Linux: `sudo apt install libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config`
@@ -174,9 +249,31 @@ CI (`.github/workflows/player.yml`) が 3 OS でビルドする。手元でビ�
 
 ## 3. 使い方と検証の手順
 
+### ネイティブ版
+
 ```sh
 cd <project>
 biwa build --platform windows,macos,linux
+```
+
+できた zip / tar.gz を各 OS のマシンへ持っていき、展開して起動する
+(macOS の Gatekeeper・Windows の SmartScreen は WebView 版と同じく出る。下の WebView 版の説明を参照)。
+
+確かめること:
+
+1. 起動するか。ウィンドウのタイトルがパッケージ名か。起動しなければ `biwa-player-error.log` (§1)。
+   - Windows はコンソールが無いので、PowerShell から `.\<name>\<name>.exe; $LASTEXITCODE` で終了コードを見る。
+   - macOS は `./<name>.app/Contents/MacOS/<name>` を端末から起動すると標準エラーが見える。
+2. ゲーム: タイトル → 「つぎへ」→「シーンへ」でシーンに入り、文字送りとクリック (か Enter / Space) で進むか。
+   - 文字 (日本語、太字、禁則) と画像 (`assets/`) が出るか。
+   - ウィンドウの大きさを変えたとき、HiDPI (Retina・Windows の拡大率) で文字がぼけないか。
+3. 描画の性能 (動いている間の CPU 使用率、止まっているときに眠るか)。
+
+### WebView 版
+
+```sh
+cd <project>
+biwa build --platform windows-webview,macos-webview,linux-webview
 ```
 
 できた zip / tar.gz を各 OS のマシンへ持っていき、展開して次の 3 通りを試す。
@@ -318,6 +415,9 @@ rcodesign の `verify` は ad-hoc の空の CMS を問題として報告する�
   `--custom-scheme` で独自スキームに戻せる。
 
 ## 5. 残っていること
+
+- ネイティブ版: Windows / macOS の実機での確認 (段階 6)。リンクのインライン表示・ポインタの形・スクロールは未対応
+  (`engine/desktop-rust/README.md`)。
 
 - プレイヤーの入手: `biwa` に同梱するか、版の合うものを初回にダウンロードする (GitHub Releases など)。
 - エンジンの JS をビルド済みにし、開発サーバを `biwa` に内蔵する (Node.js を不要にする。メモの段階 3)。

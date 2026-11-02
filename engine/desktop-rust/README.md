@@ -7,7 +7,8 @@ wasm ランタイム (wasmtime) を同梱するので、WasmGC が動くかど�
 
 状況: メモ §11 の **段 1 (wasmtime で動かす)〜段 5 (UI) が済み**。今の TypeScript 版のエンジンと同じ機能が揃った
 (タイトルなどの Page・Link での遷移・SceneStartButton で scene を始める・Canvas・Message Window)。
-次は段 6 (3 OS の実機)。
+段 6 (3 OS の実機) の準備として、`biwa build --platform windows|macos|linux` (既定) がこのプレイヤーで配布物を作り、
+Actions (`.github/workflows/player-native.yml`) で 3 OS のプレイヤーをビルドできるようにした。
 
 ## crate の構成
 
@@ -99,7 +100,11 @@ wasm は `biwa build --platform web` などでできる `<project>/.biwa_build/w
 - `examples/canvas-check`: canvas の回転の向き・Canvas の範囲での切り取り・レイヤーの前後
   (`biwa build --platform web` で wasm を作ってから `--wasm` で指す)
 - `bench/gc-churn`: GC の性能 (段 2)
-(`biwa build` から native のプレイヤー用の配布物を組み立てる経路はまだ無い)
+
+配布物は `biwa build --platform windows,macos,linux` で作る (`docs/desktop-build.md`)。
+`game/biwa-game.json` の `title` がウィンドウのタイトルになる。
+Windows のリリースビルドはコンソールを開かないので、起動に失敗したときのエラーは
+一時ディレクトリの `biwa-player-error.log` にも書く。
 
 ## 段ごとの状況
 
@@ -196,10 +201,19 @@ WebKit 版のスクリーンショットと並べて、タイトル画面の位�
 - 中身があふれたときのスクロール (`overflow-y: auto`) は無い。
 - `TextFont` はフォント名として fontique に渡す (CSS の font-family と同じくカンマ区切りの候補)。見つからなければ sans-serif。
 
+### 段 6: 3 OS の実機 — 準備済み (実機での確認待ち)
+
+- `biwa build` の `--platform windows|macos|linux` (と既定の `desktop`) をこのプレイヤーに切り替えた。
+  Tauri 版は `--platform windows-webview|macos-webview|linux-webview`。
+  プレイヤーの置き場所の id は `windows-x86_64` / `macos-universal` / `linux-x86_64` (Tauri 版は `*-webview-*`)。
+- ゲームのデータは `game.wasm` + `assets/` + `biwa-game.json` だけ (Vite は走らない)。
+- Actions: `.github/workflows/player-native.yml` が 3 OS でビルドし、`biwa-player-<id>` として上げる
+  (macOS は aarch64 と x86_64 を `lipo` で universal に)。Linux のビルドには `libfontconfig1-dev` が要る。
+- Linux (Xvfb + lavapipe) で、組み立てた tar.gz を展開して起動できることを確認済み。
+
 ## まだ無いもの
 
 - 3 OS の実機での確認 (段 6)、サウンド・IME・ルビ・動画 (段 7〜10)。
 - アニメーションする GIF / WebP、画像の mipmap (大きく縮めるとちらつきうる)。
 - ゲームに同梱したフォントの登録と、`TextFont` property。
-- `biwa build` からこのプレイヤー用の配布物を組み立てる経路 (今は Tauri 版のプレイヤー用)。
 - 実機 (Windows / macOS / Linux の GPU、HiDPI、Wayland) での確認。

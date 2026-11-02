@@ -54,31 +54,37 @@ OS ごとのエンジン本体 (プレイヤー) は Biwa の CI がビルドし
 
 ```
 biwa build                                  # → dist/<この OS>/ (--platform desktop と同じ)
-biwa build --platform windows,macos,linux   # → dist/windows/ dist/macos/ dist/linux/
+biwa build --platform windows,macos,linux   # → dist/windows/ dist/macos/ dist/linux/ (ネイティブ)
+biwa build --platform linux-webview         # → dist/linux-webview/ (WebView。windows-/macos- も同様)
 biwa build --platform web                   # → dist/web/
 ```
 
 既定がデスクトップ版なのは、配布形態の第一の目標がデスクトップアプリだからである。
-`--platform` はカンマ区切りで複数並べられる。`desktop` は `biwa` が動いている OS を指す。
+`--platform` はカンマ区切りで複数並べられる。`desktop` は `biwa` が動いている OS のネイティブ版を指す。
 
-中身はどの配布形態でも同じ Web の静的ビルド (`vite build`) で、
-デスクトップ版はそれを OS の WebView で表示するプレイヤーに添える。
+デスクトップ版のプレイヤー (ランタイム) は 2 種類ある。
+
+- **ネイティブ** (`windows` / `macos` / `linux`、既定): `engine/desktop-rust/`。
+  wasm を wasmtime で動かし、wgpu で描く。ゲームのデータは wasm とアセットだけ (Node.js は要らない)。
+- **WebView** (`windows-webview` / `macos-webview` / `linux-webview`): `engine/desktop-tauri/`。
+  Web の静的ビルド (`vite build`) を OS の WebView で表示する。
+
 コード生成のターゲットは `wasm` に固定している。
 
 やることは順に:
 
 1. **(デスクトップ版のみ) プレイヤーを探す** — 時間のかかるビルドの前に、
    指定された OS のプレイヤーが揃っているかを確かめる (下記)。
-2. **同梱物を揃える** — `biwa dev` の 1. と同じ (std とエンジンの展開)。
+2. **同梱物を揃える** — `biwa dev` の 1. と同じ (std とエンジンの展開。エンジンは Web 版・WebView 版のときだけ)。
    ただし `assets/` のリンクは張らない (5. でコピーする)。
 3. **ビルドする** / **生成物をエンジンに渡す** — `biwa dev` の 2.〜3. と同じ。
-4. **静的ビルドする** — `.biwa_runtime/` で `vite build --base ./` を走らせる。
+4. **(Web 版・WebView 版のみ) 静的ビルドする** — `.biwa_runtime/` で `vite build --base ./` を走らせる。
    - `base` が `./` なので、出力はどこに置いても動く
      (Web のサブディレクトリでも、デスクトップの WebView の独自スキームでも)。
    - Vite が出すもの (JS・wasm・Worker) は `_biwa/` に入る
      (`engine/nodejs/vite.config.ts` の `build.assetsDir`)。
      既定の `assets/` だと、パッケージの `assets/` を公開する位置とぶつかるため。
-5. **アセットをコピーする** — `assets/` を出力の `assets/` へ丸ごとコピーする。
+5. **(Web 版・WebView 版のみ) アセットをコピーする** — `assets/` を出力の `assets/` へ丸ごとコピーする。
    配布物は自己完結していなければならないので、リンクにはしない。
 6. **(デスクトップ版のみ) 組み立てる** — 下記。
 
@@ -87,20 +93,20 @@ biwa build --platform web                   # → dist/web/
 `Cross-Origin-Opener-Policy: same-origin` と
 `Cross-Origin-Embedder-Policy: require-corp` を付けること (`file://` で開いても動かない)。
 
-#### デスクトップ版 (`windows` / `macos` / `linux`)
+#### デスクトップ版
 
-エンジン本体は、ゲームに依らない汎用の実行ファイル「プレイヤー」である
-(`engine/desktop-tauri/`。Tauri v2 の WebView)。
+エンジン本体は、ゲームに依らない汎用の実行ファイル「プレイヤー」である。
 プレイヤーは実行ファイルの横の `game/` を読んで動くので、ゲームごとにビルドし直す必要が無い。
-Biwa の CI (`.github/workflows/player.yml`) が OS ごとに 1 度だけビルドし、
+Biwa の CI (`.github/workflows/player-native.yml` / `player-webview.yml`) が OS ごとに 1 度だけビルドし、
 `biwa build` はそれにゲームのデータを添えて組み立てるだけである。
 **コンパイルが走らないので、どの OS の上でも全 OS 向けの配布物を作れる。**
-デスクトップ向けの実装は今後増えうるが、当面はこの Tauri のプレイヤーを使う。
 
-1. 静的ビルド (上の 4.〜5.) を `.biwa_runtime/dist-game/` に作り、
-   プレイヤーが読むゲームの情報 `biwa-game.json` (タイトル・版) と、
-   WebView の検証ページ (`__biwa_probe/`、ゲームの wasm の写し付き) を足す。これが `game/` になる。
-2. OS ごとに組み立てて固める。
+1. ゲームのデータ (`game/` になるもの) を作る。どちらにも、プレイヤーが読むゲームの情報
+   `biwa-game.json` (タイトル・版) を入れる。
+   - ネイティブ: `game.wasm` (生成物の写し) と `assets/` のコピー (`.biwa_runtime/dist-game-native/`)。
+   - WebView: 静的ビルド (上の 4.〜5.) に、WebView の検証ページ (`__biwa_probe/`、ゲームの wasm の写し付き)
+     を足す (`.biwa_runtime/dist-game/`)。
+2. OS ごとに組み立てて固める。WebView 版は `dist/<os>-webview/` に `<name>-<os>-webview-<arch>.*` でできる。
 
 | OS      | `dist/<os>/` にできるもの                                                            |
 | ------- | ------------------------------------------------------------------------------------ |
@@ -121,13 +127,16 @@ Biwa の CI (`.github/workflows/player.yml`) が OS ごとに 1 度だけビル�
 3. `~/.biwa/players`
 
 ```
-<players>/windows-x86_64/biwa-player.exe
+<players>/windows-x86_64/biwa-player.exe            ← ネイティブ
 <players>/macos-universal/biwa-player
 <players>/linux-x86_64/biwa-player
+<players>/windows-webview-x86_64/biwa-player.exe    ← WebView
+<players>/macos-webview-universal/biwa-player
+<players>/linux-webview-x86_64/biwa-player
 ```
 
-アプリの起動オプション (`--probe` / `--localhost`)、遊ぶ側に要るもの、
-各 OS の WebView での検証状況は [`docs/desktop-build.md`](../docs/desktop-build.md) にある。
+アプリの起動オプション (WebView 版の `--probe` / `--localhost`)、遊ぶ側に要るもの、
+各 OS での検証状況は [`docs/desktop-build.md`](../docs/desktop-build.md) にある。
 
 オプション:
 
@@ -135,7 +144,7 @@ Biwa の CI (`.github/workflows/player.yml`) が OS ごとに 1 度だけビル�
 | ---------------------------- | -------------------------------------------------------------------------------------- |
 | `-p`, `--package-path <DIR>` | 対象パッケージ (既定: カレントディレクトリ)                                            |
 | `-r`, `--rebuild`            | キャッシュを無視して最初から建て直す                                                   |
-| `--platform <LIST>`          | 配布形態 (カンマ区切り)。`desktop` (既定。この OS)・`windows`・`macos`・`linux`・`web` |
+| `--platform <LIST>`          | 配布形態 (カンマ区切り)。`desktop` (既定。この OS)・`windows`・`macos`・`linux`・`windows-webview`・`macos-webview`・`linux-webview`・`web` |
 | `--players-dir <DIR>`        | ビルド済みプレイヤーの置き場所 (既定: `BIWA_PLAYERS_DIR`、なければ `~/.biwa/players`)  |
 
 ### `biwa publish`
@@ -231,7 +240,8 @@ repository はパッケージに 1 つしか持てず、hub 側にもそれを�
     public/assets → ../../assets   ← 上の assets/ へのシンボリックリンク (biwa dev)
     src/engine/{vm,api}/*.ts       ← kernel と syscall の実装
     src/game/{game.wasm, entry.ts} ← 配られた生成物 (typescript なら *.ts)
-    dist-game/                     ← デスクトップ版の game/ の元 (biwa build)
+    dist-game-native/              ← ネイティブ版の game/ の元 (biwa build)
+    dist-game/                     ← WebView 版の game/ の元 (biwa build)
   dist/
     windows/                       ← biwa build --platform windows の出力
       <name>/{<name>.exe, game/}
@@ -240,6 +250,7 @@ repository はパッケージに 1 つしか持てず、hub 側にもそれを�
       <name>.app, <name>-macos-universal.zip
     linux/                         ← --platform linux
       <name>/{<name>, game/}, <name>-linux-x86_64.tar.gz
+    windows-webview/ macos-webview/ linux-webview/   ← --platform *-webview
     web/                           ← --platform web
       index.html, _biwa/, assets/
 ```

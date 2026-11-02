@@ -25,7 +25,7 @@ use crate::options::Options;
 const MAX_FRAME_STEP: Duration = Duration::from_millis(100);
 
 pub fn run(options: &Options, wasm: Vec<u8>) -> Result<(), String> {
-    let window = WindowOptions { title: "Biwa".into(), width: 1280.0, height: 720.0 };
+    let window = WindowOptions { title: options.title.clone(), width: 1280.0, height: 720.0 };
     let collector = options.collector;
     let trace = options.trace;
     let assets = options.assets.clone();

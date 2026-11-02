@@ -11,6 +11,8 @@
 //! アセット (画像など) の置き場所は `--assets`、無ければ `<game>/assets`。
 //! `--wasm` で `<project>/.biwa_build/wasm/<package>.wasm` を直接指したときは `<project>/assets` を使う
 //! (開発中のプロジェクトをそのまま動かすため)。
+//!
+//! ウィンドウのタイトルは `<game>/biwa-game.json` の `title` (`biwa build` が書く)。
 
 use std::path::{Path, PathBuf};
 
@@ -18,6 +20,10 @@ use biwa_player_vm::Collector;
 
 /// `game/` の中の wasm の名前。
 const WASM_FILE: &str = "game.wasm";
+/// `game/` の中のゲームの情報 (`cli/src/build.rs` の `write_game_info`)。
+const GAME_INFO_FILE: &str = "biwa-game.json";
+/// ゲームの情報が無いときのウィンドウのタイトル。
+const DEFAULT_TITLE: &str = "Biwa";
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -30,6 +36,8 @@ pub struct Options {
     /// syscall を 1 つずつログに出す。
     pub trace: bool,
     pub collector: Collector,
+    /// ウィンドウのタイトル。
+    pub title: String,
 }
 
 impl Options {
@@ -77,7 +85,13 @@ impl Options {
             .or_else(|| game_dir.as_ref().map(|dir| dir.join("assets")))
             .or_else(|| project_assets(&wasm))
             .filter(|dir| dir.is_dir());
-        Ok(Self { wasm, assets, headless, trace, collector })
+        let title = game_dir
+            .as_ref()
+            .and_then(|dir| std::fs::read_to_string(dir.join(GAME_INFO_FILE)).ok())
+            .and_then(|json| json_string_field(&json, "title"))
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| DEFAULT_TITLE.into());
+        Ok(Self { wasm, assets, headless, trace, collector, title })
     }
 }
 
@@ -104,4 +118,97 @@ fn default_game_dir() -> Option<PathBuf> {
 
 fn has_wasm(dir: &Path) -> bool {
     dir.join(WASM_FILE).is_file()
+}
+
+/// 平らな JSON のオブジェクトから文字列の値を 1 つ取り出す。
+///
+/// `biwa-game.json` は `{"name": "...", "title": "...", "version": "..."}` だけなので、
+/// JSON の crate は入れずにここで読む (入れ子や配列は扱わない)。
+fn json_string_field(json: &str, key: &str) -> Option<String> {
+    let mut chars = json.trim().strip_prefix('{')?.chars().peekable();
+    loop {
+        skip_whitespace(&mut chars);
+        let name = json_string(&mut chars)?;
+        skip_whitespace(&mut chars);
+        if chars.next()? != ':' {
+            return None;
+        }
+        skip_whitespace(&mut chars);
+        if chars.peek() == Some(&'"') {
+            let value = json_string(&mut chars)?;
+            if name == key {
+                return Some(value);
+            }
+        } else {
+            // 文字列でない値 (数など) は読み飛ばす。
+            while chars.peek().is_some_and(|&c| c != ',' && c != '}') {
+                chars.next();
+            }
+        }
+        skip_whitespace(&mut chars);
+        match chars.next()? {
+            ',' => continue,
+            _ => return None,
+        }
+    }
+}
+
+fn skip_whitespace(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    while chars.peek().is_some_and(|c| c.is_whitespace()) {
+        chars.next();
+    }
+}
+
+fn json_string(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<String> {
+    if chars.next()? != '"' {
+        return None;
+    }
+    let mut out = String::new();
+    loop {
+        match chars.next()? {
+            '"' => return Some(out),
+            '\\' => match chars.next()? {
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                'r' => out.push('\r'),
+                'b' => out.push('\u{8}'),
+                'f' => out.push('\u{c}'),
+                'u' => {
+                    let high = hex_unit(chars)?;
+                    let code = if (0xD800..0xDC00).contains(&high) {
+                        // サロゲートペア。
+                        if chars.next()? != '\\' || chars.next()? != 'u' {
+                            return None;
+                        }
+                        let low = hex_unit(chars)?;
+                        0x10000 + ((high - 0xD800) << 10) + (low.checked_sub(0xDC00)? & 0x3FF)
+                    } else {
+                        high
+                    };
+                    out.push(char::from_u32(code)?);
+                }
+                c => out.push(c),
+            },
+            c => out.push(c),
+        }
+    }
+}
+
+/// `\u` の後ろの 16 進 4 桁。
+fn hex_unit(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<u32> {
+    let hex: String = (0..4).map(|_| chars.next()).collect::<Option<_>>()?;
+    u32::from_str_radix(&hex, 16).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::json_string_field;
+
+    #[test]
+    fn reads_the_title() {
+        let json = "{\n  \"name\": \"test1\",\n  \"n\": 1,\n  \"title\": \"\\u3086\\u3081 \\\"x\\\" \\ud83c\\udf38\",\n  \"version\": \"0.1.0\"\n}";
+        assert_eq!(json_string_field(json, "title").as_deref(), Some("ゆめ \"x\" 🌸"));
+        assert_eq!(json_string_field(json, "name").as_deref(), Some("test1"));
+        assert_eq!(json_string_field(json, "missing"), None);
+    }
 }
