@@ -5,13 +5,26 @@
 //!
 //! - 整形: 断片の列を 1 つの段落として parley に渡す。断片の番号は parley の「ブラシ」に持たせ、
 //!   クラスタのバイト位置から「何番目の断片の何文字目か」を引く (文字送りがそれで隠す)。
-//! - フォント: 今はシステムの sans-serif を日本語のロケールで使う
+//! - フォント: 今はシステムの日本語のゴシック体 ([`DEFAULT_FAMILIES`]) を日本語のロケールで使う
 //!   (ゲームに同梱したフォントの登録は後で。`docs/biwa-distribution-targets.md` のフォントの節)。
 //! - 改行: UAX #14 に禁則処理 (`kinsoku.rs`) を重ねる。
 //! - ラスタライズ: swash でアルファだけの画像にする。可変フォントの座標と疑似ボールドは、
 //!   整形したときの情報を鍵ごとに覚えておいて使う。
 
 mod kinsoku;
+
+/// 既定のフォント (CSS の font-family の書き方)。
+///
+/// Windows の sans-serif は Arial で、日本語は DirectWrite の代替 (Yu Gothic UI) になる。
+/// Yu Gothic UI は仮名が詰まった (プロポーショナルな) UI 用の書体で、ノベルの本文には向かないので、
+/// 仮名が全角の幅の書体を先に挙げる (日本語の Windows の Chromium / WebView2 の既定に近い)。
+/// macOS / Linux はシステムの sans-serif の代替 (Hiragino / Noto Sans CJK など) で全角の幅になる。
+#[cfg(windows)]
+const DEFAULT_FAMILIES: &str = "Yu Gothic, Meiryo, sans-serif";
+#[cfg(target_os = "macos")]
+const DEFAULT_FAMILIES: &str = "Hiragino Sans, Hiragino Kaku Gothic ProN, sans-serif";
+#[cfg(not(any(windows, target_os = "macos")))]
+const DEFAULT_FAMILIES: &str = "sans-serif";
 
 use std::collections::HashMap;
 
@@ -21,7 +34,7 @@ use biwa_player_core::text::{
 };
 use parley::{
     Alignment, AlignmentOptions, CHROMIUM_LINE_BREAK_OVERRIDE, FontContext, FontData, FontFamily,
-    FontFamilyName, FontWeight, GenericFamily, Language, Layout, LayoutContext, LineBreakContext,
+    FontWeight, Language, Layout, LayoutContext, LineBreakContext,
     LineBreakOverrideFn, LineHeight, PositionedLayoutItem, StyleProperty,
 };
 use swash::scale::{Render, ScaleContext, Source, StrikeWith};
@@ -116,9 +129,7 @@ impl TextShaper for TextSystem {
             // 大きさは物理ピクセルで受け取っているので、parley の側の倍率は 1。
             let mut builder = self.layouts.ranged_builder(&mut self.fonts, &text, 1.0, true);
             builder.set_line_break_override(Some(LINE_BREAKS));
-            builder.push_default(StyleProperty::FontFamily(FontFamily::Single(
-                FontFamilyName::Generic(GenericFamily::SansSerif),
-            )));
+            builder.push_default(StyleProperty::FontFamily(FontFamily::Source(DEFAULT_FAMILIES.into())));
             builder.push_default(StyleProperty::Locale(Some(self.japanese.clone())));
             builder.push_default(StyleProperty::LineHeight(match paragraph.line_height {
                 biwa_player_core::text::LineHeight::Normal => LineHeight::MetricsRelative(1.0),
@@ -132,8 +143,8 @@ impl TextShaper for TextSystem {
                     range.clone(),
                 );
                 if let Some(family) = &span.style.family {
-                    // CSS の font-family と同じ書き方 (候補をカンマで並べる)。見つからなければ sans-serif に落ちる。
-                    let source = format!("{family}, sans-serif");
+                    // CSS の font-family と同じ書き方 (候補をカンマで並べる)。見つからなければ既定のフォントに落ちる。
+                    let source = format!("{family}, {DEFAULT_FAMILIES}");
                     builder.push(StyleProperty::FontFamily(FontFamily::Source(source.into())), range.clone());
                 }
             }

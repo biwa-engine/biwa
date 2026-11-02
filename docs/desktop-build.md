@@ -19,7 +19,11 @@
 
 - **Linux**: Xvfb + lavapipe の上で、`biwa build --platform linux` の tar.gz を展開して起動し、
   タイトル (ウィンドウのタイトルはパッケージ名) が出ることを確認済み (2026-11-02)。
-- **Windows / macOS**: CI (`.github/workflows/player-native.yml`) でプレイヤーをビルドして実機で試す (段階 6)。
+- **Linux 実機** (Intel Iris Xe, Vulkan): CI でビルドしたプレイヤーの配布物で、シーンの最後まで動いた (2026-11-02)。
+- **CI**: 3 OS のビルドに成功。Windows だけ文字の幅のテストが落ちた
+  (既定の sans-serif が Arial で、日本語が仮名の詰まった Yu Gothic UI に落ちていた) →
+  既定のフォントを Windows は `Yu Gothic, Meiryo`、macOS は `Hiragino Sans` からにした。
+- **Windows / macOS**: 実機で試す (段階 6)。
 
 状況 (WebView):
 
