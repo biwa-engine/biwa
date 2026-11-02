@@ -10,8 +10,9 @@ members = [
   "crates/core",
   "crates/vm",
   "crates/player",
-  # 以下は段階的に足す。
-  # "crates/text", "crates/render", "crates/platform",
+  "crates/text",
+  "crates/render",
+  "crates/platform",
 ]
 
 [workspace.package]

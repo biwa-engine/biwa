@@ -1,0 +1,203 @@
+//! ウィンドウを出して動かす。
+//!
+//! 部品をつなぐだけである:
+//! - `platform` のイベントループから来るイベントを、エンジン (`core`) への操作に直す
+//! - `vm` からの知らせ (syscall) をエンジンに当て、止まる syscall の返事を保留する
+//! - 描き直しが要るときだけ、エンジンの描画の指示を `render` で描く (文字は `text`)
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use biwa_player_core::engine::{CallStatus, Engine};
+use biwa_player_core::geometry::Viewport;
+use biwa_player_platform::{App, Event, Flow, Window, WindowOptions, WindowSize};
+use biwa_player_render::Renderer;
+use biwa_player_text::TextSystem;
+use biwa_player_vm::{CallReply, HostCommand, Vm, VmEvent, VmOptions};
+
+use crate::options::Options;
+
+/// 1 フレームで進める時間の上限。描画が詰まったときに文字送りが一気に飛ばないように。
+const MAX_FRAME_STEP: Duration = Duration::from_millis(100);
+
+pub fn run(options: &Options, wasm: Vec<u8>) -> Result<(), String> {
+    let window = WindowOptions { title: "Biwa".into(), width: 1280.0, height: 720.0 };
+    let collector = options.collector;
+    let trace = options.trace;
+    let mut spawn_error = None;
+    let result = biwa_player_platform::run(window, |waker| {
+        let vm = Vm::spawn(wasm, VmOptions { collector }, move || waker.wake())
+            .map_err(|e| spawn_error = Some(format!("failed to start the vm thread: {e}")))
+            .ok();
+        Player::new(vm, trace)
+    });
+    if let Some(e) = spawn_error {
+        return Err(e);
+    }
+    result.map_err(|e| e.to_string())
+}
+
+struct Player {
+    vm: Option<Vm>,
+    engine: Engine,
+    text: TextSystem,
+    window: Option<Arc<Window>>,
+    renderer: Option<Renderer>,
+    size: Option<WindowSize>,
+    /// 返事を保留している止まる syscall。
+    pending: Option<CallReply>,
+    /// 最後にエンジン時計を進めた時刻。動いているものが無い間は `None`。
+    last_tick: Option<Instant>,
+    trace: bool,
+}
+
+impl Player {
+    fn new(vm: Option<Vm>, trace: bool) -> Self {
+        Self {
+            vm,
+            engine: Engine::new(),
+            text: TextSystem::new(),
+            window: None,
+            renderer: None,
+            size: None,
+            pending: None,
+            last_tick: None,
+            trace,
+        }
+    }
+
+    /// vm から届いている知らせを全部処理する。
+    fn drain_vm(&mut self) -> Flow {
+        loop {
+            let Some(event) = self.vm.as_ref().and_then(Vm::try_recv) else {
+                return Flow::Continue;
+            };
+            match event {
+                VmEvent::Batch(calls) => {
+                    for call in calls {
+                        if self.trace {
+                            println!("  {call:?}");
+                        }
+                        if let Err(e) = self.engine.apply(call) {
+                            eprintln!("[biwa] {e}");
+                        }
+                    }
+                }
+                VmEvent::Call(call, reply) => {
+                    if self.trace {
+                        println!("  {call:?}");
+                    }
+                    match self.engine.begin_call(&call) {
+                        CallStatus::Done => reply.done(),
+                        CallStatus::Pending => self.pending = Some(reply),
+                    }
+                }
+                VmEvent::AwaitingScene => match self.engine.first_scene_start() {
+                    // 段 3 までは UI を描かないので、最初の SceneStartButton を押したことにする。
+                    Ok(start) => {
+                        if let Some(vm) = &self.vm {
+                            vm.send(HostCommand::StartScene(start));
+                        }
+                    }
+                    Err(e) => eprintln!("[biwa] cannot start a scene: {e}"),
+                },
+                VmEvent::Exited(_) => println!("[biwa] the scene finished"),
+                VmEvent::Failed(message) => {
+                    eprintln!("error: {message}");
+                    self.vm = None;
+                }
+            }
+            self.request_redraw();
+        }
+    }
+
+    /// 保留中の止まる syscall が終わっていれば返事をする。
+    fn settle_call(&mut self) {
+        if self.engine.take_finished_call()
+            && let Some(reply) = self.pending.take()
+        {
+            reply.done();
+        }
+    }
+
+    fn redraw(&mut self) {
+        // 動いているものがある間だけ時計を進める。止まっていた時間は流さない。
+        let now = Instant::now();
+        if let Some(last) = self.last_tick {
+            let step = (now - last).min(MAX_FRAME_STEP);
+            self.engine.update(step.as_secs_f32() * 1000.0);
+        }
+        self.last_tick = self.engine.is_animating().then_some(now);
+        self.settle_call();
+
+        let (Some(renderer), Some(size)) = (&mut self.renderer, self.size) else {
+            return;
+        };
+        let (width, height) = size.logical();
+        let viewport = Viewport::new(width as f32, height as f32, size.scale as f32);
+        let list = self.engine.frame(viewport, &mut self.text);
+        if let Err(e) = renderer.render(&list, &mut self.text) {
+            eprintln!("[biwa] {e}");
+        }
+    }
+
+    fn request_redraw(&self) {
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
+}
+
+impl App for Player {
+    fn started(&mut self, window: Arc<Window>) -> Flow {
+        if self.vm.is_none() {
+            // vm を起動できなかった (理由は `run` が返す)。
+            return Flow::Exit;
+        }
+        let size = window.size();
+        match Renderer::new(window.clone(), size.width, size.height) {
+            Ok(renderer) => {
+                println!("[biwa] rendering with {}", renderer.adapter());
+                self.renderer = Some(renderer);
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return Flow::Exit;
+            }
+        }
+        self.size = Some(size);
+        self.window = Some(window);
+        self.drain_vm()
+    }
+
+    fn event(&mut self, event: Event) -> Flow {
+        match event {
+            Event::Resized(size) => {
+                self.size = Some(size);
+                if let Some(renderer) = &mut self.renderer {
+                    renderer.resize(size.width, size.height);
+                }
+                self.request_redraw();
+            }
+            Event::Advance => {
+                self.engine.click();
+                self.settle_call();
+                self.last_tick = None;
+                self.request_redraw();
+            }
+            Event::Woken => return self.drain_vm(),
+            Event::Redraw => self.redraw(),
+            Event::CloseRequested => return Flow::Exit,
+        }
+        Flow::Continue
+    }
+
+    fn frame_done(&mut self) -> bool {
+        let animating = self.engine.is_animating();
+        if animating && self.last_tick.is_none() {
+            // 止まっていたところから動き始めた。ここから時計を進める。
+            self.last_tick = Some(Instant::now());
+        }
+        animating
+    }
+}

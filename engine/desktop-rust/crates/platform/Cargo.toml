@@ -1,0 +1,12 @@
+[package]
+name = "biwa-player-platform"
+description = "Window, input and event loop of the Biwa native player (winit), exposed as Biwa's own events."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# winit の型はこの crate の外に出さない。外から見えるのは自前のイベントとウィンドウ
+# (描画が要る raw-window-handle のトレイトだけを実装する)。
+[dependencies]
+winit.workspace = true
+raw-window-handle.workspace = true

@@ -13,3 +13,6 @@ path = "src/main.rs"
 [dependencies]
 biwa-player-core.workspace = true
 biwa-player-vm.workspace = true
+biwa-player-text.workspace = true
+biwa-player-render.workspace = true
+biwa-player-platform.workspace = true

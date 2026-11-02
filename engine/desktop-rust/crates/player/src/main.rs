@@ -4,12 +4,16 @@
 //!
 //! - `biwa-player-core`: エンジンの論理 (syscall・Message Window・時計・クリック)
 //! - `biwa-player-vm`: game.wasm を wasmtime で動かす
+//! - `biwa-player-text`: 文字の整形とラスタライズ
+//! - `biwa-player-render`: 描画
+//! - `biwa-player-platform`: ウィンドウ・入力・イベントループ
 //!
 //! ゲームを焼き込まない汎用の実行ファイルで、`game/game.wasm` を読んで動く
 //! (`docs/biwa-prebuilt-player.md` の方式)。
 
 mod headless;
 mod options;
+mod windowed;
 
 use options::Options;
 
@@ -34,5 +38,5 @@ fn run(options: &Options) -> Result<(), String> {
     if options.headless {
         return headless::run(options, wasm);
     }
-    Err("only --headless is implemented so far".into())
+    windowed::run(options, wasm)
 }

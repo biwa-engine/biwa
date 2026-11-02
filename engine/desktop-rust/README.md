@@ -5,7 +5,8 @@ wasm ランタイム (wasmtime) を同梱するので、WasmGC が動くかど�
 方針とクレートの選定は `~/memo/biwa-native-runtime-rust.md` (以下「メモ」)、
 配布の仕組み (ゲームを焼き込まないプレイヤーを CI でビルドしておく) は `docs/biwa-prebuilt-player.md`。
 
-状況: メモ §11 の **段 1 (wasmtime で動かす) と段 2 (GC の性能) が済み**。段 3 (文字) は作業中。
+状況: メモ §11 の **段 1 (wasmtime で動かす)・段 2 (GC の性能)・段 3 (文字) が済み**。
+段 4 (canvas)・段 5 (UI) はまだなので、画面に出るのは scene の Message Window だけである。
 
 ## crate の構成
 
@@ -27,7 +28,24 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
 | --- | --- |
 | `core` | ゲームからの依頼 (`syscall`)、それを受けて状態を変え描画の指示を組み立てるエンジン (`engine`)、Message Window の中身と文字送り (`content`)、UI Element の木 (`ui`。段 3 までは scene を始めるのに要る分だけ)、文字の整形とラスタライズのインターフェース (`text`)、描画の指示 (`draw`) |
 | `vm` | game.wasm を専用の OS スレッドで動かす。import (`biwa:engine` / `biwa:runtime`) を実装し、エンジンに用がある syscall を `core::syscall::Syscall` にして送る |
-| `player` | 起動時の引数、ウィンドウを持たない動かし方 (`--headless`) |
+| `text` | 断片の列を 1 つの段落として parley で整形し、グリフを swash でラスタライズする。禁則処理 (`kinsoku.rs`) |
+| `render` | 描画の指示を wgpu で描く。塗りの矩形もグリフも「インスタンスの矩形」として 1 回の描画呼び出しで描き、グリフはアルファだけのアトラス (etagere) に載せる |
+| `platform` | winit のイベントループを、自前のイベント (大きさの変化・進む・描き直し・起こされた・閉じる) にして渡す |
+| `player` | 起動時の引数、ウィンドウを出す動かし方 (`windowed.rs`)、出さない動かし方 (`--headless`) |
+
+各 crate が直接依存する外部 crate (`cargo tree --depth 1` で確かめた):
+
+| crate | 外部 crate |
+| --- | --- |
+| `core` | なし |
+| `vm` | wasmtime |
+| `text` | parley, swash (と、ICU の警告を黙らせるための icu_provider の feature) |
+| `render` | wgpu, etagere, bytemuck, pollster, raw-window-handle |
+| `platform` | winit, raw-window-handle |
+| `player` | なし (自前の crate だけ) |
+
+`render` と `platform` の境目は raw-window-handle のトレイト (ウィンドウの handle の受け渡しの標準) だけで、
+`player` は名前を出さない。
 
 ### スレッドと syscall
 
@@ -52,6 +70,9 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
 
 ```sh
 cargo build --release -p biwa-player
+
+# ウィンドウを出す。クリック (か Enter / Space) で進む
+./target/release/biwa-player --wasm <game.wasm>
 
 # ウィンドウを出さずに最後まで進める (クリック待ちは自動で進め、Message Window の文字をログに出す)
 ./target/release/biwa-player --headless --wasm <game.wasm>
@@ -91,6 +112,32 @@ WasmGC の struct・externref の文字列・funcref のハンドラ・止まる
 - test1 は compile 約 55 ms、wasm の実行 0.5 ms 未満。
 - リリースのバイナリは 13.3 MB (wasmtime + Cranelift、LTO、strip)。
 
-### 段 3: 文字 — 作業中
+### 段 3: 文字 — 済
 
-parley + wgpu で Message Window を描く。日本語の折り返し・禁則・文字送り (グリフの先頭 n 個だけ描く)・断片ごとの色 / 大きさ / 太さ / 速度。
+test1 の scene の Message Window をウィンドウに描き、クリックで進められる
+(この Linux サーバの Xvfb + lavapipe (ソフトウェアの Vulkan) で確認。実機の GPU と HiDPI はまだ)。
+
+- 日本語の整形・折り返し・断片ごとの色 / 大きさ / 太さ / 速度。
+- **文字送りは「1 度だけ整形して、グリフの先頭 n 個だけ描く」。** 送りの間は再整形しないので行が動かない
+  (TypeScript 版の `visibility: hidden` と同じ保証を、より安く)。クリックはまず送りを畳む。
+- 描き直しはオンデマンド。文字送りも sleep も無いときはイベントが来るまで眠る (常時 60 fps で回さない)。
+- 禁則: ICU4X (UAX #14) は日本語のロケールのとき、小書きの仮名・長音符・句読点の前ではもともと改行しない (実測)。
+  取りこぼし (全角のチルダ「～」など) を `kinsoku.rs` の表で拾う。
+- フォントは今はシステムの sans-serif (日本語のロケール)。太字の無いフォントでは輪郭を太らせる (疑似ボールド)。
+  parley の run が疑似ボールドを伝えないことがあったので、要求した太さと選ばれたフォントの太さから自分で決めている。
+- ICU4X は日本語の分かち書きの辞書が無いと整形のたびに警告を出す (改行位置には影響しない)。
+  `icu_provider` の `logging` feature で `log` crate 経由にして黙らせている。辞書 (parley の `complex-scripts`) は数 MB あるので入れていない。
+
+段 3 での仮の扱い (段 4・5 で本物にする):
+
+- UI を描かないので、エントリポイントが終わると最初の SceneStartButton を押したことにして scene を始める。
+- scene の MessageArea は、親を画面全体とみなして自分の大きさ・margin (左と上)・padding・背景色だけで置く
+  (`core::ui::UiTree::message_area_box`)。taffy のレイアウトは段 5。
+- canvas の syscall は受け取るだけで描かない。演出待ち (`sys_await_transitions`) はすぐ返る。
+
+## まだ無いもの
+
+- canvas (段 4)、UI (段 5)、サウンド・IME・ルビ・動画 (段 7〜10)。
+- ゲームに同梱したフォントの登録と、`TextFont` property。
+- `biwa build` からこのプレイヤー用の配布物を組み立てる経路 (今は Tauri 版のプレイヤー用)。
+- 実機 (Windows / macOS / Linux の GPU、HiDPI、Wayland) での確認。

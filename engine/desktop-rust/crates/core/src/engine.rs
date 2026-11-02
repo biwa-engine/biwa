@@ -378,6 +378,23 @@ mod tests {
     }
 
     #[test]
+    fn draws_message_area_background_behind_text() {
+        let mut e = engine_with_scene();
+        e.apply(Syscall::UiSetProperty { id: 4, kind: 10, u1: 0, u2: 0, u3: 0, u4: 191, i1: 0, i2: 0, f: 0.0 })
+            .unwrap();
+        push(&mut e, "ab", 0.0);
+        e.apply(Syscall::ContentFlush { ui: 4 }).unwrap();
+        e.update(0.0);
+        let list = e.frame(Viewport::new(1280.0, 720.0, 2.0), &mut Mono);
+        // 背景が先 (下)、文字が後 (上)。HiDPI では物理ピクセルに直っている。
+        assert_eq!(
+            list.items[0],
+            DrawItem::Rect { rect: Rect::new(0.0, 0.0, 2560.0, 1440.0), color: Color::rgba(0, 0, 0, 191) }
+        );
+        assert!(matches!(list.items[1], DrawItem::Glyph { .. }));
+    }
+
+    #[test]
     fn click_skips_then_finishes_wait() {
         let mut e = engine_with_scene();
         push(&mut e, "abcd", 1.0);
