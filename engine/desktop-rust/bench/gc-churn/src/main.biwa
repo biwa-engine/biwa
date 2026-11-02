@@ -1,0 +1,113 @@
+// wasm ランタイムの GC の性能を測るためのゲーム (`engine/desktop-rust/README.md` の段 2)。
+//
+// scene の中で、すぐ捨てる値 (文字列と struct) を大量に作る。
+// 生き残る値として Vec にも積み続ける (ホストが根として持つ要素が増えていく)。
+// クリック待ちの区切りごとに作った数を出すので、ウィンドウを持たない動かし方でも進み具合が分かる。
+
+import std::string::String;
+import std::collections::Vec;
+import std::game::Game;
+import std::game::ui::GameWindow;
+import std::game::config::Config;
+import std::game::config::DeveloperConfig;
+import std::convert::Into;
+import std::game::ui::UiElement;
+import std::game::ui::Window;
+import std::game::ui::Page;
+import std::game::ui::Canvas;
+import std::game::ui::MessageArea;
+import std::game::ui::Layers;
+import std::game::ui::ScenePage;
+import std::game::ui::SceneStartButton;
+import std::game::ui::vw;
+import std::game::ui::vh;
+import std::game::ui::percent;
+import std::game::color::Color;
+
+struct BenchState {}
+
+type BenchGame = Game[BenchState];
+type BenchUi = UiElement[BenchState];
+
+// すぐ捨てる struct。文字列を持たせて、struct と externref の両方を GC に回す。
+struct Node {
+  value: Int,
+  label: String,
+}
+
+// 文字列を連結して捨てるのを n 回。
+fn churn_strings(n: Int) -> Int {
+  let i = 0;
+  let total = 0;
+  while i < n {
+    let s = "item-".concat("abcdefgh").concat("-tail");
+    total = total + 1;
+    i = i + 1;
+  }
+  total
+}
+
+// 文字列を持つ struct を作って捨てるのを n 回。
+fn churn_structs(n: Int) -> Int {
+  let i = 0;
+  let total = 0;
+  while i < n {
+    let node = Node { value = i, label = "node" };
+    total = total + node.value;
+    i = i + 1;
+  }
+  total
+}
+
+// struct を Vec に積み続ける (生き残る値が増えていく)。
+fn keep_structs(n: Int) -> Int {
+  let v = Vec::new();
+  let i = 0;
+  while i < n {
+    v.push(Node { value = i, label = "kept".concat("!") });
+    i = i + 1;
+  }
+  v.len()
+}
+
+fn main() {
+  let canvas = Canvas::new().width(percent(100.0)).height(percent(100.0));
+  let message_area = MessageArea::new().
+      width(percent(100.0)).
+      height(percent(36.1111)).
+      margin_top(vh(63.8889)).
+      padding_top(percent(1.875)).
+      padding_bottom(percent(1.875)).
+      padding_left(percent(2.5)).
+      padding_right(percent(2.5)).
+      background_color(Color::new(0, 0, 0, 191));
+  let body: BenchUi = Layers::new(Vec::of(canvas.into())).push(message_area.into()).into();
+  let scene_page = ScenePage::new(canvas.canvas_id(), message_area.message_area_id(), Vec::of(body));
+
+  let start: BenchUi = SceneStartButton::new(new_game).
+      width(vw(30.0)).
+      height(vh(8.0)).
+      background_color(Color::green()).
+      text("start").
+      into();
+  let main_page = Page::new("main", Vec::of(start));
+  Window::new(opening, scene_page, Vec::of(main_page)).show();
+}
+
+fn new_game(window: GameWindow) -> BenchGame {
+  Game::new(window, "gcchurn", BenchState {}, Config::new(DeveloperConfig::default()))
+}
+
+scene opening(g: BenchGame) -> BenchGame {{
+    GC benchmark >>
+    #let a = churn_strings(100000)
+    strings: $(a) >>
+    #let b = churn_structs(100000)
+    structs: $(b) >>
+    #let c = keep_structs(100000)
+    kept: $(c) >>
+    #let d = churn_strings(1000000)
+    strings: $(d) >>
+    done >>
+    #endscene g
+}}
