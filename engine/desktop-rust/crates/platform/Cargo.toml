@@ -10,3 +10,11 @@ publish.workspace = true
 [dependencies]
 winit.workspace = true
 raw-window-handle.workspace = true
+
+# ウィンドウの縦横比の固定 (`aspect.rs`)。winit に API が無いので OS の API を直接呼ぶ。
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true

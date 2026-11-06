@@ -4,6 +4,8 @@
 struct Globals {
     // 描画先の大きさ (物理ピクセル)。
     size: vec2<f32>,
+    // 中身 (レターボックスの内側) の左上の位置 (物理ピクセル)。インスタンスの座標はここが原点。
+    origin: vec2<f32>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -43,7 +45,7 @@ fn vs_main(@builtin(vertex_index) index: u32, instance: Instance) -> VertexOut {
     let local = (corner - vec2(0.5, 0.5)) * instance.size;
     let c = cos(instance.angle);
     let s = sin(instance.angle);
-    let pixel = instance.center + vec2(c * local.x - s * local.y, s * local.x + c * local.y);
+    let pixel = globals.origin + instance.center + vec2(c * local.x - s * local.y, s * local.x + c * local.y);
     let ndc = vec2(pixel.x / globals.size.x * 2.0 - 1.0, 1.0 - pixel.y / globals.size.y * 2.0);
 
     var out: VertexOut;

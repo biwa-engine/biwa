@@ -218,7 +218,10 @@ dependencies = [
 name = "biwa-player-platform"
 version = "0.1.0"
 dependencies = [
+ "objc2 0.5.3",
+ "objc2-foundation 0.2.2",
  "raw-window-handle",
+ "windows-sys 0.59.0",
  "winit",
 ]
 

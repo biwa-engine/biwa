@@ -13,6 +13,8 @@
 //! (開発中のプロジェクトをそのまま動かすため)。
 //!
 //! ウィンドウのタイトルは `<game>/biwa-game.json` の `title` (`biwa build` が書く)。
+//! ゲームの画面の大きさ (論理ピクセル。縦横比もこれで決まる) は同じファイルの `width` / `height`、
+//! 無ければ 1280x720 (16:9)。
 
 use std::path::{Path, PathBuf};
 
@@ -24,6 +26,8 @@ const WASM_FILE: &str = "game.wasm";
 const GAME_INFO_FILE: &str = "biwa-game.json";
 /// ゲームの情報が無いときのウィンドウのタイトル。
 const DEFAULT_TITLE: &str = "Biwa";
+/// ゲームの情報が無いときの画面の大きさ (論理ピクセル)。TypeScript 版のプレイヤーの既定のウィンドウと同じ。
+const DEFAULT_SCREEN: (u32, u32) = (1280, 720);
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -38,6 +42,8 @@ pub struct Options {
     pub collector: Collector,
     /// ウィンドウのタイトル。
     pub title: String,
+    /// ゲームの画面の大きさ (論理ピクセル)。
+    pub screen: (u32, u32),
 }
 
 impl Options {
@@ -85,13 +91,22 @@ impl Options {
             .or_else(|| game_dir.as_ref().map(|dir| dir.join("assets")))
             .or_else(|| project_assets(&wasm))
             .filter(|dir| dir.is_dir());
-        let title = game_dir
+        let info = game_dir
             .as_ref()
             .and_then(|dir| std::fs::read_to_string(dir.join(GAME_INFO_FILE)).ok())
-            .and_then(|json| json_string_field(&json, "title"))
+            .unwrap_or_default();
+        let title = json_field(&info, "title")
+            .and_then(JsonValue::into_string)
             .filter(|title| !title.is_empty())
             .unwrap_or_else(|| DEFAULT_TITLE.into());
-        Ok(Self { wasm, assets, headless, trace, collector, title })
+        let dimension = |key| {
+            json_field(&info, key).and_then(JsonValue::into_number).filter(|n| (1.0..=16384.0).contains(n)).map(|n| n as u32)
+        };
+        let screen = match (dimension("width"), dimension("height")) {
+            (Some(width), Some(height)) => (width, height),
+            _ => DEFAULT_SCREEN,
+        };
+        Ok(Self { wasm, assets, headless, trace, collector, title, screen })
     }
 }
 
@@ -120,11 +135,34 @@ fn has_wasm(dir: &Path) -> bool {
     dir.join(WASM_FILE).is_file()
 }
 
-/// 平らな JSON のオブジェクトから文字列の値を 1 つ取り出す。
+/// JSON の値 (文字列か、それ以外をそのままの文字列で)。
+#[derive(Debug, Clone, PartialEq)]
+enum JsonValue {
+    String(String),
+    Other(String),
+}
+
+impl JsonValue {
+    fn into_string(self) -> Option<String> {
+        match self {
+            Self::String(s) => Some(s),
+            Self::Other(_) => None,
+        }
+    }
+
+    fn into_number(self) -> Option<f64> {
+        match self {
+            Self::Other(s) => s.parse().ok(),
+            Self::String(_) => None,
+        }
+    }
+}
+
+/// 平らな JSON のオブジェクトから値を 1 つ取り出す。
 ///
-/// `biwa-game.json` は `{"name": "...", "title": "...", "version": "..."}` だけなので、
+/// `biwa-game.json` は `{"name": "...", "title": "...", "version": "...", "width": 1280, "height": 720}` だけなので、
 /// JSON の crate は入れずにここで読む (入れ子や配列は扱わない)。
-fn json_string_field(json: &str, key: &str) -> Option<String> {
+fn json_field(json: &str, key: &str) -> Option<JsonValue> {
     let mut chars = json.trim().strip_prefix('{')?.chars().peekable();
     loop {
         skip_whitespace(&mut chars);
@@ -134,16 +172,18 @@ fn json_string_field(json: &str, key: &str) -> Option<String> {
             return None;
         }
         skip_whitespace(&mut chars);
-        if chars.peek() == Some(&'"') {
-            let value = json_string(&mut chars)?;
-            if name == key {
-                return Some(value);
-            }
+        let value = if chars.peek() == Some(&'"') {
+            JsonValue::String(json_string(&mut chars)?)
         } else {
-            // 文字列でない値 (数など) は読み飛ばす。
-            while chars.peek().is_some_and(|&c| c != ',' && c != '}') {
-                chars.next();
+            // 文字列でない値 (数・真偽値など) は区切りまでをそのまま取る。
+            let mut raw = String::new();
+            while let Some(c) = chars.next_if(|&c| c != ',' && c != '}') {
+                raw.push(c);
             }
+            JsonValue::Other(raw.trim().to_string())
+        };
+        if name == key {
+            return Some(value);
         }
         skip_whitespace(&mut chars);
         match chars.next()? {
@@ -202,7 +242,19 @@ fn hex_unit(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<u32>
 
 #[cfg(test)]
 mod tests {
-    use super::json_string_field;
+    use super::{JsonValue, json_field};
+
+    fn json_string_field(json: &str, key: &str) -> Option<String> {
+        json_field(json, key).and_then(JsonValue::into_string)
+    }
+
+    #[test]
+    fn reads_numbers() {
+        let json = "{\"title\": \"a\", \"width\": 1920 , \"height\":1080}";
+        assert_eq!(json_field(json, "width").and_then(JsonValue::into_number), Some(1920.0));
+        assert_eq!(json_field(json, "height").and_then(JsonValue::into_number), Some(1080.0));
+        assert_eq!(json_field(json, "title").and_then(JsonValue::into_number), None);
+    }
 
     #[test]
     fn reads_the_title() {

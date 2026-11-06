@@ -6,8 +6,13 @@
 //! - [`Window`] は描画 (`biwa-player-render`) が要る raw-window-handle のトレイトだけを実装する。
 //! - [`Waker`] は別のスレッド (wasm の vm) からイベントループを起こす。
 //!
+//! - 全画面の切り替え (F11・Alt+Enter、macOS は Cmd+Ctrl+F も) はここで済ませ、アプリには大きさの変化だけが届く。
+//! - ウィンドウの縦横比の固定は `aspect.rs` (OS ごと)。
+//!
 //! 描き直しはオンデマンドで、[`App::frame_done`] が「まだ動いているものがある」と答えたときだけ
 //! 次のフレームを要求する。何も動いていなければイベントが来るまで眠る (常時 60 fps で回さない)。
+
+mod aspect;
 
 use std::fmt;
 use std::sync::Arc;
@@ -16,10 +21,10 @@ use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
 };
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
+use winit::event::{ElementState, KeyEvent, Modifiers, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
-use winit::window::WindowId;
+use winit::window::{Fullscreen, WindowId};
 
 /// プラットフォームのエラー。
 #[derive(Debug, Clone)]
@@ -61,6 +66,9 @@ pub enum Event {
     Advance,
     /// 描く時が来た。
     Redraw,
+    /// ウィンドウが (隠れていた状態から) 見えるようになった。
+    /// macOS では見えていない間は描けない (描いても捨てられる) ので、ここで描き直す。
+    Shown,
     /// [`Waker::wake`] で起こされた。
     Woken,
     /// ウィンドウが閉じられようとしている。
@@ -74,6 +82,8 @@ pub struct WindowOptions {
     /// 論理ピクセル。
     pub width: f64,
     pub height: f64,
+    /// 中身の縦横比を `width : height` に固定する (できる OS だけ。`aspect.rs`)。
+    pub aspect_ratio: Option<(u32, u32)>,
 }
 
 /// ウィンドウ。描画に渡すために raw-window-handle のトレイトを実装する。
@@ -146,7 +156,8 @@ pub fn run<A: App>(options: WindowOptions, make_app: impl FnOnce(Waker) -> A) ->
         .map_err(|e| PlatformError(format!("failed to start the event loop: {e}")))?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let app = make_app(Waker(event_loop.create_proxy()));
-    let mut handler = Handler { options, app, window: None, cursor: (0.0, 0.0), error: None };
+    let mut handler =
+        Handler { options, app, window: None, cursor: (0.0, 0.0), modifiers: Modifiers::default(), error: None };
     event_loop
         .run_app(&mut handler)
         .map_err(|e| PlatformError(format!("the event loop failed: {e}")))?;
@@ -159,6 +170,7 @@ struct Handler<A> {
     window: Option<Arc<Window>>,
     /// マウスの位置 (物理ピクセル)。
     cursor: (f64, f64),
+    modifiers: Modifiers,
     error: Option<PlatformError>,
 }
 
@@ -168,6 +180,30 @@ impl<A: App> Handler<A> {
             event_loop.exit();
         }
     }
+
+    /// 全画面と窓を切り替える。全画面は今いるモニタの「枠なしの全画面」(macOS は OS の全画面)。
+    fn toggle_fullscreen(&self) {
+        if let Some(window) = &self.window {
+            let next = match window.0.fullscreen() {
+                Some(_) => None,
+                None => Some(Fullscreen::Borderless(None)),
+            };
+            window.0.set_fullscreen(next);
+        }
+    }
+
+    /// 全画面の切り替えのキーか。F11・Alt+Enter、macOS は Cmd+Ctrl+F も。
+    fn is_fullscreen_key(&self, key: &Key) -> bool {
+        let state = self.modifiers.state();
+        match key {
+            Key::Named(NamedKey::F11) => true,
+            Key::Named(NamedKey::Enter) => state.alt_key(),
+            Key::Character(c) if cfg!(target_os = "macos") => {
+                c.eq_ignore_ascii_case("f") && state.super_key() && state.control_key()
+            }
+            _ => false,
+        }
+    }
 }
 
 impl<A: App> ApplicationHandler for Handler<A> {
@@ -175,12 +211,22 @@ impl<A: App> ApplicationHandler for Handler<A> {
         if self.window.is_some() {
             return;
         }
+        // 最小の大きさは幅 320 で、縦横比を固定するならそれに合わせる。
+        let min_height = match self.options.aspect_ratio {
+            Some((w, h)) if w > 0 => 320.0 * f64::from(h) / f64::from(w),
+            _ => 180.0,
+        };
         let attributes = winit::window::Window::default_attributes()
             .with_title(self.options.title.clone())
             .with_inner_size(winit::dpi::LogicalSize::new(self.options.width, self.options.height))
-            .with_min_inner_size(winit::dpi::LogicalSize::new(320.0, 180.0));
+            .with_min_inner_size(winit::dpi::LogicalSize::new(320.0, min_height));
         let window = match event_loop.create_window(attributes) {
-            Ok(window) => Arc::new(Window(window)),
+            Ok(window) => {
+                if let Some((w, h)) = self.options.aspect_ratio {
+                    aspect::lock(&window, w, h);
+                }
+                Arc::new(Window(window))
+            }
             Err(e) => {
                 self.error = Some(PlatformError(format!("failed to create a window: {e}")));
                 event_loop.exit();
@@ -201,6 +247,11 @@ impl<A: App> ApplicationHandler for Handler<A> {
                 Event::Resized(window.size())
             }
             WindowEvent::RedrawRequested => Event::Redraw,
+            WindowEvent::Occluded(false) => Event::Shown,
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers;
+                return;
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x, position.y);
                 return;
@@ -212,7 +263,16 @@ impl<A: App> ApplicationHandler for Handler<A> {
             WindowEvent::KeyboardInput {
                 event: KeyEvent { state: ElementState::Pressed, logical_key, repeat: false, .. },
                 ..
-            } if matches!(logical_key, Key::Named(NamedKey::Enter | NamedKey::Space)) => Event::Advance,
+            } => {
+                if self.is_fullscreen_key(&logical_key) {
+                    self.toggle_fullscreen();
+                    return;
+                }
+                if !matches!(logical_key, Key::Named(NamedKey::Enter | NamedKey::Space)) {
+                    return;
+                }
+                Event::Advance
+            }
             _ => return,
         };
         let flow = self.app.event(event);

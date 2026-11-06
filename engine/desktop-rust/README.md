@@ -25,7 +25,7 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
  ├ image      image                     (画像の読み込みとデコード。裏のスレッドで)
  ├ layout     taffy                     (UI のレイアウト。core::layout のトレイトを実装する)
  ├ render     wgpu + etagere            (core::draw の描画リストを描く)
- └ platform   winit                     (ウィンドウ・入力・イベントループ)
+ └ platform   winit (+ objc2 / windows-sys) (ウィンドウ・入力・イベントループ・縦横比の固定)
 ```
 
 | crate      | 中身                                                                                                                                                                                                                                                                                                                                                                                                                                             |
@@ -36,7 +36,7 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
 | `image`    | 画像のアセットを裏のスレッドで読んでデコードし、`core::image::DecodedImage` で返す                                                                                                                                                                                                                                                                                                                                                               |
 | `layout`   | `core` が作ったレイアウト用の木を taffy (block / flex / grid) で計算する。CSS への写し方は TypeScript 版の DOM と同じ                                                                                                                                                                                                                                                                                                                            |
 | `render`   | 描画の指示を wgpu で描く。塗りの矩形・グリフ・画像を「中心・大きさ・回転を持つインスタンスの矩形」として 1 本のパイプラインで描く。グリフはアルファだけのアトラス (etagere) に、画像は 1 枚ずつテクスチャに載せ、テクスチャが替わるところで描画の呼び出しを区切る。切り取りは scissor                                                                                                                                                            |
-| `platform` | winit のイベントループを、自前のイベント (大きさの変化・クリック (位置つき)・進む・描き直し・起こされた・閉じる) にして渡す                                                                                                                                                                                                                                                                                                                      |
+| `platform` | winit のイベントループを、自前のイベント (大きさの変化・クリック (位置つき)・進む・描き直し・見えるようになった・起こされた・閉じる) にして渡す。全画面の切り替え (F11・Alt+Enter・macOS は Cmd+Ctrl+F) とウィンドウの縦横比の固定 (macOS・Windows) もここ                                                                                                                                                                                                                                                                                                                      |
 | `player`   | 起動時の引数、ウィンドウを出す動かし方 (`windowed.rs`)、出さない動かし方 (`--headless`)                                                                                                                                                                                                                                                                                                                                                          |
 
 各 crate が直接依存する外部 crate (`cargo tree --depth 1` で確かめた):
@@ -49,7 +49,7 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
 | `image`    | image                                                                  |
 | `layout`   | taffy                                                                  |
 | `render`   | wgpu, etagere, bytemuck, pollster, raw-window-handle                   |
-| `platform` | winit, raw-window-handle                                               |
+| `platform` | winit, raw-window-handle, objc2 / objc2-foundation (macOS), windows-sys (Windows) |
 | `player`   | なし (自前の crate だけ)                                               |
 
 `render` と `platform` の境目は raw-window-handle のトレイト (ウィンドウの handle の受け渡しの標準) だけで、
@@ -210,10 +210,27 @@ WebKit 版のスクリーンショットと並べて、タイトル画面の位�
 - Actions: `.github/workflows/player-native.yml` が 3 OS でビルドし、`biwa-player-<id>` として上げる
   (macOS は aarch64 と x86_64 を `lipo` で universal に)。Linux のビルドには `libfontconfig1-dev` が要る。
 - Linux (Xvfb + lavapipe) で、組み立てた tar.gz を展開して起動できることを確認済み。
+- 実機: Linux (Intel Iris Xe, Vulkan) は最後まで動いた。Windows は CI のテストで文字の幅の違いが出た → 既定のフォントを OS ごとに。
+- macOS 実機 (2026-11-06): 動いたが、開いた直後のウィンドウが真っ白で、クリックするまで描かれなかった。
+  - 原因: macOS の wgpu は、ウィンドウが見えていない間 (`occlusionState` が Visible でない間) は描き先を渡さず
+    `Occluded` を返す (wgpu#8309 の回避。`wgpu-hal` の `metal/surface.rs` の `acquire_texture`)。
+    作った直後のウィンドウはまだ画面に出ておらず、最初のフレームは描かれずに捨てられる。
+    描き直しはオンデマンドなので、次に描くのはクリックのとき。Linux にはこの判定が無いので起きない。
+  - 直し方: `render` が「見えていないので描かなかった」(`FrameStatus::Hidden`) を返し、
+    `platform` が winit の `Occluded(false)` (macOS の `windowDidChangeOcclusionState`) を `Event::Shown` にして渡す。
+    player は描けていない変更があれば、見えるようになったところで描き直す。
+- 縦横比の固定 (2026-11-06):
+  - ゲームは決まった大きさの画面 (`biwa-game.json` の `width` / `height`、無ければ 1280x720) として組み、
+    ウィンドウに縦横比を保って収める。余りは黒い帯 (レターボックス)。全画面でモニタの比が違っても崩れない。
+    帯の上のクリックはどの要素にも当たらないクリック (= 進む) とする。
+  - ウィンドウ自体の縦横比も固定する。winit 0.30 に API が無いので OS の API を直接呼ぶ (`platform/src/aspect.rs`)。
+    macOS は `NSWindow.contentAspectRatio`、Windows はサブクラス化して `WM_SIZING` で矩形を直す。
+    Linux (X11 / Wayland) はできない (帯で保つ)。
+  - 全画面の切り替え: F11・Alt+Enter (macOS は Cmd+Ctrl+F と緑のボタンも)。
 
 ## まだ無いもの
 
-- 3 OS の実機での確認 (段 6)、サウンド・IME・ルビ・動画 (段 7〜10)。
+- Windows / macOS 実機での縦横比の固定と全画面の確認 (段 6)、サウンド・IME・ルビ・動画 (段 7〜10)。
 - アニメーションする GIF / WebP、画像の mipmap (大きく縮めるとちらつきうる)。
 - ゲームに同梱したフォントの登録と、`TextFont` property。
 - 実機 (Windows / macOS / Linux の GPU、HiDPI、Wayland) での確認。

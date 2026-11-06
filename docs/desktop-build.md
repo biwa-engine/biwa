@@ -23,7 +23,9 @@
 - **CI**: 3 OS のビルドに成功。Windows だけ文字の幅のテストが落ちた
   (既定の sans-serif が Arial で、日本語が仮名の詰まった Yu Gothic UI に落ちていた) →
   既定のフォントを Windows は `Yu Gothic, Meiryo`、macOS は `Hiragino Sans` からにした。
-- **Windows / macOS**: 実機で試す (段階 6)。
+- **macOS 実機** (2026-11-06): 動いたが、開いた直後が真っ白でクリックまで描かれなかった
+  (wgpu が見えていないウィンドウには描かないため。`engine/desktop-rust/README.md` の段 6) → 直した。再確認待ち。
+- **Windows 実機**: これから。
 
 状況 (WebView):
 
@@ -54,6 +56,9 @@ biwa build --platform web               → dist/web/
 - 実行ファイルの横の `game/` (macOS は `<name>.app/Contents/Resources/game/`) の `game.wasm` を読み、
   wasmtime で動かす。画像などは `game/assets/` から読む。`--game-dir <DIR>` / `--wasm <FILE>` で場所を上書きできる。
 - `game/biwa-game.json` の `title` をウィンドウのタイトルにする (無ければ `Biwa`)。
+- ゲームは決まった大きさの画面 (`biwa-game.json` の `width` / `height`、無ければ 1280x720) として組み、
+  ウィンドウに縦横比を保って収める (余りは黒い帯)。ウィンドウの縦横比も macOS・Windows では固定する
+  (Linux は帯だけ)。全画面の切り替えは F11・Alt+Enter (macOS は Cmd+Ctrl+F と緑のボタンも)。
 - 描画は wgpu (Windows: DX12 / Vulkan、macOS: Metal、Linux: Vulkan / GL)。
 - Windows のリリースビルドはコンソールを開かない。起動に失敗したときのエラーは
   一時ディレクトリの `biwa-player-error.log` (Windows なら `%TEMP%\biwa-player-error.log`) にも書く。
@@ -152,7 +157,7 @@ WebView 版: `game/` は Web の静的ビルド (`biwa build --platform web` の
 }
 ```
 
-(`name` と `version` はいまプレイヤーは読まない。`width` / `height` は `biwa build` はまだ書かない)
+(`name` と `version` はいまプレイヤーは読まない。`width` / `height` は WebView 版はウィンドウの大きさ、ネイティブ版はゲームの画面の大きさ (縦横比も) になる。`biwa build` はまだ書かない)
 
 #### 手で組み立てる
 
@@ -272,6 +277,9 @@ biwa build --platform windows,macos,linux
    - 文字 (日本語、太字、禁則) と画像 (`assets/`) が出るか。
    - ウィンドウの大きさを変えたとき、HiDPI (Retina・Windows の拡大率) で文字がぼけないか。
 3. 描画の性能 (動いている間の CPU 使用率、止まっているときに眠るか)。
+4. 開いた直後からタイトルが出るか (macOS で真っ白だった件)。
+5. ウィンドウの角・辺をつまんでも縦横比が保たれるか (macOS・Windows)。全画面 (F11・Alt+Enter・macOS は Cmd+Ctrl+F) で
+   上下か左右に黒い帯が付き、クリックの位置がずれないか。
 
 ### WebView 版
 

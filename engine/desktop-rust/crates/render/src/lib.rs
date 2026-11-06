@@ -10,6 +10,7 @@
 //! - グリフはアルファだけのアトラス (`atlas.rs`) に載せ、色はシェーダで掛ける。
 //! - 画像は 1 枚ずつテクスチャにする ([`Renderer::upload_image`])。テクスチャが替わるところで描画の呼び出しを区切る。
 //! - 切り取り (`DrawItem::Clip`) は scissor にする。
+//! - 描画の指示は描画先の中の矩形 (`area`。レターボックスの中身) に描く。外は黒で塗る。
 //! - バックエンドは wgpu が選ぶ (Vulkan / Metal / DX12 / GL)。ノベルゲームに独立 GPU は要らないので省電力の GPU を選ぶ。
 //! - vsync (`Fifo`) で描く。描き直しが要らないときに呼ばないのは呼ぶ側 (player) の仕事。
 
@@ -27,6 +28,17 @@ use biwa_player_core::text::GlyphRasterizer;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use atlas::GlyphAtlas;
+
+/// 1 フレームを描いた結果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameStatus {
+    /// 描いて画面に出した。
+    Presented,
+    /// ウィンドウが見えていないので描かなかった。見えるようになったら描き直すこと。
+    Hidden,
+    /// 描き先の準備がまだで描かなかった (大きさが変わった途中など)。すぐ描き直してよい。
+    Retry,
+}
 
 /// 描画のエラー。
 #[derive(Debug, Clone)]
@@ -297,19 +309,58 @@ impl Renderer {
     }
 
     /// 1 フレーム描く。グリフの画像が要れば `glyphs` に頼む。
-    pub fn render(&mut self, list: &DrawList, glyphs: &mut dyn GlyphRasterizer) -> Result<(), RenderError> {
+    ///
+    /// 描画の指示の座標は `area` (描画先の中の矩形、物理ピクセル) の左上を原点とする。
+    /// `area` の外は黒で塗り、指示はその中だけに描く。
+    pub fn render(
+        &mut self,
+        list: &DrawList,
+        glyphs: &mut dyn GlyphRasterizer,
+        area: Rect,
+    ) -> Result<FrameStatus, RenderError> {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            // ウィンドウが隠れている・大きさが変わった途中など。次のフレームでやり直す。
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return Ok(()),
+            // macOS の wgpu は、ウィンドウが見えていない (作った直後でまだ画面に出ていない、最小化した ...) 間は
+            // 描き先を渡さない (wgpu#8309 の回避)。見えるようになってから描き直してもらう。
+            wgpu::CurrentSurfaceTexture::Occluded => return Ok(FrameStatus::Hidden),
+            wgpu::CurrentSurfaceTexture::Timeout => return Ok(FrameStatus::Retry),
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
-                return Ok(());
+                return Ok(FrameStatus::Retry);
             }
             other => return Err(RenderError(format!("failed to acquire a frame: {other:?}"))),
         };
 
-        let (instances, commands) = self.build(list, glyphs);
+        let (surface_w, surface_h) = (self.config.width, self.config.height);
+        let area = clamp_area(area, surface_w, surface_h);
+        let full = area == (0, 0, surface_w, surface_h);
+        let mut instances = Vec::new();
+        if !full {
+            // 中身の背景。外 (レターボックスの帯) は下の clear の黒になる。
+            instances.push(Instance {
+                center: [area.2 as f32 / 2.0, area.3 as f32 / 2.0],
+                size: [area.2 as f32, area.3 as f32],
+                uv: [0.0; 4],
+                color: linear(list.clear),
+                mode: MODE_FILL,
+                angle: 0.0,
+                _pad: [0; 2],
+            });
+        }
+        let (built, mut commands) = self.build(list, glyphs);
+        if !full {
+            // 背景の 1 つ分ずらし、背景を最初の描画に入れる。
+            for command in &mut commands {
+                if let Command::Draw { instances, .. } = command {
+                    *instances = instances.start + 1..instances.end + 1;
+                }
+            }
+            match commands.first_mut() {
+                Some(Command::Draw { binding: Binding::Atlas, instances }) if instances.start == 1 => instances.start = 0,
+                _ => commands.insert(0, Command::Draw { binding: Binding::Atlas, instances: 0..1 }),
+            }
+        }
+        instances.extend(built);
         if instances.len() > self.instance_capacity {
             self.instance_capacity = instances.len().next_power_of_two();
             self.instances = Self::instance_buffer(&self.device, self.instance_capacity);
@@ -317,13 +368,13 @@ impl Renderer {
         if !instances.is_empty() {
             self.queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(&instances));
         }
-        let size = [self.config.width as f32, self.config.height as f32, 0.0, 0.0];
+        let size = [surface_w as f32, surface_h as f32, area.0 as f32, area.1 as f32];
         self.queue.write_buffer(&self.globals, 0, bytemuck::cast_slice(&size));
 
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("biwa frame") });
         {
-            let clear = linear(list.clear);
+            let clear = if full { linear(list.clear) } else { [0.0, 0.0, 0.0, 1.0] };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("biwa frame"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -346,6 +397,8 @@ impl Renderer {
                 multiview_mask: None,
             });
             if !instances.is_empty() {
+                // はみ出した絵 (画面の外から滑り込む立ち絵など) が帯に描かれないよう、中身の範囲で切る。
+                pass.set_scissor_rect(area.0, area.1, area.2, area.3);
                 pass.set_pipeline(&self.pipeline);
                 pass.set_vertex_buffer(0, self.instances.slice(..));
                 for command in &commands {
@@ -359,8 +412,8 @@ impl Renderer {
                             pass.draw(0..6, instances.clone());
                         }
                         Command::Clip(clip) => {
-                            let (x, y, w, h) = scissor(*clip, self.config.width, self.config.height);
-                            pass.set_scissor_rect(x, y, w, h);
+                            let (x, y, w, h) = scissor(*clip, area.2, area.3);
+                            pass.set_scissor_rect(area.0 + x, area.1 + y, w, h);
                         }
                     }
                 }
@@ -368,7 +421,7 @@ impl Renderer {
         }
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
-        Ok(())
+        Ok(FrameStatus::Presented)
     }
 
     /// 描画の指示をインスタンスの列と、描き方 (テクスチャの切り替え・切り取り) の列にする。
@@ -475,6 +528,12 @@ fn bind_group(
             wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
         ],
     })
+}
+
+/// 中身の範囲を、描画先に収まる整数の矩形 (x, y, 幅, 高さ) にする。空なら描画先全体。
+fn clamp_area(area: Rect, width: u32, height: u32) -> (u32, u32, u32, u32) {
+    let (x, y, w, h) = scissor(Some(area), width, height);
+    if w == 0 || h == 0 { (0, 0, width, height) } else { (x, y, w, h) }
 }
 
 /// 切り取りの範囲を、描画先に収まる scissor の矩形 (x, y, 幅, 高さ) にする。

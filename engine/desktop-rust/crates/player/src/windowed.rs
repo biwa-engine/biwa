@@ -5,17 +5,21 @@
 //! - `vm` からの知らせ (syscall) をエンジンに当て、止まる syscall の返事を保留する
 //! - エンジンの画像の読み込みの依頼を `image` に渡し、読めた画像をエンジン (大きさ) と `render` (テクスチャ) に渡す
 //! - 描き直しが要るときだけ、エンジンの描画の指示を `render` で描く (文字は `text`)
+//!
+//! ゲームは決まった大きさ (論理ピクセル。既定は 1280x720) の画面として組み、ウィンドウに収まるよう
+//! 縦横比を保って拡大・縮小する。余りは黒い帯 (レターボックス)。ウィンドウの大きさや全画面のモニタの
+//! 比が違っても、レイアウトは変わらない。ウィンドウの縦横比も、できる OS (Windows / macOS) では固定する。
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use biwa_player_core::engine::{CallStatus, Click, Engine};
-use biwa_player_core::geometry::Viewport;
+use biwa_player_core::geometry::{Rect, Viewport};
 use biwa_player_core::image::{DecodedImage, ImageHandle};
 use biwa_player_image::ImageLoader;
 use biwa_player_layout::TaffyLayouter;
 use biwa_player_platform::{App, Event, Flow, Window, WindowOptions, WindowSize};
-use biwa_player_render::Renderer;
+use biwa_player_render::{FrameStatus, Renderer};
 use biwa_player_text::TextSystem;
 use biwa_player_vm::{CallReply, HostCommand, Vm, VmEvent, VmOptions};
 
@@ -25,7 +29,13 @@ use crate::options::Options;
 const MAX_FRAME_STEP: Duration = Duration::from_millis(100);
 
 pub fn run(options: &Options, wasm: Vec<u8>) -> Result<(), String> {
-    let window = WindowOptions { title: options.title.clone(), width: 1280.0, height: 720.0 };
+    let screen = options.screen;
+    let window = WindowOptions {
+        title: options.title.clone(),
+        width: f64::from(screen.0),
+        height: f64::from(screen.1),
+        aspect_ratio: Some(screen),
+    };
     let collector = options.collector;
     let trace = options.trace;
     let assets = options.assets.clone();
@@ -43,7 +53,7 @@ pub fn run(options: &Options, wasm: Vec<u8>) -> Result<(), String> {
         let vm = Vm::spawn(wasm, VmOptions { collector }, move || waker.wake())
             .map_err(|e| spawn_error = Some(format!("failed to start the vm thread: {e}")))
             .ok();
-        Player::new(vm, images, trace)
+        Player::new(vm, images, screen, trace)
     });
     if let Some(e) = spawn_error {
         return Err(e);
@@ -62,6 +72,10 @@ struct Player {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     size: Option<WindowSize>,
+    /// ゲームの画面の大きさ (論理ピクセル)。
+    screen: (u32, u32),
+    /// 描けないまま (ウィンドウが見えていない) の変更がある。見えるようになったら描く。
+    stale: bool,
     /// 返事を保留している止まる syscall。
     pending: Option<CallReply>,
     /// 最後にエンジン時計を進めた時刻。動いているものが無い間は `None`。
@@ -70,7 +84,7 @@ struct Player {
 }
 
 impl Player {
-    fn new(vm: Option<Vm>, images: Option<ImageLoader>, trace: bool) -> Self {
+    fn new(vm: Option<Vm>, images: Option<ImageLoader>, screen: (u32, u32), trace: bool) -> Self {
         Self {
             vm,
             images,
@@ -81,6 +95,8 @@ impl Player {
             window: None,
             renderer: None,
             size: None,
+            screen,
+            stale: false,
             pending: None,
             last_tick: None,
             trace,
@@ -188,11 +204,15 @@ impl Player {
         let (Some(renderer), Some(size)) = (&mut self.renderer, self.size) else {
             return;
         };
-        let (width, height) = size.logical();
-        let viewport = Viewport::new(width as f32, height as f32, size.scale as f32);
+        let fit = Letterbox::new(self.screen, size);
+        let viewport = Viewport::new(self.screen.0 as f32, self.screen.1 as f32, fit.scale);
         let list = self.engine.frame(viewport, &mut self.text, &mut self.layouter);
-        if let Err(e) = renderer.render(&list, &mut self.text) {
-            eprintln!("[biwa] {e}");
+        match renderer.render(&list, &mut self.text, fit.area) {
+            Ok(FrameStatus::Presented) => self.stale = false,
+            // 見えるようになったら (`Event::Shown`) 描く。
+            Ok(FrameStatus::Hidden) => self.stale = true,
+            Ok(FrameStatus::Retry) => self.request_redraw(),
+            Err(e) => eprintln!("[biwa] {e}"),
         }
     }
 
@@ -243,6 +263,17 @@ impl App for Player {
                 self.request_redraw();
             }
             Event::Click { x, y } => {
+                // ウィンドウの論理ピクセルから、ゲームの画面の論理ピクセルへ。
+                let position = match self.size {
+                    Some(size) => Letterbox::new(self.screen, size).to_screen(x, y, size.scale as f32),
+                    None => Some((x, y)),
+                };
+                let Some((x, y)) = position else {
+                    // 帯の上。どの要素にも当たらないクリックと同じく「進む」。
+                    self.engine.advance();
+                    self.after_input();
+                    return Flow::Continue;
+                };
                 match self.engine.click_at(x, y) {
                     Ok(Click::StartScene(start)) => {
                         if let Some(vm) = &self.vm {
@@ -263,6 +294,12 @@ impl App for Player {
                 return self.drain_vm();
             }
             Event::Redraw => self.redraw(),
+            Event::Shown => {
+                // macOS は作った直後のウィンドウがまだ見えておらず、最初のフレームが描けていない。
+                if self.stale {
+                    self.request_redraw();
+                }
+            }
             Event::CloseRequested => return Flow::Exit,
         }
         Flow::Continue
@@ -275,5 +312,51 @@ impl App for Player {
             self.last_tick = Some(Instant::now());
         }
         animating
+    }
+}
+
+/// ゲームの画面をウィンドウに収める位置と倍率。
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Letterbox {
+    /// ゲームの論理ピクセル 1 つが物理ピクセルいくつか。
+    scale: f32,
+    /// 画面を描く範囲 (ウィンドウの中、物理ピクセル)。
+    area: Rect,
+}
+
+impl Letterbox {
+    fn new(screen: (u32, u32), window: WindowSize) -> Self {
+        let (sw, sh) = (screen.0.max(1) as f32, screen.1.max(1) as f32);
+        let (ww, wh) = (window.width as f32, window.height as f32);
+        let scale = (ww / sw).min(wh / sh).max(f32::MIN_POSITIVE);
+        let (w, h) = ((sw * scale).round().min(ww), (sh * scale).round().min(wh));
+        // 帯の幅は整数にする (文字をピクセルの格子に合わせたまま動かすため)。
+        let (x, y) = (((ww - w) / 2.0).floor(), ((wh - h) / 2.0).floor());
+        Self { scale, area: Rect::new(x, y, w, h) }
+    }
+
+    /// ウィンドウの論理ピクセルの位置を、ゲームの画面の論理ピクセルの位置にする。帯の上なら `None`。
+    fn to_screen(self, x: f32, y: f32, window_scale: f32) -> Option<(f32, f32)> {
+        let (px, py) = (x * window_scale - self.area.x, y * window_scale - self.area.y);
+        let inside = (0.0..=self.area.width).contains(&px) && (0.0..=self.area.height).contains(&py);
+        inside.then(|| (px / self.scale, py / self.scale))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn letterbox_keeps_the_aspect_ratio_and_centers() {
+        // 16:9 の画面を 4:3 のウィンドウに (上下に帯)。
+        let fit = Letterbox::new((1280, 720), WindowSize { width: 1600, height: 1200, scale: 2.0 });
+        assert_eq!(fit.scale, 1.25);
+        assert_eq!(fit.area, Rect::new(0.0, 150.0, 1600.0, 900.0));
+        // ウィンドウの論理ピクセル (800, 600) = 物理 (1600, 1200) は画面の右下の角。
+        assert_eq!(fit.to_screen(400.0, 300.0, 2.0), Some((640.0, 360.0)));
+        assert_eq!(fit.to_screen(800.0, 525.0, 2.0), Some((1280.0, 720.0)));
+        // 帯の上。
+        assert_eq!(fit.to_screen(400.0, 10.0, 2.0), None);
     }
 }
