@@ -207,7 +207,12 @@ impl Player {
         let fit = Letterbox::new(self.screen, size);
         let viewport = Viewport::new(self.screen.0 as f32, self.screen.1 as f32, fit.scale);
         let list = self.engine.frame(viewport, &mut self.text, &mut self.layouter);
-        match renderer.render(&list, &mut self.text, fit.area) {
+        let status = renderer.render(&list, &mut self.text, fit.area);
+        // Windows は隠したまま作ったウィンドウを、最初に描いたところで見せる。
+        if let Some(window) = &self.window {
+            window.show();
+        }
+        match status {
             Ok(FrameStatus::Presented) => self.stale = false,
             // 見えるようになったら (`Event::Shown`) 描く。
             Ok(FrameStatus::Hidden) => self.stale = true,
@@ -250,7 +255,11 @@ impl App for Player {
         self.size = Some(size);
         self.window = Some(window);
         self.drain_images();
-        self.drain_vm()
+        let flow = self.drain_vm();
+        // 最初のフレームは描き直しの知らせを待たずに描く。Windows は隠したまま作ったウィンドウをここで見せる
+        // (隠れているウィンドウには描き直しの知らせが来ないことがある)。
+        self.redraw();
+        flow
     }
 
     fn event(&mut self, event: Event) -> Flow {

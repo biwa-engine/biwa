@@ -20,7 +20,7 @@
 
 use biwa_player_core::geometry::{Rect, Viewport};
 use biwa_player_core::layout::{BoxStyle, Flow, LayoutBox, LayoutNode, LayoutTree, Layouter};
-use biwa_player_core::text::{ParagraphStyle, TextShaper};
+use biwa_player_core::text::{ParagraphStyle, TextShaper, TextSpan, TextStyle};
 use biwa_player_core::ui::UiSize;
 use taffy::prelude::*;
 use taffy::{BoxSizing, compute_leaf_layout};
@@ -62,13 +62,24 @@ impl Layouter for TaffyLayouter {
                     AvailableSpace::MinContent => 0.0,
                     AvailableSpace::MaxContent => f32::INFINITY,
                 });
+                // 描くときと同じ大きさ (物理ピクセル) で整形して測る。論理ピクセルの大きさで測ると、
+                // 行の高さの丸めや字幅の誤差が拡大率で変わり、描いた文字が箱からずれることがある。
+                let scale = viewport.scale.max(f32::MIN_POSITIVE);
+                let spans: Vec<TextSpan> = text
+                    .spans
+                    .iter()
+                    .map(|span| TextSpan {
+                        text: span.text.clone(),
+                        style: TextStyle { size: span.style.size * scale, ..span.style.clone() },
+                    })
+                    .collect();
                 let shaped = shaper.shape(
-                    &text.spans,
-                    ParagraphStyle { max_width, line_height: text.line_height, center: false },
+                    &spans,
+                    ParagraphStyle { max_width: max_width * scale, line_height: text.line_height, center: false },
                 );
                 Size {
-                    width: known.width.unwrap_or(shaped.width.ceil()),
-                    height: known.height.unwrap_or(shaped.height.ceil()),
+                    width: known.width.unwrap_or((shaped.width / scale).ceil()),
+                    height: known.height.unwrap_or((shaped.height / scale).ceil()),
                 }
             })
         });
@@ -215,7 +226,7 @@ mod tests {
     use super::*;
     use biwa_player_core::geometry::Color;
     use biwa_player_core::layout::LayoutText;
-    use biwa_player_core::text::{LineHeight, ShapedText, TextSpan, TextStyle};
+    use biwa_player_core::text::{LineHeight, ShapedText};
 
     /// 1 文字 10 px の等幅で、幅を超えたら折り返す整形 (行の高さ 20 px)。
     struct Mono;

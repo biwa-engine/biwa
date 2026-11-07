@@ -45,7 +45,7 @@ raw-window-handle = "0.6"
 # ウィンドウの縦横比の固定 (winit に無いので OS の API を直接呼ぶ。platform だけが使う)。
 objc2 = "0.5"
 objc2-foundation = { version = "0.2", features = ["NSGeometry"] }
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 # ゲームの画像に使う形式だけを有効にする (アニメーションの GIF / WebP は後で)。
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 

@@ -23,6 +23,7 @@ mod windowed;
 use options::Options;
 
 fn main() {
+    biwa_player_platform::attach_parent_console();
     let options = match Options::parse(std::env::args().skip(1)) {
         Ok(options) => options,
         Err(message) => {

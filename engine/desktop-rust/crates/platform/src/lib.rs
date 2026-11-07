@@ -90,6 +90,14 @@ pub struct WindowOptions {
 pub struct Window(winit::window::Window);
 
 impl Window {
+    /// ウィンドウを見せる。Windows ではウィンドウを隠したまま作るので、最初のフレームを描いたら呼ぶこと
+    /// (描く前のウィンドウは中身が白いまま見えてしまう)。他の OS では初めから見えているので何もしない。
+    pub fn show(&self) {
+        if !self.0.is_visible().unwrap_or(true) {
+            self.0.set_visible(true);
+        }
+    }
+
     /// 次のフレームを描いてほしい。
     pub fn request_redraw(&self) {
         self.0.request_redraw();
@@ -146,6 +154,17 @@ pub trait App {
     /// 溜まったイベントを処理し終えた。動いているものが残っていれば true を返す
     /// (次のフレームを要求する)。
     fn frame_done(&mut self) -> bool;
+}
+
+/// Windows のリリースビルドはコンソールを持たない (`windows_subsystem = "windows"`) ので、
+/// コマンドラインから起動されたときは、その親のコンソールに標準出力・標準エラーを出す。
+/// ダブルクリックで起動されたとき (親がコンソールを持たない) は何もしない。他の OS では何もしない。
+pub fn attach_parent_console() {
+    #[cfg(windows)]
+    // SAFETY: 引数を取らない Win32 の呼び出しで、失敗しても何も起きない。
+    unsafe {
+        windows_sys::Win32::System::Console::AttachConsole(windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS);
+    }
 }
 
 /// イベントループを回す。`make_app` はウィンドウより先に、[`Waker`] を受け取ってアプリを作る。
@@ -219,7 +238,10 @@ impl<A: App> ApplicationHandler for Handler<A> {
         let attributes = winit::window::Window::default_attributes()
             .with_title(self.options.title.clone())
             .with_inner_size(winit::dpi::LogicalSize::new(self.options.width, self.options.height))
-            .with_min_inner_size(winit::dpi::LogicalSize::new(320.0, min_height));
+            .with_min_inner_size(winit::dpi::LogicalSize::new(320.0, min_height))
+            // Windows は最初のフレームを描くまで隠す ([`Window::show`])。macOS は見えていないウィンドウに描けない
+            // (`Event::Shown` で描き直す) ので、他の OS は初めから見せる。
+            .with_visible(!cfg!(windows));
         let window = match event_loop.create_window(attributes) {
             Ok(window) => {
                 if let Some((w, h)) = self.options.aspect_ratio {
@@ -244,6 +266,12 @@ impl<A: App> ApplicationHandler for Handler<A> {
             WindowEvent::CloseRequested => Event::CloseRequested,
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                 let Some(window) = &self.window else { return };
+                // macOS: winit は角や辺をつまむたびに contentResizeIncrements を設定し直し、
+                // それと両立しない contentAspectRatio が消える。大きさが変わるたびに付け直す。
+                #[cfg(target_os = "macos")]
+                if let Some((w, h)) = self.options.aspect_ratio {
+                    aspect::lock(&window.0, w, h);
+                }
                 Event::Resized(window.size())
             }
             WindowEvent::RedrawRequested => Event::Redraw,

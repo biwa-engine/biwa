@@ -64,7 +64,7 @@ struct ShapeCache {
 #[derive(Debug)]
 struct LayoutCache {
     generation: u64,
-    viewport: (u32, u32),
+    viewport: (u32, u32, u32),
     tree: LayoutTree,
     slots: Vec<LayoutSlot>,
     boxes: Vec<LayoutBox>,
@@ -320,7 +320,8 @@ impl Engine {
     }
 
     fn ensure_layout(&mut self, viewport: Viewport, shaper: &mut dyn TextShaper, layouter: &mut dyn Layouter) {
-        let key = (viewport.width.to_bits(), viewport.height.to_bits());
+        // 文字は描くときの大きさ (物理ピクセル) で測るので、拡大率も鍵に入れる。
+        let key = (viewport.width.to_bits(), viewport.height.to_bits(), viewport.scale.to_bits());
         if self.layout.as_ref().is_some_and(|l| l.generation == self.ui.generation() && l.viewport == key) {
             return;
         }
@@ -426,18 +427,27 @@ impl Engine {
                     style: TextStyle { size: span.style.size * scale, ..span.style.clone() },
                 })
                 .collect();
-            // レイアウトが測った幅で折り返す。少しの誤差で余計に折り返さないよう 1 px 足す。
+            // レイアウトが測った幅で折り返す。レイアウトは位置と大きさを論理ピクセルの整数に丸めるので、
+            // 箱が測った幅より最大 1 論理ピクセル狭くなりうる。そのぶん余計に折り返さないよう足す。
+            let slack = scale.max(1.0);
             let shaped = shaper.shape(
                 &spans,
-                ParagraphStyle { max_width: area.width + 1.0, line_height: text.line_height, center: text.center },
+                ParagraphStyle { max_width: area.width + slack, line_height: text.line_height, center: text.center },
             );
             self.text_shapes.insert(
                 id,
                 ShapeCache { generation, width: area.width.to_bits(), scale: scale.to_bits(), shaped },
             );
         }
+        // 中央寄せは折り返しの幅 (`area.width + slack`) の中で行われるので、足した分の半分だけ戻す。
+        let shift = if text.center { -scale.max(1.0) / 2.0 } else { 0.0 };
         for glyph in &self.text_shapes[&id].shaped.glyphs {
-            out.push(DrawItem::Glyph { key: glyph.key, x: area.x + glyph.x, y: area.y + glyph.y, color: glyph.color });
+            out.push(DrawItem::Glyph {
+                key: glyph.key,
+                x: area.x + glyph.x + shift,
+                y: area.y + glyph.y,
+                color: glyph.color,
+            });
         }
     }
 
