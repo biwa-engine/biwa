@@ -216,7 +216,7 @@ fn respond(
         GAME_INFO_PATH => {
             let mut info = site.info.clone();
             if let Ok(wasm) = std::fs::read(&site.wasm) {
-                info.insert("buildId".into(), crate::runtime::content_id(&wasm).into());
+                info.insert("buildId".into(), crate::files::content_id(&wasm).into());
             }
             info.insert("dev".into(), true.into());
             let body = serde_json::to_vec_pretty(&info).unwrap_or_default();

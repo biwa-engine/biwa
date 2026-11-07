@@ -7,9 +7,6 @@ edition = "2024"
 anyhow = "1.0.104"
 biwac_base = { version = "0.1.0", path = "../compiler/src/biwac_base" }
 biwac_driver = { path = "../compiler/src/biwac_driver" }
-# `--target` の候補を出すためだけに要る。
-# どの feature でどのバックエンドが入るかを知っているのはこの crate である。
-biwac_generator = { path = "../compiler/src/biwac_generator" }
 # `biwa publish` が biwa-package.json (バージョン・説明・依存) をフルに読むのに使う。
 # `Project` (project.rs) は名前しか見ないので、これとは別に要る。
 biwac_metadata_loader = { path = "../compiler/src/biwac_metadata_loader" }

@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use crate::files;
 use crate::project::Project;
-use crate::runtime;
 use crate::toolchain::{DesktopOs, DesktopTarget};
 
 /// プレイヤーが探すゲームのデータのディレクトリ名
@@ -55,7 +55,7 @@ pub fn assemble(
                 if os == DesktopOs::Windows { ".exe" } else { "" }
             );
             copy_executable(runtime, &app_dir.join(&exe_name))?;
-            runtime::copy_dir(game_data, &app_dir.join(GAME_DIR))?;
+            files::copy_dir(game_data, &app_dir.join(GAME_DIR))?;
 
             let executables = [format!("{name}/{exe_name}")];
             if os == DesktopOs::Windows {
@@ -73,7 +73,7 @@ pub fn assemble(
             let app = out_dir.join(&bundle);
             let contents = app.join("Contents");
             copy_executable(runtime, &contents.join("MacOS").join(name))?;
-            runtime::copy_dir(game_data, &contents.join("Resources").join(GAME_DIR))?;
+            files::copy_dir(game_data, &contents.join("Resources").join(GAME_DIR))?;
             write(&contents.join("Resources").join("icon.icns"), MACOS_ICON)?;
             write(&contents.join("Info.plist"), info_plist(project).as_bytes())?;
 

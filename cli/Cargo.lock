@@ -418,7 +418,6 @@ dependencies = [
  "biwa_hub_client",
  "biwac_base",
  "biwac_driver",
- "biwac_generator",
  "biwac_metadata_loader",
  "clap",
  "flate2",

@@ -81,11 +81,6 @@ impl Project {
         biwac_base::dependencies_dir(&self.root)
     }
 
-    /// エンジン (Node.js 版) を展開する先。Vite のルートでもある。
-    pub fn runtime_dir(&self) -> PathBuf {
-        self.root.join(crate::RUNTIME_DIRECTORY_NAME)
-    }
-
     /// `biwa build` の出力先 (`<root>/dist`)。
     pub fn dist_dir(&self) -> PathBuf {
         self.root.join(crate::DIST_DIRECTORY_NAME)

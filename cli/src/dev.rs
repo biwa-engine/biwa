@@ -1,15 +1,15 @@
 //! `biwa dev`: 開発中のゲームを動かし、変更のたびに建て直す。
 //!
-//! 動かし方は 2 つ (`--platform`)。
-//!   - `native` (既定): ツールチェインのネイティブの runtime (`engine/desktop-rust`) をウィンドウで動かす。
-//!     Node.js は要らない。`src/` の `.biwa` が変わったら建て直し、通ったら runtime に読み直させる
+//! 動かし方は 2 つ (`--platform`)。どちらもツールチェインのビルド済みの runtime を使い、Node.js は要らない。
+//!   - `native` (既定): ネイティブの runtime (`engine/desktop-rust`) をウィンドウで動かす。
+//!     `src/` の `.biwa` が変わったら建て直し、通ったら runtime に読み直させる
 //!     (標準入力に `reload`。`engine/desktop-rust/crates/player/src/dev.rs`)。`assets/` が変わったときも読み直させる。
-//!   - `web`: ツールチェインのビルド済みの Web runtime と開発中のゲームを、CLI に内蔵した HTTP サーバ (`serve.rs`)
-//!     で配り、ブラウザで動かす。Node.js は要らない。建て直したら (`assets/` が変わったときも) ページを読み直させる。
-//!     `--vite` を付けると、エンジン (Vite のプロジェクト) を展開して Vite の開発サーバを立てる従来の動かし方になる
-//!     (エンジンの開発や、`--target typescript` のため。Node.js が要る)。
+//!   - `web`: ビルド済みの Web runtime と開発中のゲームを、CLI に内蔵した HTTP サーバ (`serve.rs`) で配り、
+//!     ブラウザで動かす。建て直したら (`assets/` が変わったときも) ページを読み直させる。
+//!     エンジン (`engine/nodejs`) を開発するときは、`--web-runtime` で手元でビルドした Web runtime を使える
+//!     (そのディレクトリも監視し、作り直されたらページを読み直させる)。
 //!
-//! どれも、最初のビルドが通らなければ始めない。
+//! どれも、最初のビルドが通らなければ始めない。コード生成のターゲットは wasm に固定している。
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -22,14 +22,17 @@ use biwac_base::Target;
 use clap::{Args, ValueEnum};
 use notify::{RecursiveMode, Watcher};
 
+use crate::files;
 use crate::project::Project;
-use crate::runtime;
 use crate::serve::{DevServer, Site};
 use crate::toolchain::{DesktopOs, DesktopTarget, Runtime, Toolchain};
 
 /// 変更イベントが落ち着くのを待つ時間。
 /// エディタは保存 1 回で複数のイベントを出すので、まとめてから 1 回だけ建て直す。
 const DEBOUNCE: Duration = Duration::from_millis(120);
+
+/// コード生成のターゲット。どの runtime も wasm を走らせる。
+const TARGET: Target = Target::Wasm;
 
 #[derive(Debug, Args)]
 pub struct DevArgs {
@@ -49,24 +52,14 @@ pub struct DevArgs {
     #[arg(long)]
     pub port: Option<u16>,
 
-    /// `--platform web` で、内蔵の HTTP サーバの代わりに Vite の開発サーバを使う
-    /// (エンジンの開発や `--target typescript` のため。Node.js が要る)
-    #[arg(long)]
-    pub vite: bool,
-
-    /// コード生成のターゲット
-    ///
-    /// 既定は `wasm`。生成物は Worker で走り、エンジンの API は
-    /// ホスト関数の呼び出し (= syscall) になる。
-    /// `typescript` を選ぶと、scene が generator として出力され、
-    /// エンジンのメインスレッドで動く従来の経路になる (`--platform web` のみ)。
-    #[arg(long, default_value = DEFAULT_TARGET)]
-    pub target: String,
-
-    /// runtime を取るツールチェイン (`--platform native` のみ。省略時は環境変数 BIWA_TOOLCHAIN、
-    /// なければこの CLI と同じもの)
+    /// runtime を取るツールチェイン (省略時は環境変数 BIWA_TOOLCHAIN、なければこの CLI と同じもの)
     #[arg(long, value_name = "NAME")]
     pub toolchain: Option<String>,
+
+    /// `--platform web` で、ツールチェインの代わりにこのディレクトリの Web runtime を使う
+    /// (エンジンの開発用。`engine/nodejs` の `npm run watch:runtime` の出力 `dist-runtime/` など)
+    #[arg(long, value_name = "DIR")]
+    pub web_runtime: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -77,31 +70,8 @@ pub enum DevPlatform {
     Web,
 }
 
-/// `--platform web` の開発サーバの既定のポート (Vite と同じ)。塞がっていれば次を試す。
+/// `--platform web` の開発サーバの既定のポート。塞がっていれば次を試す。
 const DEFAULT_PORT: u16 = 5173;
-
-/// `--target` の既定値。
-const DEFAULT_TARGET: &str = "wasm";
-
-/// `--target` を解決する。
-///
-/// 名前が存在するかと、このビルドの biwac が実際に生成できるかは別である。
-/// 前者は `Target::from_name`、後者は `available_targets` が答える。
-fn resolve_target(name: &str) -> Result<Target> {
-    let available = biwac_generator::available_targets();
-
-    match Target::from_name(name) {
-        Some(t) if available.contains(&t) => Ok(t),
-        Some(t) => bail!(
-            "target `{t}` is not available in this build of biwa (available: {})",
-            biwac_base::describe_targets(&available)
-        ),
-        None => bail!(
-            "unknown target `{name}` (available: {})",
-            biwac_base::describe_targets(&available)
-        ),
-    }
-}
 
 pub fn run(args: DevArgs) -> Result<()> {
     let start_dir = args
@@ -109,42 +79,36 @@ pub fn run(args: DevArgs) -> Result<()> {
         .clone()
         .unwrap_or_else(|| PathBuf::from("."));
     let project = Project::discover(&start_dir)?;
-    let target = resolve_target(&args.target)?;
 
     println!("Package: {} ({})", project.name, project.root.display());
-    println!("Target: {target}");
 
     match args.platform {
-        DevPlatform::Native => run_native(&project, target, &args),
-        DevPlatform::Web if args.vite => run_vite(&project, target, &args),
-        DevPlatform::Web => run_web(&project, target, &args),
+        DevPlatform::Native => run_native(&project, &args),
+        DevPlatform::Web => run_web(&project, &args),
     }
 }
 
 /// ネイティブの runtime で動かす。
-fn run_native(project: &Project, target: Target, args: &DevArgs) -> Result<()> {
-    if target != Target::Wasm {
-        bail!("the native runtime runs wasm only; use `--target wasm` or `--platform web`");
-    }
+fn run_native(project: &Project, args: &DevArgs) -> Result<()> {
     // runtime が揃っているかは、ビルドの前に確かめる。
     let toolchain = Toolchain::select(args.toolchain.as_deref())?;
     let runtime = toolchain.runtime(DesktopTarget::new(DesktopOs::host()?, Runtime::Native))?;
     println!("Toolchain: {}", toolchain.name);
 
-    runtime::ensure_std(project)?;
+    files::ensure_std(project)?;
     // 初回は通らないと動かす意味がないので、失敗したらそこで止める。
-    compile(project, target, args.rebuild)?;
+    compile(project, args.rebuild)?;
 
     // 終わったかを見る側と読み直させる側で共有する。
     let session = std::cell::RefCell::new(NativeSession::spawn(project, &runtime)?);
     watch_loop(
         project,
-        true,
+        &reload_dirs(project, None),
         || session.borrow_mut().try_wait(),
         |change| {
             if change == Change::Source {
                 println!();
-                if let Err(e) = compile(project, target, false) {
+                if let Err(e) = compile(project, false) {
                     // 書きかけのコードは当然コンパイルが通らない。前のゲームを動かしたまま、次の保存を待つ。
                     eprintln!("error: {e:#}");
                     return;
@@ -156,20 +120,26 @@ fn run_native(project: &Project, target: Target, args: &DevArgs) -> Result<()> {
 }
 
 /// 内蔵の HTTP サーバで、ビルド済みの Web runtime にゲームを添えてブラウザで動かす。
-fn run_web(project: &Project, target: Target, args: &DevArgs) -> Result<()> {
-    if target != Target::Wasm {
-        bail!(
-            "the web runtime runs wasm only; use `--target wasm`, or `--vite` for the TypeScript target"
-        );
-    }
+fn run_web(project: &Project, args: &DevArgs) -> Result<()> {
     // runtime が揃っているかは、ビルドの前に確かめる。
     let toolchain = Toolchain::select(args.toolchain.as_deref())?;
-    let web_runtime = toolchain.web_runtime()?;
-    println!("Toolchain: {}", toolchain.name);
+    let web_runtime = match &args.web_runtime {
+        Some(dir) => {
+            if !dir.join("index.html").is_file() {
+                bail!("no web runtime at {} (expected index.html)", dir.display());
+            }
+            println!("Web runtime: {}", dir.display());
+            dir.clone()
+        }
+        None => {
+            println!("Toolchain: {}", toolchain.name);
+            toolchain.web_runtime()?
+        }
+    };
 
-    runtime::ensure_std(project)?;
+    files::ensure_std(project)?;
     // 初回は通らないと動かす意味がないので、失敗したらそこで止める。
-    compile(project, target, args.rebuild)?;
+    compile(project, args.rebuild)?;
 
     let mut info = serde_json::Map::new();
     info.insert("name".into(), project.name.clone().into());
@@ -181,11 +151,7 @@ fn run_web(project: &Project, target: Target, args: &DevArgs) -> Result<()> {
     info.insert("toolchain".into(), toolchain.name.clone().into());
     let site = Site {
         web_runtime,
-        wasm: project.generated_dir(target).join(format!(
-            "{}.{}",
-            project.name,
-            target.bin_extension()
-        )),
+        wasm: compiled_wasm(project),
         assets: project.assets_dir(),
         info,
     };
@@ -197,14 +163,15 @@ fn run_web(project: &Project, target: Target, args: &DevArgs) -> Result<()> {
     );
     println!();
 
+    // `--web-runtime` なら、それが作り直されたときも読み直させる (エンジンの開発)。
     watch_loop(
         project,
-        true,
+        &reload_dirs(project, args.web_runtime.as_deref()),
         || Ok(None),
         |change| {
             if change == Change::Source {
                 println!();
-                if let Err(e) = compile(project, target, false) {
+                if let Err(e) = compile(project, false) {
                     // 書きかけのコードは当然コンパイルが通らない。前のゲームを動かしたまま、次の保存を待つ。
                     eprintln!("error: {e:#}");
                     return;
@@ -216,39 +183,11 @@ fn run_web(project: &Project, target: Target, args: &DevArgs) -> Result<()> {
     )
 }
 
-/// `--platform web --vite`: Vite の開発サーバで動かす (従来の動かし方。Node.js が要る)。
-fn run_vite(project: &Project, target: Target, args: &DevArgs) -> Result<()> {
-    runtime::ensure_std(project)?;
-    runtime::ensure_engine(project)?;
-    // エンジンを展開したあとに張る。展開は `.biwa_runtime/` を掃除しないので、
-    // 次回以降エンジンが更新されてもこのリンクは残る。
-    runtime::link_assets(project)?;
-
-    // 初回は通らないと開発サーバを立てる意味がないので、失敗したらそこで止める。
-    build(project, target, args.rebuild)?;
-
-    let mut vite = ViteProcess::spawn(project, args.port)?;
-
-    // アセットは Vite がリンク越しに配るので、建て直すのは `.biwa` が変わったときだけ。
-    watch_loop(
-        project,
-        false,
-        || vite.try_wait(),
-        |_| {
-            println!();
-            if let Err(e) = build(project, target, false) {
-                // 書きかけのコードは当然コンパイルが通らない。
-                // 直せば次の保存でまた走るので、開発サーバは動かし続ける。
-                eprintln!("error: {e:#}");
-            }
-        },
-    )
-}
-
-/// biwac を呼んで、生成物をエンジン側へ配る。
-pub(crate) fn build(project: &Project, target: Target, force_rebuild: bool) -> Result<()> {
-    compile(project, target, force_rebuild)?;
-    runtime::sync_generated(project, target)
+/// コンパイラの出力。runtime はこれを `game.wasm` として読む。
+fn compiled_wasm(project: &Project) -> PathBuf {
+    project
+        .generated_dir(TARGET)
+        .join(format!("{}.{}", project.name, TARGET.bin_extension()))
 }
 
 /// コンパイラ本体の呼び出し。
@@ -256,7 +195,7 @@ pub(crate) fn build(project: &Project, target: Target, force_rebuild: bool) -> R
 /// biwac はライブラリとして呼ぶ (`biwac` コマンドは経由しない)。
 /// まだ未実装のエラー表示経路で panic することがあるので、
 /// 開発サーバごと落ちないようにここで受け止める。
-pub(crate) fn compile(project: &Project, target: Target, force_rebuild: bool) -> Result<()> {
+pub(crate) fn compile(project: &Project, force_rebuild: bool) -> Result<()> {
     let root = project.root.clone();
 
     let result = std::panic::catch_unwind(move || {
@@ -266,7 +205,7 @@ pub(crate) fn compile(project: &Project, target: Target, force_rebuild: bool) ->
                 force_rebuild,
                 // 中間表現は開発サーバの関心事ではない。
                 emit_mir: false,
-                target,
+                target: TARGET,
             },
         )
     });
@@ -281,18 +220,48 @@ pub(crate) fn compile(project: &Project, target: Target, force_rebuild: bool) ->
 /// 何が変わったか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Change {
-    /// `src/` の `.biwa`。
+    /// `src/` の `.biwa`。建て直す。
     Source,
-    /// `assets/` の中のどれか。
-    Assets,
+    /// 読み直すだけの監視先 (`assets/` など) の中のどれか。
+    Reload,
 }
 
-/// `src/` (と `watch_assets` なら `assets/`) を監視し、変わるたびに `on_change` を呼ぶ。
+/// 読み直すだけの監視先。
+struct ReloadDir {
+    dir: PathBuf,
+    /// 最後の変更からこれだけ静かになるまで待つ。
+    quiet: Duration,
+}
+
+/// `assets/` と (あれば) `--web-runtime` のディレクトリ。
+fn reload_dirs(project: &Project, web_runtime: Option<&Path>) -> Vec<ReloadDir> {
+    let mut dirs = Vec::new();
+    let assets = project.assets_dir();
+    if assets.is_dir() {
+        dirs.push(ReloadDir {
+            dir: assets,
+            quiet: DEBOUNCE,
+        });
+    }
+    if let Some(dir) = web_runtime {
+        // `vite build --watch` は出力をいったん空にしてから書き直すので、書き終わるまで待つ。
+        dirs.push(ReloadDir {
+            dir: dir.to_path_buf(),
+            quiet: WEB_RUNTIME_QUIET,
+        });
+    }
+    dirs
+}
+
+/// `--web-runtime` のディレクトリが静かになるまで待つ時間。
+const WEB_RUNTIME_QUIET: Duration = Duration::from_millis(800);
+
+/// `src/` と `reload_dirs` を監視し、変わるたびに `on_change` を呼ぶ。
 ///
-/// `poll` が終了の状態を返したら (Vite が落ちた・ウィンドウが閉じられた) こちらも終わる。
+/// `poll` が終了の状態を返したら (ウィンドウが閉じられた) こちらも終わる。
 fn watch_loop(
     project: &Project,
-    watch_assets: bool,
+    reload_dirs: &[ReloadDir],
     mut poll: impl FnMut() -> Result<Option<std::process::ExitStatus>>,
     mut on_change: impl FnMut(Change),
 ) -> Result<()> {
@@ -304,25 +273,24 @@ fn watch_loop(
     })
     .context("failed to start the file watcher")?;
 
-    let assets_dir = project.assets_dir();
-    let mut dirs = runtime::watch_targets(project);
-    if watch_assets && assets_dir.is_dir() {
-        dirs.push(assets_dir.clone());
-    }
-    for dir in &dirs {
+    let dirs = files::watch_targets(project)
+        .into_iter()
+        .chain(reload_dirs.iter().map(|d| d.dir.clone()));
+    for dir in dirs {
         watcher
-            .watch(dir, RecursiveMode::Recursive)
+            .watch(&dir, RecursiveMode::Recursive)
             .with_context(|| format!("failed to watch {}", dir.display()))?;
         println!("Watching {}", dir.display());
     }
-    let classify = |event: &notify::Event| -> Option<Change> {
+    // 変更の種類と、静かになるまで待つ時間。
+    let classify = |event: &notify::Event| -> Option<(Change, Duration)> {
         if touches_biwa_source(event) {
-            Some(Change::Source)
-        } else if watch_assets && touches_dir(event, &assets_dir) {
-            Some(Change::Assets)
-        } else {
-            None
+            return Some((Change::Source, DEBOUNCE));
         }
+        reload_dirs
+            .iter()
+            .find(|d| touches_dir(event, &d.dir))
+            .map(|d| (Change::Reload, d.quiet))
     };
 
     loop {
@@ -343,17 +311,21 @@ fn watch_loop(
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         };
 
-        let Some(mut change) = classify(&event) else {
+        let Some((mut change, mut quiet)) = classify(&event) else {
             continue;
         };
 
-        // 続けて飛んでくるイベントをまとめる。`.biwa` が 1 つでも変わっていれば建て直す。
-        let deadline = Instant::now() + DEBOUNCE;
+        // 続けて飛んでくるイベントを、静かになるまでまとめる。`.biwa` が 1 つでも変わっていれば建て直す。
+        let mut deadline = Instant::now() + quiet;
         while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
             match rx.recv_timeout(remaining) {
                 Ok(Ok(event)) => {
-                    if classify(&event) == Some(Change::Source) {
-                        change = Change::Source;
+                    if let Some((c, q)) = classify(&event) {
+                        if c == Change::Source {
+                            change = Change::Source;
+                        }
+                        quiet = quiet.max(q);
+                        deadline = Instant::now() + quiet;
                     }
                 }
                 Ok(Err(_)) => continue,
@@ -386,30 +358,6 @@ fn touches_biwa_source(event: &notify::Event) -> bool {
         .any(|p| p.extension().and_then(|e| e.to_str()) == Some(biwac_base::BIWA_EXTENSION))
 }
 
-/// Vite の子プロセス。CLI が先に終わっても道連れにする。
-struct ViteProcess(std::process::Child);
-
-impl ViteProcess {
-    fn spawn(project: &Project, port: Option<u16>) -> Result<Self> {
-        runtime::spawn_vite(project, port).map(Self)
-    }
-
-    fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
-        self.0
-            .try_wait()
-            .context("failed to check the vite dev server")
-    }
-}
-
-impl Drop for ViteProcess {
-    fn drop(&mut self) {
-        if matches!(self.0.try_wait(), Ok(None)) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-}
-
 /// 開発モードで動いているネイティブの runtime。CLI が先に終わっても道連れにする。
 struct NativeSession {
     child: Child,
@@ -419,11 +367,7 @@ struct NativeSession {
 
 impl NativeSession {
     fn spawn(project: &Project, runtime: &Path) -> Result<Self> {
-        let wasm = project.generated_dir(Target::Wasm).join(format!(
-            "{}.{}",
-            project.name,
-            Target::Wasm.bin_extension()
-        ));
+        let wasm = compiled_wasm(project);
         let mut command = Command::new(runtime);
         command
             .arg("--dev")

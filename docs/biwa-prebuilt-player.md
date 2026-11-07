@@ -127,7 +127,10 @@ biwa build  : コンパイル → 対象 OS のプレイヤー + エンジンの
      3. `biwa dev --platform web` を CLI 内蔵の HTTP サーバ + 再読み込みにする — 済 (`cli/src/serve.rs`。
         建て直しは Server-Sent Events で知らせ、Web runtime は `biwa-game.json` の `dev: true` のときだけ聞く)。
         従来の Vite の開発サーバは `--vite` で残した (エンジンの開発と `--target typescript` のため)。
-     4. ゲームを作る人の経路から Vite と `.biwa_runtime/` を外す。
+     4. ゲームを作る人の経路から Vite と `.biwa_runtime/` を外す — 済。`--vite`・`--target`・CLI へのエンジンのソースの
+        埋め込み・`.biwa_runtime/` への展開・生成物のスタブを消した。`engine/nodejs` の `src/game/entry.ts` は
+        実行時にゲームを読むエントリそのものになった。エンジンの開発は `npm run watch:runtime` と
+        `biwa dev --platform web --web-runtime <engine/nodejs>/dist-runtime`。TypeScript ターゲットは読み込む経路が無くなった。
    - 次: wasm に ABI のバージョンを入れて runtime で照合する (段階 2)。その後、ランチャー
      (`bin/biwa` が `toolchains/<toolchain>/bin/biwa` に渡す)、`biwa toolchain …` / `biwa self update`、
      GitHub Releases とインストールスクリプト (段階 3)。

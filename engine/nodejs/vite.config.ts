@@ -1,8 +1,4 @@
-import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vite";
-
-const engineDir = fileURLToPath(new URL("./src/engine", import.meta.url));
-const runtimeEntry = fileURLToPath(new URL("./src/game/runtime-entry.ts", import.meta.url));
 
 /**
  * wasm 生成物を走らせるには `SharedArrayBuffer` が要る。
@@ -20,26 +16,18 @@ const CROSS_ORIGIN_ISOLATION = {
 };
 
 /**
- * `runtime` モード (`npm run build:runtime`) は、ゲームを焼き込まない「ビルド済みの Web runtime」を作る。
+ * `runtime` モード (`npm run build:runtime` / `npm run watch:runtime`) は、ゲームを焼き込まない
+ * 「ビルド済みの Web runtime」を `dist-runtime/` に作る。ゲームはページの横の `biwa-game.json` と `game.wasm` から
+ * 実行時に読む (`src/game/entry.ts`)。どこに置いても動くよう `base` を `./` にする。
  *
- * ゲームの読み込み口 `./game/entry` (`biwa dev` が生成するスタブ) を `src/game/runtime-entry.ts`
- * (ページの横の `biwa-game.json` と `game.wasm` を実行時に読む) に差し替え、どこに置いても動くよう
- * `base` を `./` にする。出力 (`dist-runtime/`) は Biwa の CI がツールチェインに入れ、
- * `biwa build --platform web` などがゲームのデータを添えて配る (Node.js は要らない)。
+ * 出力は Biwa の CI がツールチェインに入れ、`biwa build --platform web` などがゲームのデータを添えて配る
+ * (ゲームを作る人の手元で Node.js は要らない)。エンジンを開発するときは、`npm run watch:runtime` の出力を
+ * `biwa dev --platform web --web-runtime <this>/dist-runtime` で使う。
  */
 export default defineConfig(({ mode }) => {
   const runtime = mode === "runtime";
   return {
     base: runtime ? "./" : undefined,
-    resolve: {
-      alias: [
-        // std の native TypeScript が書く論理パス `@biwa/engine/<path>` を
-        // エンジン実装に解決する。
-        // これにより、生成物がどこに置かれても import が壊れない。
-        { find: /^@biwa\/engine\/(.*)$/, replacement: `${engineDir}/$1` },
-        ...(runtime ? [{ find: /^\.\/game\/entry$/, replacement: runtimeEntry }] : []),
-      ],
-    },
     build: {
       // 既定の `assets` は、パッケージの `assets/` を公開する位置 (`<base>assets/`) とぶつかる。
       // Vite が出すもの (JS・wasm・Worker) はゲームのアセットと混ざらない名前の下に置く。

@@ -183,7 +183,7 @@ echo '{ "title": "mygame" }' > mygame/game/biwa-game.json   # 任意
 - `game/index.html` が無いと、runtime は「`game/` が見つからない」案内のページを出す (標準エラーにも出る)。
 - `game/` を別の場所に置いたまま試すなら `--game-dir <DIR>` (または `BIWA_GAME_DIR`)。
   例: `~/.biwa/toolchains/<toolchain>/runtime/webview-linux-x86_64/biwa-runtime --game-dir <project>/dist/web`
-- 検証ページも使うなら、`<project>/.biwa_runtime/dist-game/__biwa_probe/` (デスクトップ版の `biwa build` が作る) を
+- 検証ページも使うなら、`<project>/.biwa_build/game-data/webview/__biwa_probe/` (WebView 版の `biwa build` が作る) を
   `game/__biwa_probe/` にコピーする。
 - macOS は .app の構造 (`Contents/{Info.plist, MacOS/<name>, Resources/game/}`) と署名が要るので、
   手で組み立てるより `biwa build --platform macos` を使う方がよい

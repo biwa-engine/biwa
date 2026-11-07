@@ -22,7 +22,7 @@ use clap::{Args, ValueEnum};
 use crate::assets::{self, Probe};
 use crate::project::Project;
 use crate::toolchain::{DesktopOs, DesktopTarget, Runtime, Toolchain};
-use crate::{desktop, dev, runtime};
+use crate::{desktop, dev, files};
 
 #[derive(Debug, Args)]
 pub struct BuildArgs {
@@ -104,8 +104,8 @@ pub fn run(args: BuildArgs) -> Result<()> {
         None
     };
 
-    runtime::ensure_std(&project)?;
-    dev::compile(&project, TARGET, args.rebuild)?;
+    files::ensure_std(&project)?;
+    dev::compile(&project, args.rebuild)?;
     let wasm =
         project
             .generated_dir(TARGET)
@@ -224,7 +224,7 @@ impl GameData<'_> {
     /// (`engine/nodejs/src/game/runtime-entry.ts`)。
     fn build_web(&self, out_dir: &Path, web_runtime: &Path) -> Result<()> {
         recreate_dir(out_dir)?;
-        runtime::copy_dir(web_runtime, out_dir)?;
+        files::copy_dir(web_runtime, out_dir)?;
         self.add_game(out_dir)
     }
 
@@ -240,7 +240,7 @@ impl GameData<'_> {
     /// wasm・アセット・ゲームの情報を `out_dir` に置く。
     fn add_game(&self, out_dir: &Path) -> Result<()> {
         copy_file(self.wasm, &out_dir.join(WASM_FILE))?;
-        runtime::copy_assets(self.project, out_dir)?;
+        files::copy_assets(self.project, out_dir)?;
         self.write_info(out_dir)
     }
 
@@ -255,7 +255,7 @@ impl GameData<'_> {
             "name": self.project.name,
             "title": self.project.name,
             "version": self.project.version.as_deref().unwrap_or("0.1.0"),
-            "buildId": runtime::content_id(&wasm),
+            "buildId": files::content_id(&wasm),
             "toolchain": self.toolchain,
         });
         let info_path = out_dir.join(GAME_INFO_FILE);

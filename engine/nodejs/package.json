@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:runtime": "tsc && vite build --mode runtime",
+    "watch:runtime": "vite build --mode runtime --watch",
     "preview": "vite preview"
   },
   "dependencies": {
