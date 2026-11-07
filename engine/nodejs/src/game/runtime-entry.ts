@@ -6,6 +6,9 @@
 //   game.wasm        コンパイラの出力
 //   assets/          パッケージのアセット
 // TypeScript のターゲット (deprecated) は扱わない。
+//
+// `biwa dev --platform web` も同じ runtime を CLI に内蔵した HTTP サーバで配る。そのときは `biwa-game.json` に
+// `dev: true` が付き、建て直しの知らせ (`__biwa_dev/events`、Server-Sent Events) を受けてページを読み直す。
 import type { BiwaBackend } from "../engine/game";
 
 const GAME_INFO = "biwa-game.json";
@@ -17,6 +20,20 @@ interface GameInfo {
   title?: string;
   /** wasm の内容から決まる値。再ビルドで同じ URL のまま中身が変わるので、キャッシュを避けるのに使う。 */
   buildId?: string;
+  /** `biwa dev` から配られている (配布物には付かない)。 */
+  dev?: boolean;
+}
+
+/** `biwa dev` の建て直しの知らせ (`cli/src/serve.rs`)。 */
+const DEV_EVENTS = "__biwa_dev/events";
+
+/** `biwa dev` が建て直したら (またはアセットが変わったら) ページを読み直す。 */
+function listenForReload(): void {
+  const events = new EventSource(DEV_EVENTS);
+  events.addEventListener("reload", () => {
+    events.close();
+    location.reload();
+  });
 }
 
 async function load(): Promise<BiwaBackend> {
@@ -28,6 +45,9 @@ async function load(): Promise<BiwaBackend> {
     );
   }
   const info = (await response.json()) as GameInfo;
+  if (info.dev === true) {
+    listenForReload();
+  }
   return {
     kind: "wasm",
     packageName: info.title ?? info.name ?? "Biwa",

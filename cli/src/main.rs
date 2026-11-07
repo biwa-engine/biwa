@@ -11,6 +11,7 @@ mod dev;
 mod project;
 mod publish;
 mod runtime;
+mod serve;
 mod toolchain;
 
 use clap::{Parser, Subcommand};

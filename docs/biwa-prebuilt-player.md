@@ -124,7 +124,9 @@ biwa build  : コンパイル → 対象 OS のプレイヤー + エンジンの
      2. Web runtime のビルド済み化 — 済。`engine/nodejs` の `npm run build:runtime` (`runtime` モード) が、ゲームを
         焼き込まず `biwa-game.json` と `game.wasm` を実行時に読む Web runtime を作り、CI (`runtime-web.yml`) がツールチェインの
         `runtime/web/` に入れる。`biwa build --platform web` と WebView 版はそれにゲームのデータを添えるだけ。
-     3. `biwa dev --platform web` を CLI 内蔵の HTTP サーバ + 再読み込みにする。
+     3. `biwa dev --platform web` を CLI 内蔵の HTTP サーバ + 再読み込みにする — 済 (`cli/src/serve.rs`。
+        建て直しは Server-Sent Events で知らせ、Web runtime は `biwa-game.json` の `dev: true` のときだけ聞く)。
+        従来の Vite の開発サーバは `--vite` で残した (エンジンの開発と `--target typescript` のため)。
      4. ゲームを作る人の経路から Vite と `.biwa_runtime/` を外す。
    - 次: wasm に ABI のバージョンを入れて runtime で照合する (段階 2)。その後、ランチャー
      (`bin/biwa` が `toolchains/<toolchain>/bin/biwa` に渡す)、`biwa toolchain …` / `biwa self update`、

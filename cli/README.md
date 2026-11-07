@@ -5,8 +5,8 @@
 Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン・標準ライブラリ) は
 すべてこのバイナリ (とツールチェインの runtime) が持っている。
 `biwa dev` と打てばゲームが動くところまで行けることを目標とする。
-開発 (既定のネイティブの runtime) と配布物のビルド (どの形態も) に Node.js は要らない
-(`biwa dev --platform web` だけはまだ要る。いずれ要らなくする)。
+開発 (`biwa dev`。ネイティブでもブラウザでも) と配布物のビルド (どの形態も) に Node.js は要らない
+(要るのはエンジン自体を開発するときの `biwa dev --platform web --vite` だけ)。
 デスクトップ版のビルド (`biwa build`) も Rust などのビルド環境を要らない。
 OS ごとのエンジン本体 (runtime) は Biwa の CI がビルドしておき、
 `biwa build` はそれにゲームのデータを添えて組み立てるだけだからである (後述)。
@@ -26,7 +26,8 @@ OS ごとのエンジン本体 (runtime) は Biwa の CI がビルドしてお�
 | `--platform`    | 動かし方                                                                       | Node.js |
 | --------------- | ------------------------------------------------------------------------------ | ------- |
 | `native` (既定) | ツールチェインのネイティブの runtime (この OS 用) をウィンドウで動かす         | 要らない |
-| `web`           | エンジン (Vite のプロジェクト) を展開して Vite の開発サーバを立て、ブラウザで動かす | 要る    |
+| `web`           | ツールチェインのビルド済みの Web runtime を内蔵の HTTP サーバで配り、ブラウザで動かす | 要らない |
+| `web` + `--vite` | エンジン (Vite のプロジェクト) を展開して Vite の開発サーバを立てる (従来の動かし方) | 要る    |
 
 #### `--platform native` (既定)
 
@@ -45,7 +46,30 @@ OS ごとのエンジン本体 (runtime) は Biwa の CI がビルドしてお�
 
 #### `--platform web`
 
-やることは順に:
+1. **runtime を探す** — ツールチェインのビルド済みの Web runtime (`<toolchain>/runtime/web/`。`biwa build` と同じ)。
+2. **std を揃えてビルドする** — `native` と同じ。最初のビルドが通らなければ始めない。
+3. **HTTP サーバを立てる** (`src/serve.rs`) — 127.0.0.1 の 5173 番 (塞がっていれば次。`--port` で決め打ち) で待ち受け、
+   `biwa build --platform web` の出力 (`dist/web/`) と同じ形を、ファイルを写さずにその場から配る。
+
+   | パス                 | 中身                                                                          |
+   | -------------------- | ----------------------------------------------------------------------------- |
+   | `/biwa-game.json`    | ゲームの情報。リクエストのたびに作る (`buildId` は wasm の内容、`dev: true`)  |
+   | `/game.wasm`         | コンパイラの出力 (`.biwa_build/wasm/<package>.wasm`)                          |
+   | `/assets/...`        | パッケージの `assets/`                                                        |
+   | `/__biwa_dev/events` | 建て直しの知らせ (Server-Sent Events)                                         |
+   | それ以外             | Web runtime                                                                   |
+
+   - wasm の実行に `SharedArrayBuffer` が要るので、すべての応答に COOP / COEP / CORP を付ける。
+   - 音や動画のシークのために `Range` に答える。根の外を指すパス (`..` など) は拒む。
+4. **監視する** — `.biwa` が変わったら建て直し、通ったら開いているページに読み直させる
+   (`/__biwa_dev/events` に `reload`。Web runtime は `biwa-game.json` に `dev: true` があるときだけこれを聞く。
+   `engine/nodejs/src/game/runtime-entry.ts`)。`assets/` が変わったときも読み直させる。
+   書きかけのコードでビルドが失敗したときは、前のゲームのまま次の保存を待つ。
+
+#### `--platform web --vite` (従来の動かし方)
+
+エンジン自体を開発するとき (エンジンの TypeScript を HMR 付きで触る) や、`--target typescript` のときに使う。
+Node.js が要る。やることは順に:
 
 1. **同梱物を揃える**
    - 標準ライブラリを `<project>/.biwa_build/deps/std/` に展開する。
@@ -65,8 +89,6 @@ OS ごとのエンジン本体 (runtime) は Biwa の CI がビルドしてお�
    Vite が差分を拾ってブラウザをリロードする。
    書きかけのコードでビルドが失敗しても開発サーバは動き続ける。
 
-(Node.js を要らなくする予定: エンジンの JS をビルド済みにしてツールチェインに入れ、CLI に内蔵した HTTP サーバで配る)
-
 オプション:
 
 | オプション                   | 意味                                                                                       |
@@ -74,9 +96,10 @@ OS ごとのエンジン本体 (runtime) は Biwa の CI がビルドしてお�
 | `-p`, `--package-path <DIR>` | 対象パッケージ (既定: カレントディレクトリ)                                                |
 | `-r`, `--rebuild`            | キャッシュを無視して最初から建て直す                                                       |
 | `--platform <PLATFORM>`      | 動かし方。`native` (既定) か `web`                                                         |
-| `--toolchain <NAME>`         | runtime を取るツールチェイン (`native` のみ。既定: `BIWA_TOOLCHAIN`、なければこの CLI と同じもの) |
-| `--port <PORT>`              | 開発サーバのポート (`web` のみ)                                                            |
-| `--target <TARGET>`          | コード生成のターゲット (既定: `wasm`。`typescript` は `web` のみ)                          |
+| `--toolchain <NAME>`         | runtime を取るツールチェイン (既定: `BIWA_TOOLCHAIN`、なければこの CLI と同じもの)          |
+| `--port <PORT>`              | 開発サーバのポート (`web` のみ。既定: 5173 から空いているもの)                             |
+| `--vite`                     | `web` で、内蔵のサーバの代わりに Vite の開発サーバを使う (Node.js が要る)                   |
+| `--target <TARGET>`          | コード生成のターゲット (既定: `wasm`。`typescript` は `web --vite` のみ)                    |
 
 ### `biwa build`
 
@@ -267,7 +290,7 @@ repository はパッケージに 1 つしか持てず、hub 側にもそれを�
     wasm/<pkg>.wasm                ← biwac の出力 (--target wasm)
     typescript/{<pkg>.ts, std.ts}  ← biwac の出力 (--target typescript)
     game-data/{native,webview}/    ← デスクトップ版の game/ の元 (biwa build)
-  .biwa_runtime/                   ← エンジン (Vite プロジェクト) の展開先 (biwa dev --platform web のみ)
+  .biwa_runtime/                   ← エンジン (Vite プロジェクト) の展開先 (biwa dev --platform web --vite のみ)
     public/assets → ../../assets   ← 上の assets/ へのシンボリックリンク (biwa dev)
     src/engine/{vm,api}/*.ts       ← kernel と syscall の実装
     src/game/{game.wasm, entry.ts} ← 配られた生成物 (typescript なら *.ts)
@@ -385,7 +408,7 @@ macOS の .app に入れるアイコンも `include_bytes!` で焼き込む (`sr
   `<package>/biwa-package.json` と `<package>/src/main.biwa` を作る。
 - `biwa build` の残り
   runtime の配布 (GitHub Releases・インストールスクリプト・`biwa` 自身による更新)、
-  `biwa dev --platform web` から Node.js を外すこと (CLI に HTTP サーバを内蔵する)、ゲームごとのアイコン・ウィンドウの設定、
+  ゲームごとのアイコン・ウィンドウの設定、
   macOS の Developer ID での署名・公証、Windows のコード署名、
   モバイル向けの出力 ([`docs/desktop-build.md`](../docs/desktop-build.md) §5)。
 - アセットの検査と選別

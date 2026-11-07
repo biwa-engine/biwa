@@ -249,7 +249,7 @@ runtime だけの workflow (`runtime-native.yml` / `runtime-webview.yml`) も pu
 ### ゲームをビルドする人
 
 - `biwa` (リポジトリの `cli/` で `cargo build --release`。いまは手元でビルドする)。
-- Node.js は要らない (どの形態もビルド済みの runtime を使う。`biwa dev --platform web` だけはまだ要る)。
+- Node.js は要らない (どの形態もビルド済みの runtime を使う。`biwa dev` もネイティブ・ブラウザとも要らない)。
 - ビルド済みの runtime (上記)。
 - **Rust も C++ Build Tools も Xcode も要らない** (runtime をビルドしないため)。
 - `biwa build` はリンクを作らないので、Windows の開発者モードは要らない (`biwa dev` は `assets/` のリンクに要る)。
@@ -460,7 +460,7 @@ rcodesign の `verify` は ad-hoc の空の CMS を問題として報告する�
   (`engine/desktop-rust/README.md`)。
 
 - runtime の入手: `biwa` に同梱するか、版の合うものを初回にダウンロードする (GitHub Releases など)。
-- 開発サーバを `biwa` に内蔵する (`biwa dev --platform web` から Node.js を不要にする)。エンジンの JS のビルド済み化は済んだ。
+- (済) エンジンの JS のビルド済み化と、開発サーバの `biwa` への内蔵。ゲームを作る人の作業に Node.js は要らない。
 - ゲームごとのアイコン・ウィンドウの大きさを `biwa-package.json` などから与える。
   - Windows の exe のアイコンは `editpe` (純 Rust) で差し替えられる見込み。いまは runtime の既定のアイコン。
   - macOS は `Resources/icon.icns` を差し替えるだけ。いまは `engine/desktop-tauri/src-tauri/icons/icon.icns`。

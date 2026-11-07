@@ -4,9 +4,12 @@
 //!   - `native` (既定): ツールチェインのネイティブの runtime (`engine/desktop-rust`) をウィンドウで動かす。
 //!     Node.js は要らない。`src/` の `.biwa` が変わったら建て直し、通ったら runtime に読み直させる
 //!     (標準入力に `reload`。`engine/desktop-rust/crates/player/src/dev.rs`)。`assets/` が変わったときも読み直させる。
-//!   - `web`: エンジン (Vite のプロジェクト) を展開して Vite の開発サーバを立て、ブラウザで動かす。Node.js が要る。
+//!   - `web`: ツールチェインのビルド済みの Web runtime と開発中のゲームを、CLI に内蔵した HTTP サーバ (`serve.rs`)
+//!     で配り、ブラウザで動かす。Node.js は要らない。建て直したら (`assets/` が変わったときも) ページを読み直させる。
+//!     `--vite` を付けると、エンジン (Vite のプロジェクト) を展開して Vite の開発サーバを立てる従来の動かし方になる
+//!     (エンジンの開発や、`--target typescript` のため。Node.js が要る)。
 //!
-//! どちらも、最初のビルドが通らなければ始めない。
+//! どれも、最初のビルドが通らなければ始めない。
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -21,6 +24,7 @@ use notify::{RecursiveMode, Watcher};
 
 use crate::project::Project;
 use crate::runtime;
+use crate::serve::{DevServer, Site};
 use crate::toolchain::{DesktopOs, DesktopTarget, Runtime, Toolchain};
 
 /// 変更イベントが落ち着くのを待つ時間。
@@ -41,9 +45,14 @@ pub struct DevArgs {
     #[arg(long, value_enum, default_value = "native")]
     pub platform: DevPlatform,
 
-    /// 開発サーバのポート (`--platform web` のみ。省略時は Vite の既定値)
+    /// 開発サーバのポート (`--platform web` のみ。省略時は 5173 から空いているもの)
     #[arg(long)]
     pub port: Option<u16>,
+
+    /// `--platform web` で、内蔵の HTTP サーバの代わりに Vite の開発サーバを使う
+    /// (エンジンの開発や `--target typescript` のため。Node.js が要る)
+    #[arg(long)]
+    pub vite: bool,
 
     /// コード生成のターゲット
     ///
@@ -64,9 +73,12 @@ pub struct DevArgs {
 pub enum DevPlatform {
     /// この OS のウィンドウで、ネイティブの runtime で動かす
     Native,
-    /// ブラウザで動かす (Vite の開発サーバ。Node.js が要る)
+    /// ブラウザで動かす (内蔵の HTTP サーバ)
     Web,
 }
+
+/// `--platform web` の開発サーバの既定のポート (Vite と同じ)。塞がっていれば次を試す。
+const DEFAULT_PORT: u16 = 5173;
 
 /// `--target` の既定値。
 const DEFAULT_TARGET: &str = "wasm";
@@ -104,6 +116,7 @@ pub fn run(args: DevArgs) -> Result<()> {
 
     match args.platform {
         DevPlatform::Native => run_native(&project, target, &args),
+        DevPlatform::Web if args.vite => run_vite(&project, target, &args),
         DevPlatform::Web => run_web(&project, target, &args),
     }
 }
@@ -142,8 +155,69 @@ fn run_native(project: &Project, target: Target, args: &DevArgs) -> Result<()> {
     )
 }
 
-/// Vite の開発サーバで動かす。
+/// 内蔵の HTTP サーバで、ビルド済みの Web runtime にゲームを添えてブラウザで動かす。
 fn run_web(project: &Project, target: Target, args: &DevArgs) -> Result<()> {
+    if target != Target::Wasm {
+        bail!(
+            "the web runtime runs wasm only; use `--target wasm`, or `--vite` for the TypeScript target"
+        );
+    }
+    // runtime が揃っているかは、ビルドの前に確かめる。
+    let toolchain = Toolchain::select(args.toolchain.as_deref())?;
+    let web_runtime = toolchain.web_runtime()?;
+    println!("Toolchain: {}", toolchain.name);
+
+    runtime::ensure_std(project)?;
+    // 初回は通らないと動かす意味がないので、失敗したらそこで止める。
+    compile(project, target, args.rebuild)?;
+
+    let mut info = serde_json::Map::new();
+    info.insert("name".into(), project.name.clone().into());
+    info.insert("title".into(), format!("{} (dev)", project.name).into());
+    info.insert(
+        "version".into(),
+        project.version.as_deref().unwrap_or("0.1.0").into(),
+    );
+    info.insert("toolchain".into(), toolchain.name.clone().into());
+    let site = Site {
+        web_runtime,
+        wasm: project.generated_dir(target).join(format!(
+            "{}.{}",
+            project.name,
+            target.bin_extension()
+        )),
+        assets: project.assets_dir(),
+        info,
+    };
+    let server = DevServer::start(site, args.port.unwrap_or(DEFAULT_PORT), args.port.is_some())?;
+    println!();
+    println!(
+        "  Open {} in a browser (Chrome, Edge, Firefox or Safari 18.2+).",
+        server.url()
+    );
+    println!();
+
+    watch_loop(
+        project,
+        true,
+        || Ok(None),
+        |change| {
+            if change == Change::Source {
+                println!();
+                if let Err(e) = compile(project, target, false) {
+                    // 書きかけのコードは当然コンパイルが通らない。前のゲームを動かしたまま、次の保存を待つ。
+                    eprintln!("error: {e:#}");
+                    return;
+                }
+            }
+            println!("Reloading the page");
+            server.reload();
+        },
+    )
+}
+
+/// `--platform web --vite`: Vite の開発サーバで動かす (従来の動かし方。Node.js が要る)。
+fn run_vite(project: &Project, target: Target, args: &DevArgs) -> Result<()> {
     runtime::ensure_std(project)?;
     runtime::ensure_engine(project)?;
     // エンジンを展開したあとに張る。展開は `.biwa_runtime/` を掃除しないので、
