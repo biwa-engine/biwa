@@ -16,6 +16,7 @@
 // リリースビルドの Windows では、ダブルクリックで起動したときにコンソールを開かない。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod dev;
 mod headless;
 mod options;
 mod windowed;

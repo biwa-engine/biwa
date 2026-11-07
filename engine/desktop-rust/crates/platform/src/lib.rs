@@ -64,6 +64,8 @@ pub enum Event {
     Click { x: f32, y: f32 },
     /// Enter / Space。ノベルの「進む」。
     Advance,
+    /// F5。開発モードでゲームを読み直す。
+    Reload,
     /// 描く時が来た。
     Redraw,
     /// ウィンドウが (隠れていた状態から) 見えるようになった。
@@ -263,7 +265,8 @@ impl<A: App> ApplicationHandler for Handler<A> {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         let event = match event {
-            WindowEvent::CloseRequested => Event::CloseRequested,
+            // 外から壊されたとき (ウィンドウマネージャの無い X など) も、閉じられたのと同じに扱う。
+            WindowEvent::CloseRequested | WindowEvent::Destroyed => Event::CloseRequested,
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                 let Some(window) = &self.window else { return };
                 // macOS: winit は角や辺をつまむたびに contentResizeIncrements を設定し直し、
@@ -296,10 +299,11 @@ impl<A: App> ApplicationHandler for Handler<A> {
                     self.toggle_fullscreen();
                     return;
                 }
-                if !matches!(logical_key, Key::Named(NamedKey::Enter | NamedKey::Space)) {
-                    return;
+                match logical_key {
+                    Key::Named(NamedKey::Enter | NamedKey::Space) => Event::Advance,
+                    Key::Named(NamedKey::F5) => Event::Reload,
+                    _ => return,
                 }
-                Event::Advance
             }
             _ => return,
         };

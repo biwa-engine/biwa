@@ -308,6 +308,11 @@ impl Renderer {
         self.images.insert(image, group);
     }
 
+    /// 読み込んだ画像のテクスチャを全部捨てる (ゲームをやり直すとき。画像の番号が振り直されるため)。
+    pub fn clear_images(&mut self) {
+        self.images.clear();
+    }
+
     /// 1 フレーム描く。グリフの画像が要れば `glyphs` に頼む。
     ///
     /// 描画の指示の座標は `area` (描画先の中の矩形、物理ピクセル) の左上を原点とする。

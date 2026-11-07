@@ -101,6 +101,10 @@ wasm は `biwa build --platform web` などでできる `<project>/.biwa_build/w
   (`biwa build --platform web` で wasm を作ってから `--wasm` で指す)
 - `bench/gc-churn`: GC の性能 (段 2)
 
+開発モード (`--dev`。`biwa dev` が付ける): 標準入力の `reload` の行 (と F5) で、ウィンドウを開いたまま
+wasm とアセットを読み直してゲームを最初からやり直す。標準入力が閉じたら終わる (`crates/player/src/dev.rs`)。
+`--title <TITLE>` でウィンドウのタイトルを決められる。
+
 配布物は `biwa build --platform windows,macos,linux` で作る (`docs/desktop-build.md`)。
 `game/biwa-game.json` の `title` がウィンドウのタイトルになる。
 Windows のリリースビルドはコンソールを開かないので、起動に失敗したときのエラーは

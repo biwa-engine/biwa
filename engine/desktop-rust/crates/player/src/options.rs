@@ -1,7 +1,8 @@
 //! 起動時の引数。
 //!
 //! ```text
-//! biwa-runtime [--game-dir <DIR> | --wasm <FILE>] [--assets <DIR>] [--headless] [--trace] [--collector <auto|drc|null>]
+//! biwa-runtime [--game-dir <DIR> | --wasm <FILE>] [--assets <DIR>] [--title <TITLE>] [--dev] [--headless] [--trace]
+//!              [--collector <auto|drc|null>]
 //! ```
 //!
 //! ゲームの場所 (指定が無いとき) は Tauri 版のプレイヤーと同じく、
@@ -12,7 +13,9 @@
 //! `--wasm` で `<project>/.biwa_build/wasm/<package>.wasm` を直接指したときは `<project>/assets` を使う
 //! (開発中のプロジェクトをそのまま動かすため)。
 //!
-//! ウィンドウのタイトルは `<game>/biwa-game.json` の `title` (`biwa build` が書く)。
+//! ウィンドウのタイトルは `--title`、無ければ `<game>/biwa-game.json` の `title` (`biwa build` が書く)。
+//!
+//! `--dev` は開発モード (`biwa dev` が付ける)。標準入力の `reload` で wasm を読み直す (`dev.rs`)。
 //! ゲームの画面の大きさ (論理ピクセル。縦横比もこれで決まる) は同じファイルの `width` / `height`、
 //! 無ければ 1280x720 (16:9)。
 
@@ -42,6 +45,8 @@ pub struct Options {
     pub collector: Collector,
     /// ウィンドウのタイトル。
     pub title: String,
+    /// 開発モード (`biwa dev` から起動された)。
+    pub dev: bool,
     /// ゲームの画面の大きさ (論理ピクセル)。
     pub screen: (u32, u32),
 }
@@ -54,6 +59,8 @@ impl Options {
         let mut headless = false;
         let mut trace = false;
         let mut collector = Collector::Auto;
+        let mut title = None;
+        let mut dev = false;
 
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -62,6 +69,8 @@ impl Options {
                 "--wasm" => wasm = Some(PathBuf::from(value("--wasm")?)),
                 "--game-dir" => game_dir = Some(PathBuf::from(value("--game-dir")?)),
                 "--assets" => assets = Some(PathBuf::from(value("--assets")?)),
+                "--title" => title = Some(value("--title")?),
+                "--dev" => dev = true,
                 "--headless" => headless = true,
                 "--trace" => trace = true,
                 "--collector" => {
@@ -95,8 +104,8 @@ impl Options {
             .as_ref()
             .and_then(|dir| std::fs::read_to_string(dir.join(GAME_INFO_FILE)).ok())
             .unwrap_or_default();
-        let title = json_field(&info, "title")
-            .and_then(JsonValue::into_string)
+        let title = title
+            .or_else(|| json_field(&info, "title").and_then(JsonValue::into_string))
             .filter(|title| !title.is_empty())
             .unwrap_or_else(|| DEFAULT_TITLE.into());
         let dimension = |key| {
@@ -106,11 +115,11 @@ impl Options {
             (Some(width), Some(height)) => (width, height),
             _ => DEFAULT_SCREEN,
         };
-        Ok(Self { wasm, assets, headless, trace, collector, title, screen })
+        Ok(Self { wasm, assets, headless, trace, collector, title, dev, screen })
     }
 }
 
-const USAGE: &str = "usage: biwa-runtime [--game-dir <DIR> | --wasm <FILE>] [--assets <DIR>] [--headless] [--trace] [--collector <auto|drc|null>]";
+const USAGE: &str = "usage: biwa-runtime [--game-dir <DIR> | --wasm <FILE>] [--assets <DIR>] [--title <TITLE>] [--dev] [--headless] [--trace] [--collector <auto|drc|null>]";
 
 /// `<project>/.biwa_build/wasm/<package>.wasm` なら `<project>/assets`。
 fn project_assets(wasm: &Path) -> Option<PathBuf> {

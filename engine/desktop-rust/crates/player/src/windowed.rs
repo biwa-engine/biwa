@@ -10,7 +10,9 @@
 //! 縦横比を保って拡大・縮小する。余りは黒い帯 (レターボックス)。ウィンドウの大きさや全画面のモニタの
 //! 比が違っても、レイアウトは変わらない。ウィンドウの縦横比も、できる OS (Windows / macOS) では固定する。
 
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use biwa_player_core::engine::{CallStatus, Click, Engine};
@@ -18,11 +20,12 @@ use biwa_player_core::geometry::{Rect, Viewport};
 use biwa_player_core::image::{DecodedImage, ImageHandle};
 use biwa_player_image::ImageLoader;
 use biwa_player_layout::TaffyLayouter;
-use biwa_player_platform::{App, Event, Flow, Window, WindowOptions, WindowSize};
+use biwa_player_platform::{App, Event, Flow, Waker, Window, WindowOptions, WindowSize};
 use biwa_player_render::{FrameStatus, Renderer};
 use biwa_player_text::TextSystem;
-use biwa_player_vm::{CallReply, HostCommand, Vm, VmEvent, VmOptions};
+use biwa_player_vm::{CallReply, Collector, HostCommand, Vm, VmEvent, VmOptions};
 
+use crate::dev::{self, DevCommand};
 use crate::options::Options;
 
 /// 1 フレームで進める時間の上限。描画が詰まったときに文字送りが一気に飛ばないように。
@@ -36,24 +39,27 @@ pub fn run(options: &Options, wasm: Vec<u8>) -> Result<(), String> {
         height: f64::from(screen.1),
         aspect_ratio: Some(screen),
     };
-    let collector = options.collector;
-    let trace = options.trace;
-    let assets = options.assets.clone();
-    if assets.is_none() {
+    let game = GameSource {
+        wasm: options.wasm.clone(),
+        assets: options.assets.clone(),
+        collector: options.collector,
+    };
+    if game.assets.is_none() {
         eprintln!("[biwa] no assets directory found; images will not be shown (pass --assets)");
     }
+    let trace = options.trace;
+    let dev_mode = options.dev;
     let mut spawn_error = None;
     let result = biwa_player_platform::run(window, |waker| {
-        let images = assets.and_then(|dir| {
+        let dev = dev_mode.then(|| {
             let waker = waker.clone();
-            ImageLoader::new(dir, move || waker.wake())
-                .map_err(|e| eprintln!("[biwa] failed to start the image loader: {e}"))
-                .ok()
+            dev::listen(move || waker.wake())
         });
-        let vm = Vm::spawn(wasm, VmOptions { collector }, move || waker.wake())
-            .map_err(|e| spawn_error = Some(format!("failed to start the vm thread: {e}")))
-            .ok();
-        Player::new(vm, images, screen, trace)
+        let mut player = Player::new(waker, game, screen, trace, dev);
+        if let Err(e) = player.start(wasm) {
+            spawn_error = Some(e);
+        }
+        player
     });
     if let Some(e) = spawn_error {
         return Err(e);
@@ -61,7 +67,18 @@ pub fn run(options: &Options, wasm: Vec<u8>) -> Result<(), String> {
     result.map_err(|e| e.to_string())
 }
 
+/// ゲームの在りか。開発モードで読み直すときに使う。
+struct GameSource {
+    wasm: PathBuf,
+    assets: Option<PathBuf>,
+    collector: Collector,
+}
+
 struct Player {
+    waker: Waker,
+    game: GameSource,
+    /// 開発モードの指示 (`--dev` のときだけ)。
+    dev: Option<Receiver<DevCommand>>,
     vm: Option<Vm>,
     images: Option<ImageLoader>,
     /// 読めたが、描画の準備 (ウィンドウ) の前に届いた画像。
@@ -84,10 +101,19 @@ struct Player {
 }
 
 impl Player {
-    fn new(vm: Option<Vm>, images: Option<ImageLoader>, screen: (u32, u32), trace: bool) -> Self {
+    fn new(
+        waker: Waker,
+        game: GameSource,
+        screen: (u32, u32),
+        trace: bool,
+        dev: Option<Receiver<DevCommand>>,
+    ) -> Self {
         Self {
-            vm,
-            images,
+            waker,
+            game,
+            dev,
+            vm: None,
+            images: None,
             unuploaded: Vec::new(),
             engine: Engine::new(),
             text: TextSystem::new(),
@@ -101,6 +127,65 @@ impl Player {
             last_tick: None,
             trace,
         }
+    }
+
+    /// ゲームを最初から始める (前のゲームがあれば捨てる)。ウィンドウ・文字・描画の準備はそのまま使う。
+    fn start(&mut self, wasm: Vec<u8>) -> Result<(), String> {
+        // 前の vm と画像の読み込みは、チャネルが閉じれば終わる (vm は次のホスト呼び出しで trap する)。
+        self.vm = None;
+        self.images = None;
+        self.pending = None;
+        self.unuploaded.clear();
+        self.last_tick = None;
+        // 画像の番号はエンジンごとに 1 から振り直すので、前のテクスチャは捨てる。
+        self.engine = Engine::new();
+        if let Some(renderer) = &mut self.renderer {
+            renderer.clear_images();
+        }
+
+        self.images = self.game.assets.clone().and_then(|dir| {
+            let waker = self.waker.clone();
+            ImageLoader::new(dir, move || waker.wake())
+                .map_err(|e| eprintln!("[biwa] failed to start the image loader: {e}"))
+                .ok()
+        });
+        let waker = self.waker.clone();
+        let vm = Vm::spawn(wasm, VmOptions { collector: self.game.collector }, move || waker.wake())
+            .map_err(|e| format!("failed to start the vm thread: {e}"))?;
+        self.vm = Some(vm);
+        self.request_redraw();
+        Ok(())
+    }
+
+    /// 開発モード: wasm とアセットを読み直してやり直す。読めなければ今のゲームを続ける。
+    fn reload(&mut self) {
+        let wasm = match std::fs::read(&self.game.wasm) {
+            Ok(wasm) => wasm,
+            Err(e) => {
+                eprintln!("[biwa] failed to reload {}: {e}", self.game.wasm.display());
+                return;
+            }
+        };
+        println!("[biwa] reloading");
+        if let Err(e) = self.start(wasm) {
+            eprintln!("[biwa] {e}");
+        }
+    }
+
+    /// 開発モードの指示を処理する。
+    fn drain_dev(&mut self) -> Flow {
+        let mut reload = false;
+        while let Some(command) = self.dev.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            match command {
+                DevCommand::Reload => reload = true,
+                // `biwa dev` が終わった。
+                DevCommand::Quit => return Flow::Exit,
+            }
+        }
+        if reload {
+            self.reload();
+        }
+        Flow::Continue
     }
 
     /// vm から届いている知らせを全部処理する。
@@ -299,8 +384,17 @@ impl App for Player {
                 self.after_input();
             }
             Event::Woken => {
+                if self.drain_dev() == Flow::Exit {
+                    return Flow::Exit;
+                }
                 self.drain_images();
                 return self.drain_vm();
+            }
+            // F5。開発モードのときだけ読み直す。
+            Event::Reload => {
+                if self.dev.is_some() {
+                    self.reload();
+                }
             }
             Event::Redraw => self.redraw(),
             Event::Shown => {
