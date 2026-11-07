@@ -17,6 +17,8 @@ fn main() {
         s
     };
 
+    // 字句解析は改行が `\n` に揃っていることを前提にする。
+    let src = biwac_base::normalize_newlines(src);
     let tokens = highlight(&src);
 
     // ANSI カラーで表示

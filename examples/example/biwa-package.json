@@ -1,0 +1,14 @@
+{
+  "name": "example",
+  "version": "0.1.0",
+  "description": "example playable package",
+  "dependencies": [
+    {
+      "name": "std",
+      "version": {
+        "min": "0.1.0",
+        "max": "0.2.0"
+      }
+    }
+  ]
+}

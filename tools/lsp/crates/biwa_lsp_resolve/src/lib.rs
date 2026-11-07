@@ -40,6 +40,11 @@ pub struct DocumentResolution {
 
 /// `doc_path` にあるファイルを名前解決する。
 ///
+/// `doc_src` は改行を `\n` に揃えたもの ([`biwac_base::normalize_newlines`]) でなければならない。
+/// ディスクから読む他のモジュールも `biwac_package_loader` が同じく正規化する。
+/// 返す診断・分類のオフセットは正規化後の `doc_src` に対するものなので、
+/// LSP の位置へは正規化後の `doc_src` で直すこと。
+///
 /// # 既知の制約
 /// - `doc_path` の祖先ディレクトリに `biwa-package.json` が見つからなければ
 ///   `Err` になる (パッケージの外で単体のファイルとして開いている場合)。

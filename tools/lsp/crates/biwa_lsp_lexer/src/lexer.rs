@@ -689,7 +689,17 @@ fn lex_novel_segment(src: &str, offset: usize, out: &mut Vec<Token>) {
 
 /// ソース文字列全体をトークン列に変換する。
 /// 水平空白(スペース・タブ)は Whitespace トークンとして保持する。
+///
+/// `src` は改行を `\n` に揃えたもの ([`biwac_base::normalize_newlines`]) でなければならない。
+/// 実コンパイラ (biwac_lexer) と同じく、改行は `\n` だけを見る。
+/// 正規化しても (行, 桁) は変わらないので、ここで出すオフセットを
+/// 正規化後の文字列で LSP の位置に直せば、エディタ上の位置としてそのまま正しい。
 pub fn lex(src: &str) -> Vec<Token> {
+    debug_assert!(
+        biwac_base::is_newline_normalized(src),
+        "source must be newline-normalized before lexing"
+    );
+
     let segments = pre_scan(src);
     let mut tokens = Vec::new();
 

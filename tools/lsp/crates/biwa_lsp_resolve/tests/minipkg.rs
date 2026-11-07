@@ -32,7 +32,7 @@ fn fixture_path(rel: &str) -> std::path::PathBuf {
 #[test]
 fn resolve_document_does_not_hard_fail_when_another_module_has_a_syntax_error() {
     let path = fixture_path("src/lib.biwa");
-    let src = std::fs::read_to_string(&path).unwrap();
+    let src = biwac_base::normalize_newlines(std::fs::read_to_string(&path).unwrap());
 
     // 実コンパイラの `biwac_lexer`/`biwac_parser` (`BiwacSourceParser`) を
     // そのまま使っていた頃は、`src/broken.biwa` の構文エラーだけで

@@ -44,6 +44,9 @@ fn token_type_index(tt: TokenType) -> u32 {
 
 /// byte offset を (line, utf16_col) に変換するためのマッピングを構築する。
 /// line は 0-based、col は utf-16 code unit 単位 (LSP の規約)。
+///
+/// `src` は改行を `\n` に揃えたもの (`normalize_document_text`) であること。
+/// LSP の仕様では `\r\n`・`\r` も行の区切りだが、正規化で `\n` になっている。
 pub(crate) fn build_line_index(src: &str) -> Vec<usize> {
     // 各行の開始 byte offset を格納
     let mut line_starts = vec![0usize];
@@ -140,6 +143,82 @@ mod tests {
             has_multiline,
             "multiline source must produce delta_line > 0"
         );
+    }
+
+    /// LSP の仕様どおりに、元のテキスト (改行は `\r\n`・`\r`・`\n` のどれでもよい) の
+    /// 各位置を (行, UTF-16 の桁) にする参照実装。
+    ///
+    /// 改行以外の文字 1 つと、改行 1 つ (`\r\n` は 2 文字で 1 つ) ごとに、
+    /// その開始位置を返す。最後に末尾の位置を足す。
+    fn reference_positions(raw: &str) -> Vec<(u32, u32)> {
+        let mut out = Vec::new();
+        let (mut line, mut col) = (0u32, 0u32);
+        let mut chars = raw.chars().peekable();
+        while let Some(c) = chars.next() {
+            out.push((line, col));
+            match c {
+                '\r' | '\n' => {
+                    if c == '\r' && chars.peek() == Some(&'\n') {
+                        chars.next();
+                    }
+                    line += 1;
+                    col = 0;
+                }
+                c => col += c.len_utf16() as u32,
+            }
+        }
+        out.push((line, col));
+        out
+    }
+
+    /// 正規化後のテキストで計算した位置が、元のテキストの位置と一致すること。
+    ///
+    /// サーバは正規化後のテキストだけを持ち、そこで位置を計算して返すので、
+    /// これが崩れるとエディタ上の別の場所に診断やハイライトが出る。
+    #[test]
+    fn positions_on_normalized_text_match_the_raw_text() {
+        // 改行の種類を混ぜ、`\r\r\n` (2 つの改行)、空行、
+        // 多バイト文字・サロゲートペアになる文字も入れる。
+        let raw = "fn a() {\r\n  琵琶\r🐟x\n\r\r\n\r\nend\r";
+        let normalized = biwac_base::normalize_newlines(raw.to_string());
+
+        let idx = build_line_index(&normalized);
+        let mut actual: Vec<(u32, u32)> = normalized
+            .char_indices()
+            .map(|(i, _)| offset_to_line_col(&idx, &normalized, i))
+            .collect();
+        actual.push(offset_to_line_col(&idx, &normalized, normalized.len()));
+
+        assert_eq!(reference_positions(raw), actual);
+    }
+
+    /// 改行コードが違っても、ハイライトの結果 (位置を含む) が変わらないこと。
+    #[test]
+    fn semantic_tokens_do_not_depend_on_line_endings() {
+        let lf = r#"// コメント
+fn add(x: Int,
+  y: Int) -> Int {
+  let s = "文字列";
+  x + y
+}
+
+scene opening(g: MyGame) -> MyGame {{
+  こんにちは $(add(1, 2)) さん。>>
+  #let x = add(1,
+    2)
+  #endscene g
+}}
+"#;
+        let encode = |src: &str| {
+            let src = biwac_base::normalize_newlines(src.to_string());
+            let toks = biwa_lsp_highlight::highlight(&src);
+            encode_semantic_tokens(&src, &toks)
+        };
+
+        let expected = encode(lf);
+        assert!(!expected.is_empty());
+        assert_eq!(expected, encode(&lf.replace('\n', "\r\n")), "CRLF");
+        assert_eq!(expected, encode(&lf.replace('\n', "\r")), "CR");
     }
 
     #[test]

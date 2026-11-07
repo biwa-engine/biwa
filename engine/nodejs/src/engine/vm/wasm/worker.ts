@@ -222,10 +222,15 @@ function buildImports(
   memory: () => Uint8Array,
 ): WebAssembly.Imports {
   const runtime = runtimeImports(memory);
+  const declarations = declaredImports(module);
+  if (declarations === null) {
+    return allImports(runtime, channel);
+  }
+
   const imports: WebAssembly.Imports = {};
   const missing: string[] = [];
 
-  for (const declared of WebAssembly.Module.imports(module)) {
+  for (const declared of declarations) {
     const namespace = (imports[declared.module] ??= {});
     if (declared.name in namespace) {
       continue;
@@ -262,6 +267,45 @@ function buildImports(
   }
 
   return imports;
+}
+
+/**
+ * 生成物が宣言している import の一覧。取れなければ `null`。
+ *
+ * JavaScriptCore (Safari・macOS の WKWebView・Linux の WebKitGTK) の
+ * `WebAssembly.Module.imports` は、GC の型 (struct の参照など) が import の型に現れると
+ * 「import descriptors を作れない」と例外を投げる。compile も instantiate もできるのに、
+ * 一覧だけが取れない。
+ */
+function declaredImports(
+  module: WebAssembly.Module,
+): WebAssembly.ModuleImportDescriptor[] | null {
+  try {
+    return WebAssembly.Module.imports(module);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 宣言を見ずに、エンジンが実装している import をすべて渡す。
+ *
+ * 余分な鍵は instantiate が無視する。足りないものは `LinkError` になり、
+ * どの機能が無いのかを名前で叱ることはできなくなる (`buildImports` の目的が果たせない) が、
+ * 動かすことはできる。
+ */
+function allImports(
+  runtime: Record<string, WebAssembly.ImportValue>,
+  channel: SyscallChannel,
+): WebAssembly.Imports {
+  const engineImports: Record<string, WebAssembly.ImportValue> = {};
+  for (const [name, kind] of Object.entries(ENGINE_SYSCALLS)) {
+    engineImports[name] = syscall(name, kind, channel);
+  }
+  return {
+    [RUNTIME_NAMESPACE]: runtime,
+    [ENGINE_NAMESPACE]: engineImports,
+  };
 }
 
 /**

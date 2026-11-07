@@ -1,0 +1,92 @@
+<!doctype html>
+<!--
+  WebView の機能の検証ページ。
+  Biwa のゲームが動くのに要るもの (WasmGC・cross-origin isolation・Worker と Atomics など) と、
+  これから足すメディア (音・動画・フォント) の対応状況を 1 画面にまとめる。
+  デスクトップ版を `--probe` 付きで起動すると開く。
+-->
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Biwa WebView probe</title>
+    <style>
+      body {
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+        margin: 16px;
+        background: #fff;
+        color: #222;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 8px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      td,
+      th {
+        border-bottom: 1px solid #ddd;
+        padding: 4px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: #f4f4f4;
+      }
+      td.k {
+        white-space: nowrap;
+        font-family: ui-monospace, monospace;
+      }
+      td.v {
+        font-family: ui-monospace, monospace;
+        word-break: break-all;
+      }
+      .ok {
+        color: #0a7a2f;
+        font-weight: bold;
+      }
+      .ng {
+        color: #c0262d;
+        font-weight: bold;
+      }
+      .info {
+        color: #555;
+      }
+      .group td {
+        background: #eef;
+        font-weight: bold;
+      }
+      button {
+        font-size: 14px;
+        padding: 4px 12px;
+        margin: 8px 8px 8px 0;
+      }
+      #status {
+        color: #555;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Biwa WebView probe</h1>
+    <div>
+      <button id="copy" disabled>結果を JSON でコピー</button>
+      <a href="../index.html">ゲームを開く</a>
+      <span id="status">検査中…</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>項目</th>
+          <th>結果</th>
+          <th>値</th>
+        </tr>
+      </thead>
+      <tbody id="results"></tbody>
+    </table>
+    <script type="module" src="./probe.js"></script>
+  </body>
+</html>

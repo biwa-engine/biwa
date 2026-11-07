@@ -1,0 +1,5 @@
+# Biwa Engine
+.biwa_build
+.biwa_runtime
+.biwa_desktop_tauri
+dist

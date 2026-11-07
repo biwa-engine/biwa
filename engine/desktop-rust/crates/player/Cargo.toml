@@ -1,0 +1,20 @@
+[package]
+name = "biwa-runtime"
+description = "The Biwa native runtime: wires the engine, the wasm runtime, text, rendering and the window together."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "biwa-runtime"
+path = "src/main.rs"
+
+# 部品をつなぐだけで、具体的な外部 crate には依存しない。
+[dependencies]
+biwa-player-core.workspace = true
+biwa-player-vm.workspace = true
+biwa-player-text.workspace = true
+biwa-player-image.workspace = true
+biwa-player-layout.workspace = true
+biwa-player-render.workspace = true
+biwa-player-platform.workspace = true

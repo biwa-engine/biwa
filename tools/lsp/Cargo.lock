@@ -73,6 +73,7 @@ version = "0.1.0"
 dependencies = [
  "biwa_lsp_lexer",
  "biwa_lsp_parser",
+ "biwac_base",
  "rowan",
 ]
 
@@ -129,6 +130,7 @@ version = "0.1.0"
 dependencies = [
  "biwa_lsp_highlight",
  "biwa_lsp_resolve",
+ "biwac_base",
  "tokio",
  "tower-lsp",
 ]

@@ -1,0 +1,89 @@
+# Biwa の WebView の runtime (engine/desktop-tauri) を 3 OS でビルドする。
+# `biwa build --platform windows-webview|macos-webview|linux-webview` が使う。
+# (既定のネイティブの runtime は runtime-native.yml)
+#
+# runtime はゲームに依らない汎用の実行ファイルで、`biwa build` はこれにゲームのデータを添えて
+# 配布物を組み立てる (docs/biwa-prebuilt-player.md, cli/src/toolchain.rs)。
+# 成果物は `biwa-runtime-<id>` という名前で上がる。CLI と組にした配布物は release.yml が作る。
+# 単独で使うときは `~/.biwa/toolchains/<toolchain>/runtime/<id>/` に置く。
+name: runtime-webview
+
+on:
+  workflow_dispatch:
+  # release.yml から呼ぶ (CLI と同じコミットの runtime を揃えるため)。
+  workflow_call:
+  push:
+    paths:
+      - "engine/desktop-tauri/src-tauri/**"
+      - "engine/desktop-tauri/placeholder/**"
+      - ".github/workflows/runtime-webview.yml"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: webview-windows-x86_64
+            os: windows-latest
+            file: biwa-runtime.exe
+          - id: webview-macos-universal
+            os: macos-latest
+            file: biwa-runtime
+          # glibc の古い版でも動くように、なるべく古い runner でビルドする。
+          - id: webview-linux-x86_64
+            os: ubuntu-22.04
+            file: biwa-runtime
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: engine/desktop-tauri/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine/desktop-tauri/src-tauri -> target
+
+      - name: Test
+        if: runner.os != 'macOS'
+        run: cargo test --release
+
+      - name: Build (Windows / Linux)
+        if: runner.os != 'macOS'
+        shell: bash
+        run: |
+          cargo build --release
+          mkdir -p out
+          cp target/release/${{ matrix.file }} out/
+
+      # Apple Silicon と Intel の両方で動く universal バイナリにする。
+      # 署名は `biwa build` が .app を組み立てたあとに付け直すので、ここではしない。
+      - name: Build (macOS universal)
+        if: runner.os == 'macOS'
+        run: |
+          cargo test --release
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          mkdir -p out
+          lipo -create -output out/biwa-runtime \
+            target/aarch64-apple-darwin/release/biwa-runtime \
+            target/x86_64-apple-darwin/release/biwa-runtime
+          lipo -info out/biwa-runtime
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: biwa-runtime-${{ matrix.id }}
+          path: engine/desktop-tauri/src-tauri/out/${{ matrix.file }}
+          if-no-files-found: error

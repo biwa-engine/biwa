@@ -16,7 +16,7 @@ fn fixture_path(rel: &str) -> std::path::PathBuf {
 #[test]
 fn other_files_are_still_analyzed() {
     let path = fixture_path("src/lib.biwa");
-    let src = std::fs::read_to_string(&path).unwrap();
+    let src = biwac_base::normalize_newlines(std::fs::read_to_string(&path).unwrap());
     if let Err(e) = biwa_lsp_resolve::resolve_document(&path, &src) {
         panic!("expected resolve_document to survive an undeclared file, got: {e}");
     }
@@ -25,7 +25,7 @@ fn other_files_are_still_analyzed() {
 #[test]
 fn undeclared_file_gets_a_diagnostic() {
     let path = fixture_path("src/stray.biwa");
-    let src = std::fs::read_to_string(&path).unwrap();
+    let src = biwac_base::normalize_newlines(std::fs::read_to_string(&path).unwrap());
     let resolution = biwa_lsp_resolve::resolve_document(&path, &src)
         .unwrap_or_else(|e| panic!("expected a diagnostic, got Err: {e}"));
     assert!(

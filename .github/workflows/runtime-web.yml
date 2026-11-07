@@ -1,0 +1,43 @@
+# Biwa のビルド済みの Web runtime (engine/nodejs のエンジンの JS 一式) を作る。
+#
+# ゲームに依らない静的ファイルで、ページの横に置かれた `biwa-game.json` と `game.wasm` を実行時に読む
+# (engine/nodejs/src/game/runtime-entry.ts)。`biwa build --platform web` と WebView 版は、これにゲームのデータを
+# 添えるだけなので、ゲームを作る人の手元で Node.js / Vite は要らない (docs/biwa-prebuilt-player.md)。
+# 成果物は `biwa-runtime-web` という名前で上がる。CLI と組にした配布物は release.yml が作る。
+# 単独で使うときは `~/.biwa/toolchains/<toolchain>/runtime/web/` に中身を置く。
+name: runtime-web
+
+on:
+  workflow_dispatch:
+  # release.yml から呼ぶ (CLI と同じコミットの runtime を揃えるため)。
+  workflow_call:
+  push:
+    paths:
+      - "engine/nodejs/**"
+      - ".github/workflows/runtime-web.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine/nodejs
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: engine/nodejs/package-lock.json
+
+      - run: npm ci
+
+      # 型検査 (tsc) と、runtime モードの Vite のビルド (出力は dist-runtime/)。
+      - run: npm run build:runtime
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: biwa-runtime-web
+          path: engine/nodejs/dist-runtime/
+          if-no-files-found: error

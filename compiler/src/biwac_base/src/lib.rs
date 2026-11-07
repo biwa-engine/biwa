@@ -2,6 +2,7 @@ mod error;
 mod escape;
 mod ident;
 mod module;
+mod newline;
 mod package;
 mod src;
 mod target;
@@ -12,6 +13,7 @@ pub use error::{
 pub use escape::{EscapeError, known_escapes, string_body_end, unescape, unescape_char};
 pub use ident::{IdentInterner, InternedIdent};
 pub use module::ModPath;
+pub use newline::{is_newline_normalized, normalize_newlines};
 pub use package::{
     DependedPackage, MetadataHolder, PackageId, PackageKind, PackageMetadata, PackageName,
     PackageNameError, PackageVersion, PackageVersionError,

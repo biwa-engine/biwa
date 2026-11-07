@@ -1,0 +1,57 @@
+# Biwa のゲームを動かすネイティブのデスクトップのプレイヤー (Rust)。
+#
+# 外部の crate は、それを担当する sub crate の中に閉じ込める。
+# 上位の crate (core・player) からは下位の具体的な crate (wgpu・parley・winit ...) の型が見えない。
+# 例外は wasmtime で、差し替える見込みがほぼ無いので vm の公開 API に出てよい。
+# 構成と方針は README.md。
+[workspace]
+resolver = "3"
+members = [
+  "crates/core",
+  "crates/vm",
+  "crates/player",
+  "crates/text",
+  "crates/image",
+  "crates/layout",
+  "crates/render",
+  "crates/platform",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+biwa-player-core = { path = "crates/core" }
+biwa-player-vm = { path = "crates/vm" }
+biwa-player-text = { path = "crates/text" }
+biwa-player-image = { path = "crates/image" }
+biwa-player-layout = { path = "crates/layout" }
+biwa-player-render = { path = "crates/render" }
+biwa-player-platform = { path = "crates/platform" }
+
+# 外部 crate。どれを誰が使うかは各 crate の Cargo.toml を見ること。
+wasmtime = "50"
+wgpu = "30"
+winit = "0.30"
+parley = "0.12"
+taffy = "0.15"
+swash = "0.2"
+etagere = "0.3"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "1"
+raw-window-handle = "0.6"
+# ウィンドウの縦横比の固定 (winit に無いので OS の API を直接呼ぶ。platform だけが使う)。
+objc2 = "0.5"
+objc2-foundation = { version = "0.2", features = ["NSGeometry"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+# ゲームの画像に使う形式だけを有効にする (アニメーションの GIF / WebP は後で)。
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

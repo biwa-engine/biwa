@@ -15,7 +15,7 @@ use semantic_tokens::{
 
 struct Backend {
     client: Client,
-    // ファイル URI → テキスト内容
+    // ファイル URI → テキスト内容 (改行は `\n` に正規化済み。`normalize_document_text` 参照)
     documents: Arc<RwLock<HashMap<Url, String>>>,
     // ファイル URI → 直近の名前解決結果 (publish_diagnostics で更新し、
     // semantic_tokens_full が読み直す。パッケージ全体のロード・解決は
@@ -89,7 +89,7 @@ impl LanguageServer for Backend {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri;
-        let text = params.text_document.text;
+        let text = normalize_document_text(params.text_document.text);
         self.documents
             .write()
             .await
@@ -101,7 +101,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
         // FULL sync なので常に最後の change がドキュメント全体
         if let Some(change) = params.content_changes.into_iter().last() {
-            let text = change.text;
+            let text = normalize_document_text(change.text);
             self.documents
                 .write()
                 .await
@@ -218,6 +218,27 @@ impl Backend {
     }
 }
 
+/// エディタから届いたテキストの改行を `\n` に揃える。
+///
+/// LSP の仕様では `\r\n`・`\r`・`\n` のどれも行の区切りで、
+/// 実コンパイラもソースを読み込んだ直後に同じ規則で正規化する
+/// (`biwac_base::normalize_newlines`)。以降の字句解析・名前解決・
+/// 位置の変換はすべて正規化後のテキストに対して行う。
+///
+/// 正規化しても (行, UTF-16 の桁) は変わらない (行末の `\r` が消えるか、
+/// `\r` が同じ幅の `\n` になるだけ) ので、正規化後のテキストで計算した
+/// LSP の位置はエディタ上の元のテキストの位置としてそのまま正しい。
+/// 逆に、正規化後のバイトオフセットを元のテキストに当てはめてはいけない。
+///
+/// 今は FULL sync なので、届いたテキスト全体をここで正規化すれば足りる。
+/// incremental sync にするなら、届く範囲 (Range) は元のテキストの
+/// (行, 桁) なので、正規化後のテキストにそのまま当てはめてよいが、
+/// 差し替える文字列も正規化し、`\r` + `\n` が境目で
+/// 1 つの改行にくっつく場合を扱う必要がある。
+fn normalize_document_text(text: String) -> String {
+    biwac_base::normalize_newlines(text)
+}
+
 fn to_lsp_diagnostic(
     line_starts: &[usize],
     src: &str,
@@ -283,4 +304,33 @@ async fn main() {
     });
 
     Server::new(stdin, stdout, socket).serve(service).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 構文エラーの診断の位置が、改行コードによらず同じになること。
+    #[test]
+    fn diagnostics_do_not_depend_on_line_endings() {
+        // 3 行目の `let = ;` が構文エラー。
+        let lf = "fn f() {\n  let a = 1;\n  let = ;\n}\n";
+
+        let ranges = |raw: &str| {
+            let src = normalize_document_text(raw.to_string());
+            let line_starts = build_line_index(&src);
+            let errors = biwa_lsp_highlight::parse_for_diagnostics(&src).errors;
+            errors
+                .iter()
+                .map(|e| to_lsp_diagnostic(&line_starts, &src, e.start, e.end, &e.message).range)
+                .collect::<Vec<_>>()
+        };
+
+        let expected = ranges(lf);
+        assert!(!expected.is_empty(), "the fixture must have a syntax error");
+        // エラー回復で後続の行 (行末・末尾) にも診断が出る。最初のものは 3 行目。
+        assert_eq!(expected[0].start.line, 2, "{expected:?}");
+        assert_eq!(expected, ranges(&lf.replace('\n', "\r\n")), "CRLF");
+        assert_eq!(expected, ranges(&lf.replace('\n', "\r")), "CR");
+    }
 }

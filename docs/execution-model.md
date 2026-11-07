@@ -382,7 +382,8 @@ src/engine/vm/wasm/
 syscall の実装 (`api/message.ts` / `api/image.ts`) は TypeScript 経路と共有している。
 違うのは輸送路だけで、`pushContentText` も `waitForClick` も両方から呼ばれる。
 
-`biwa dev --target <wasm|typescript>` で切り替わる。
+かつては `biwa dev --target <wasm|typescript>` で切り替わった。いまの `biwa` は wasm だけを扱い、
+TypeScript (deprecated) を読み込む経路は無い (2026-11-07)。
 どちらで来ても、エンジンが見るのは `src/game/entry.ts` の default export だけである。
 
 ### wasm 固有の未解決点

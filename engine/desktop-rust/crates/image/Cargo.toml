@@ -1,0 +1,11 @@
+[package]
+name = "biwa-player-image"
+description = "Loads and decodes the Biwa native player's image assets (image crate) on a background thread."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# image crate の型はこの crate の外に出さない。結果は core::image::DecodedImage で返す。
+[dependencies]
+biwa-player-core.workspace = true
+image.workspace = true
