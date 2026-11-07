@@ -7,10 +7,10 @@ scene の中で文字列と struct を大量に作っては捨て、struct を V
 
 ```sh
 cd bench/gc-churn && biwa build --platform web      # .biwa_build/wasm/gcchurn.wasm ができる
-cd ../.. && cargo build --release -p biwa-player
+cd ../.. && cargo build --release -p biwa-runtime
 
 # wasmtime (ネイティブのプレイヤー)。--collector で GC の方式を変えられる (auto / drc / null)
-./target/release/biwa-player --headless --wasm bench/gc-churn/.biwa_build/wasm/gcchurn.wasm
+./target/release/biwa-runtime --headless --wasm bench/gc-churn/.biwa_build/wasm/gcchurn.wasm
 
 # 同じ wasm を V8 (node) で。比較用
 node bench/run-v8.mjs bench/gc-churn/.biwa_build/wasm/gcchurn.wasm

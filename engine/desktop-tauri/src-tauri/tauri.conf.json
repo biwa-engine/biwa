@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Biwa Player",
+  "productName": "Biwa Runtime",
   "version": "0.1.0",
-  "identifier": "dev.biwa.player",
+  "identifier": "dev.biwa.runtime",
   "build": {
     "frontendDist": "../placeholder"
   },

@@ -104,6 +104,23 @@ biwa build  : コンパイル → 対象 OS のプレイヤー + エンジンの
      - ネイティブ版の `game/` は `game.wasm` + `assets/` + `biwa-game.json` だけで、Node.js (Vite) は要らない。
      - 組み立て (zip / tar.gz / .app と ad-hoc 署名) は ① と共通。
      - Linux (Xvfb + lavapipe) で配布物の起動まで確認済み。次は Actions でのビルドと Windows / macOS の実機確認 (段階 6)。
+   - **進捗 (2026-11-07)**: 3 OS の実機で動作を確認し、WebView 版と同等の機能になったので main にマージした。
+6. **ツールチェイン単位のバージョン管理と配布** (方針は `~/memo/biwa-toolchain-versioning-and-release.md`)
+   - ツールチェイン = CLI (コンパイラ・std・エンジンの JS) + 全ターゲットの runtime。runtime を単独では選ばない
+     (コンパイラが出す wasm と runtime の間に約束があるため)。バージョン番号が無い今は、名前はコミットの先頭 12 文字。
+   - 置き場所は `~/.biwa` (`BIWA_HOME`): `bin/biwa`、`toolchains/<toolchain>/runtime/<runtime-id>/biwa-runtime`、
+     いずれ `packages/` (パッケージの clone とビルドキャッシュ)。`~/.biwa/bin` にパスを通す。
+   - **段階 1 (2026-11-07 実装)**:
+     - 「プレイヤー」を「runtime」に改名した (実行ファイル `biwa-runtime`、id `native-*` / `webview-*`、
+       成果物 `biwa-runtime-<id>`、Tauri の identifier `dev.biwa.runtime`)。
+     - CLI はビルドしたコミットを焼き込み (`cli/build.rs`、`biwa --version`)、同じ名前のツールチェインの runtime を使う
+       (`cli/src/toolchain.rs`。実験用に `--toolchain` / `BIWA_TOOLCHAIN`)。`biwa-game.json` にツールチェインの名前を書く。
+     - Actions: `runtime-native.yml` / `runtime-webview.yml` (旧 `player-*.yml`) を `workflow_call` でも呼べるようにし、
+       `release.yml` (workflow_dispatch) が CLI 3 OS 分と runtime 6 種類を同じコミットからビルドして、
+       ホストの OS ごとに `~/.biwa` にそのまま展開できるアーカイブ (`biwa-toolchain-<host>`) を作る。
+   - 次: wasm に ABI のバージョンを入れて runtime で照合する (段階 2)。その後、ランチャー
+     (`bin/biwa` が `toolchains/<toolchain>/bin/biwa` に渡す)、`biwa toolchain …` / `biwa self update`、
+     GitHub Releases とインストールスクリプト (段階 3)。
 
 ## 不確かな点
 

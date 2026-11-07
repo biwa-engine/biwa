@@ -8,10 +8,10 @@ mod assets;
 mod build;
 mod desktop;
 mod dev;
-mod player;
 mod project;
 mod publish;
 mod runtime;
+mod toolchain;
 
 use clap::{Parser, Subcommand};
 
@@ -28,7 +28,7 @@ pub const DIST_DIRECTORY_NAME: &str = "dist";
 pub const ASSETS_DIRECTORY_NAME: &str = "assets";
 
 #[derive(Debug, Parser)]
-#[command(name = "biwa", version, about = "Biwa novel game engine", long_about = None)]
+#[command(name = "biwa", version = toolchain::VERSION, about = "Biwa novel game engine", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

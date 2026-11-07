@@ -1,6 +1,6 @@
 //! デスクトップ版の配布物を組み立てる。
 //!
-//! ビルド済みのプレイヤー (`player.rs`) にゲームのデータ (`game/`) を添えるだけで、
+//! ビルド済みの runtime (`toolchain.rs`) にゲームのデータ (`game/`) を添えるだけで、
 //! ネイティブ版も WebView 版も組み立て方は同じ (違うのは `game/` の中身だけ)。
 //! コンパイルは走らない。そのため、どの OS の上でも全 OS 向けの配布物を作れる。
 //!
@@ -19,9 +19,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::player::{DesktopOs, DesktopTarget};
 use crate::project::Project;
 use crate::runtime;
+use crate::toolchain::{DesktopOs, DesktopTarget};
 
 /// プレイヤーが探すゲームのデータのディレクトリ名
 /// (`engine/desktop-tauri/src-tauri/src/main.rs`、`engine/desktop-rust/crates/player/src/options.rs`)。
@@ -35,7 +35,7 @@ const MACOS_MINIMUM_VERSION: &str = "13.0";
 pub fn assemble(
     project: &Project,
     target: DesktopTarget,
-    player: &Path,
+    runtime: &Path,
     game_data: &Path,
 ) -> Result<PathBuf> {
     let os = target.os();
@@ -45,7 +45,7 @@ pub fn assemble(
         .with_context(|| format!("failed to create {}", out_dir.display()))?;
 
     let name = &project.name;
-    let archive_base = format!("{name}-{}", target.player_id());
+    let archive_base = format!("{name}-{}", target.label());
 
     match os {
         DesktopOs::Windows | DesktopOs::Linux => {
@@ -54,7 +54,7 @@ pub fn assemble(
                 "{name}{}",
                 if os == DesktopOs::Windows { ".exe" } else { "" }
             );
-            copy_executable(player, &app_dir.join(&exe_name))?;
+            copy_executable(runtime, &app_dir.join(&exe_name))?;
             runtime::copy_dir(game_data, &app_dir.join(GAME_DIR))?;
 
             let executables = [format!("{name}/{exe_name}")];
@@ -72,7 +72,7 @@ pub fn assemble(
             let bundle = format!("{name}.app");
             let app = out_dir.join(&bundle);
             let contents = app.join("Contents");
-            copy_executable(player, &contents.join("MacOS").join(name))?;
+            copy_executable(runtime, &contents.join("MacOS").join(name))?;
             runtime::copy_dir(game_data, &contents.join("Resources").join(GAME_DIR))?;
             write(&contents.join("Resources").join("icon.icns"), MACOS_ICON)?;
             write(&contents.join("Info.plist"), info_plist(project).as_bytes())?;

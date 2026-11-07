@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn stays_inside_root() {
-        let root = std::env::temp_dir().join("biwa-player-serve-test");
+        let root = std::env::temp_dir().join("biwa-runtime-serve-test");
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::write(root.join("index.html"), "x").unwrap();
         std::fs::write(root.join("sub/a b.png"), "x").unwrap();

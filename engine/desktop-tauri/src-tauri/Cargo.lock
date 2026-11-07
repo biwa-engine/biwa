@@ -137,7 +137,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "biwa-player"
+name = "biwa-runtime"
 version = "0.1.0"
 dependencies = [
  "serde",

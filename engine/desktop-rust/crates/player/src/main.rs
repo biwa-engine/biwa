@@ -39,11 +39,11 @@ fn main() {
     }
 }
 
-/// エラーを一時ディレクトリの `biwa-player-error.log` にも書く。
+/// エラーを一時ディレクトリの `biwa-runtime-error.log` にも書く。
 ///
 /// Windows のリリースビルドはコンソールを持たず、ダブルクリックで起動すると標準エラーが見えないため。
 fn write_error_log(message: &str) {
-    let path = std::env::temp_dir().join("biwa-player-error.log");
+    let path = std::env::temp_dir().join("biwa-runtime-error.log");
     let _ = std::fs::write(&path, format!("error: {message}\n"));
 }
 

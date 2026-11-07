@@ -1,19 +1,21 @@
-# Biwa のネイティブのプレイヤー (engine/desktop-rust) を 3 OS でビルドする。
+# Biwa のネイティブの runtime (engine/desktop-rust) を 3 OS でビルドする。
 #
-# プレイヤーはゲームに依らない汎用の実行ファイルで、`biwa build --platform windows|macos|linux`
+# runtime はゲームに依らない汎用の実行ファイルで、`biwa build --platform windows|macos|linux`
 # (既定の `desktop` も) はこれにゲームのデータ (`game.wasm` + `assets/`) を添えて配布物を組み立てる
-# (docs/biwa-prebuilt-player.md, cli/src/player.rs)。
-# 成果物は `biwa-player-<id>` という名前で上がる。取り出したものを
-# `~/.biwa/players/<id>/` (または `biwa build --players-dir`) に置いて使う。
-# (WebView のプレイヤーは player-webview.yml)
-name: player-native
+# (docs/biwa-prebuilt-player.md, cli/src/toolchain.rs)。
+# 成果物は `biwa-runtime-<id>` という名前で上がる。CLI と組にした配布物は release.yml が作る。
+# 単独で使うときは `~/.biwa/toolchains/<toolchain>/runtime/<id>/` に置く。
+# (WebView の runtime は runtime-webview.yml)
+name: runtime-native
 
 on:
   workflow_dispatch:
+  # release.yml から呼ぶ (CLI と同じコミットの runtime を揃えるため)。
+  workflow_call:
   push:
     paths:
       - "engine/desktop-rust/**"
-      - ".github/workflows/player-native.yml"
+      - ".github/workflows/runtime-native.yml"
 
 jobs:
   build:
@@ -21,16 +23,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: windows-x86_64
+          - id: native-windows-x86_64
             os: windows-latest
-            file: biwa-player.exe
-          - id: macos-universal
+            file: biwa-runtime.exe
+          - id: native-macos-universal
             os: macos-latest
-            file: biwa-player
+            file: biwa-runtime
           # glibc の古い版でも動くように、なるべく古い runner でビルドする。
-          - id: linux-x86_64
+          - id: native-linux-x86_64
             os: ubuntu-22.04
-            file: biwa-player
+            file: biwa-runtime
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -58,7 +60,7 @@ jobs:
         if: runner.os != 'macOS'
         shell: bash
         run: |
-          cargo build --release -p biwa-player
+          cargo build --release -p biwa-runtime
           mkdir -p out
           cp target/release/${{ matrix.file }} out/
 
@@ -67,17 +69,17 @@ jobs:
       - name: Build (macOS universal)
         if: runner.os == 'macOS'
         run: |
-          cargo build --release -p biwa-player --target aarch64-apple-darwin
-          cargo build --release -p biwa-player --target x86_64-apple-darwin
+          cargo build --release -p biwa-runtime --target aarch64-apple-darwin
+          cargo build --release -p biwa-runtime --target x86_64-apple-darwin
           mkdir -p out
-          lipo -create -output out/biwa-player \
-            target/aarch64-apple-darwin/release/biwa-player \
-            target/x86_64-apple-darwin/release/biwa-player
-          lipo -info out/biwa-player
+          lipo -create -output out/biwa-runtime \
+            target/aarch64-apple-darwin/release/biwa-runtime \
+            target/x86_64-apple-darwin/release/biwa-runtime
+          lipo -info out/biwa-runtime
 
       - uses: actions/upload-artifact@v4
         with:
-          name: biwa-player-${{ matrix.id }}
+          name: biwa-runtime-${{ matrix.id }}
           path: engine/desktop-rust/out/${{ matrix.file }}
           if-no-files-found: error
 

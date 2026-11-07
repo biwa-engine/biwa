@@ -1,12 +1,12 @@
 [package]
-name = "biwa-player"
-description = "The Biwa native player: wires the engine, the wasm runtime, text, rendering and the window together."
+name = "biwa-runtime"
+description = "The Biwa native runtime: wires the engine, the wasm runtime, text, rendering and the window together."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "biwa-player"
+name = "biwa-runtime"
 path = "src/main.rs"
 
 # 部品をつなぐだけで、具体的な外部 crate には依存しない。

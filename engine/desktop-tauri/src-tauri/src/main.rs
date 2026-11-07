@@ -108,7 +108,7 @@ fn main() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running the Biwa player");
+        .expect("error while running the Biwa runtime");
 }
 
 /// 既定で localhost で配るか。macOS の WKWebView は独自スキームで `SharedArrayBuffer` を出さない。
@@ -128,7 +128,7 @@ fn game_dir() -> Option<PathBuf> {
         if dir.is_dir() {
             return Some(dir);
         }
-        eprintln!("biwa-player: game directory not found: {}", dir.display());
+        eprintln!("biwa-runtime: game directory not found: {}", dir.display());
         return None;
     }
 
@@ -144,7 +144,7 @@ fn game_dir() -> Option<PathBuf> {
         .find(|dir| dir.join(GAME_PAGE).is_file());
     if found.is_none() {
         eprintln!(
-            "biwa-player: no game data next to {} (expected a `game/` directory)",
+            "biwa-runtime: no game data next to {} (expected a `game/` directory)",
             exe.display()
         );
     }
@@ -199,7 +199,7 @@ fn serve_localhost(root: PathBuf, key: &str) -> u16 {
         .map(|i| preferred_port_offset(preferred, i))
         .find_map(|port| tiny_http::Server::http(("127.0.0.1", port)).ok())
         .or_else(|| {
-            eprintln!("biwa-player: ports from {preferred} are in use; using a random port");
+            eprintln!("biwa-runtime: ports from {preferred} are in use; using a random port");
             tiny_http::Server::http(("127.0.0.1", 0)).ok()
         })
         .expect("failed to start the localhost server");

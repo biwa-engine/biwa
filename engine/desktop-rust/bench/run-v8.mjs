@@ -5,7 +5,7 @@
 // エンジン (描画・クリック待ち) は持たない。止まる syscall はすぐ返し、
 // 止まらない syscall は捨てる。wasm の値に対する操作 (文字列・Vec・Map) だけを
 // `engine/nodejs/src/engine/vm/wasm/worker.ts` と同じ形で実装する。
-// 測るのは `biwa-player --headless` の統計と同じもの (wasm の実行時間・ホスト呼び出しの間隔)。
+// 測るのは `biwa-runtime --headless` の統計と同じもの (wasm の実行時間・ホスト呼び出しの間隔)。
 
 import { readFileSync } from "node:fs";
 

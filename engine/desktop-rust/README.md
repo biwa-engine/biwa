@@ -77,14 +77,14 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
 ## 動かし方
 
 ```sh
-cargo build --release -p biwa-player
+cargo build --release -p biwa-runtime
 
 # ウィンドウを出す。Link・SceneStartButton はクリックで押し、それ以外のクリック (か Enter / Space) で進む
-./target/release/biwa-player --wasm <game.wasm> [--assets <DIR>]
+./target/release/biwa-runtime --wasm <game.wasm> [--assets <DIR>]
 
 # ウィンドウを出さずに最後まで進める (最初の SceneStartButton を自動で押し、クリック待ちは自動で進め、
 # Message Window の文字をログに出す)
-./target/release/biwa-player --headless --wasm <game.wasm>
+./target/release/biwa-runtime --headless --wasm <game.wasm>
 #   --trace         syscall を 1 つずつ出す
 #   --collector X   wasmtime の GC の方式 (auto / drc / null)
 ```
@@ -104,7 +104,7 @@ wasm は `biwa build --platform web` などでできる `<project>/.biwa_build/w
 配布物は `biwa build --platform windows,macos,linux` で作る (`docs/desktop-build.md`)。
 `game/biwa-game.json` の `title` がウィンドウのタイトルになる。
 Windows のリリースビルドはコンソールを開かないので、起動に失敗したときのエラーは
-一時ディレクトリの `biwa-player-error.log` にも書く。
+一時ディレクトリの `biwa-runtime-error.log` にも書く。
 
 ## 段ごとの状況
 
@@ -207,7 +207,7 @@ WebKit 版のスクリーンショットと並べて、タイトル画面の位�
   Tauri 版は `--platform windows-webview|macos-webview|linux-webview`。
   プレイヤーの置き場所の id は `windows-x86_64` / `macos-universal` / `linux-x86_64` (Tauri 版は `*-webview-*`)。
 - ゲームのデータは `game.wasm` + `assets/` + `biwa-game.json` だけ (Vite は走らない)。
-- Actions: `.github/workflows/player-native.yml` が 3 OS でビルドし、`biwa-player-<id>` として上げる
+- Actions: `.github/workflows/player-native.yml` (いまは `runtime-native.yml`) が 3 OS でビルドし、`biwa-player-<id>` (いまは `biwa-runtime-native-<os>-<arch>`) として上げる
   (macOS は aarch64 と x86_64 を `lipo` で universal に)。Linux のビルドには `libfontconfig1-dev` が要る。
 - Linux (Xvfb + lavapipe) で、組み立てた tar.gz を展開して起動できることを確認済み。
 - 実機: Linux (Intel Iris Xe, Vulkan) は最後まで動いた。Windows は CI のテストで文字の幅の違いが出た → 既定のフォントを OS ごとに。
@@ -246,6 +246,9 @@ WebKit 版のスクリーンショットと並べて、タイトル画面の位�
   - 直し方: `ParagraphStyle::base_size` (段落の文字の大きさ、物理ピクセル) を足し、エンジンは CSS の既定 16 論理ピクセル
     (`text::DEFAULT_FONT_SIZE`) × 拡大率を渡す。等倍では TypeScript 版 (要素の font-size はブラウザの既定のまま) と同じで、
     縮めても同じ比で縮む。
+
+実行ファイルの名前は `biwa-runtime` (2026-11-07 に `biwa-player` から改名。crate のディレクトリ `crates/player` と
+部品の crate 名 `biwa-player-*` はまだ元のまま)。
 
 ## まだ無いもの
 

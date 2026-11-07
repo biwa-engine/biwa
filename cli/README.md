@@ -6,7 +6,7 @@ Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン�
 すべてこのバイナリが持っている。利用者に用意させるのは Node.js だけで、
 `biwa dev` と打てばブラウザで動くところまで行けることを目標とする。
 デスクトップ版のビルド (`biwa build`) も Rust などのビルド環境を要らない。
-OS ごとのエンジン本体 (プレイヤー) は Biwa の CI がビルドしておき、
+OS ごとのエンジン本体 (runtime) は Biwa の CI がビルドしておき、
 `biwa build` はそれにゲームのデータを添えて組み立てるだけだからである (後述)。
 
 コンパイラ biwac は**ライブラリとして**呼ぶ (`biwac_driver::compile`)。
@@ -62,7 +62,7 @@ biwa build --platform web                   # → dist/web/
 既定がデスクトップ版なのは、配布形態の第一の目標がデスクトップアプリだからである。
 `--platform` はカンマ区切りで複数並べられる。`desktop` は `biwa` が動いている OS のネイティブ版を指す。
 
-デスクトップ版のプレイヤー (ランタイム) は 2 種類ある。
+デスクトップ版の runtime は 2 種類ある。
 
 - **ネイティブ** (`windows` / `macos` / `linux`、既定): `engine/desktop-rust/`。
   wasm を wasmtime で動かし、wgpu で描く。ゲームのデータは wasm とアセットだけ (Node.js は要らない)。
@@ -73,8 +73,8 @@ biwa build --platform web                   # → dist/web/
 
 やることは順に:
 
-1. **(デスクトップ版のみ) プレイヤーを探す** — 時間のかかるビルドの前に、
-   指定された OS のプレイヤーが揃っているかを確かめる (下記)。
+1. **(デスクトップ版のみ) runtime を探す** — 時間のかかるビルドの前に、
+   指定された OS の runtime が揃っているかを確かめる (下記)。
 2. **同梱物を揃える** — `biwa dev` の 1. と同じ (std とエンジンの展開。エンジンは Web 版・WebView 版のときだけ)。
    ただし `assets/` のリンクは張らない (5. でコピーする)。
 3. **ビルドする** / **生成物をエンジンに渡す** — `biwa dev` の 2.〜3. と同じ。
@@ -95,13 +95,13 @@ biwa build --platform web                   # → dist/web/
 
 #### デスクトップ版
 
-エンジン本体は、ゲームに依らない汎用の実行ファイル「プレイヤー」である。
-プレイヤーは実行ファイルの横の `game/` を読んで動くので、ゲームごとにビルドし直す必要が無い。
-Biwa の CI (`.github/workflows/player-native.yml` / `player-webview.yml`) が OS ごとに 1 度だけビルドし、
+エンジン本体は、ゲームに依らない汎用の実行ファイル「runtime」である。
+runtime は実行ファイルの横の `game/` を読んで動くので、ゲームごとにビルドし直す必要が無い。
+Biwa の CI (`.github/workflows/runtime-native.yml` / `runtime-webview.yml`、配るときは `release.yml`) が OS ごとに 1 度だけビルドし、
 `biwa build` はそれにゲームのデータを添えて組み立てるだけである。
 **コンパイルが走らないので、どの OS の上でも全 OS 向けの配布物を作れる。**
 
-1. ゲームのデータ (`game/` になるもの) を作る。どちらにも、プレイヤーが読むゲームの情報
+1. ゲームのデータ (`game/` になるもの) を作る。どちらにも、runtime が読むゲームの情報
    `biwa-game.json` (タイトル・版) を入れる。
    - ネイティブ: `game.wasm` (生成物の写し) と `assets/` のコピー (`.biwa_runtime/dist-game-native/`)。
    - WebView: 静的ビルド (上の 4.〜5.) に、WebView の検証ページ (`__biwa_probe/`、ゲームの wasm の写し付き)
@@ -119,21 +119,20 @@ Biwa の CI (`.github/workflows/player-native.yml` / `player-webview.yml`) が O
   どの OS の上でもできる。Apple Silicon で起動するのに最低限要る。
 - zip / tar.gz に固めるのは、実行ビットと .app の構造を確実に残すためである。
 
-プレイヤーは次の順に探す。CI の成果物 `biwa-player-<id>` を取り出して `<players>/<id>/` に置く
-(将来は `biwa` に同梱するか、初回にダウンロードする)。
-
-1. `--players-dir <DIR>`
-2. 環境変数 `BIWA_PLAYERS_DIR`
-3. `~/.biwa/players`
+runtime は CLI と同じ「ツールチェイン」のものを使う (`src/toolchain.rs`)。ツールチェインは CLI + 全ターゲットの
+runtime のまとまりで、名前はビルドしたコミットの先頭 12 文字 (`biwa --version` に出る。`cli/build.rs` が焼き込む)。
+コンパイラが出す wasm と runtime の間には約束 (syscall の番号など) があるので、組み合わせを揃えるためである。
 
 ```
-<players>/windows-x86_64/biwa-player.exe            ← ネイティブ
-<players>/macos-universal/biwa-player
-<players>/linux-x86_64/biwa-player
-<players>/windows-webview-x86_64/biwa-player.exe    ← WebView
-<players>/macos-webview-universal/biwa-player
-<players>/linux-webview-x86_64/biwa-player
+<home>/                                   ← 環境変数 BIWA_HOME、無ければ ~/.biwa
+  bin/biwa[.exe]                          ← この CLI
+  toolchains/<toolchain>/runtime/<runtime-id>/biwa-runtime[.exe]
 ```
+
+`<runtime-id>` は `native-{windows-x86_64,macos-universal,linux-x86_64}` と
+`webview-{windows-x86_64,macos-universal,linux-x86_64}`。
+Actions の `release.yml` が、このまま `~/.biwa` に展開できるアーカイブを作る (入手のしかたは `docs/desktop-build.md`)。
+別のツールチェインの runtime を使うときは `--toolchain <NAME>` (または環境変数 `BIWA_TOOLCHAIN`。実験用)。
 
 アプリの起動オプション (WebView 版の `--probe` / `--localhost`)、遊ぶ側に要るもの、
 各 OS での検証状況は [`docs/desktop-build.md`](../docs/desktop-build.md) にある。
@@ -145,7 +144,7 @@ Biwa の CI (`.github/workflows/player-native.yml` / `player-webview.yml`) が O
 | `-p`, `--package-path <DIR>` | 対象パッケージ (既定: カレントディレクトリ)                                            |
 | `-r`, `--rebuild`            | キャッシュを無視して最初から建て直す                                                   |
 | `--platform <LIST>`          | 配布形態 (カンマ区切り)。`desktop` (既定。この OS)・`windows`・`macos`・`linux`・`windows-webview`・`macos-webview`・`linux-webview`・`web` |
-| `--players-dir <DIR>`        | ビルド済みプレイヤーの置き場所 (既定: `BIWA_PLAYERS_DIR`、なければ `~/.biwa/players`)  |
+| `--toolchain <NAME>`         | runtime を取るツールチェイン (既定: `BIWA_TOOLCHAIN`、なければこの CLI と同じもの。実験用) |
 
 ### `biwa publish`
 
@@ -344,7 +343,7 @@ std の native TypeScript がエンジンを参照するときは
 `node_modules/` などは除く。
 macOS の .app に入れるアイコンも `include_bytes!` で焼き込む (`src/desktop.rs`)。
 
-デスクトップ版のプレイヤー本体は同梱しない (CI でビルドしたものを使う。`src/player.rs`)。
+デスクトップ版の runtime は同梱しない (CI でビルドしたものを `~/.biwa/toolchains/` から使う。`src/toolchain.rs`)。
 
 デバッグビルドでは実行時にリポジトリ内のファイルを直接読むため、
 `engine/nodejs/`・`library/std/`・検証ページを編集すればビルドし直さずに反映される。
@@ -355,7 +354,7 @@ macOS の .app に入れるアイコンも `include_bytes!` で焼き込む (`sr
 - `biwa new <package>`
   `<package>/biwa-package.json` と `<package>/src/main.biwa` を作る。
 - `biwa build` の残り
-  プレイヤーの同梱 (または初回のダウンロード)、Node.js を不要にすること
+  runtime の同梱 (または初回のダウンロード)、Node.js を不要にすること
   (エンジンの JS をビルド済みにする)、ゲームごとのアイコン・ウィンドウの設定、
   macOS の Developer ID での署名・公証、Windows のコード署名、
   モバイル向けの出力 ([`docs/desktop-build.md`](../docs/desktop-build.md) §5)。

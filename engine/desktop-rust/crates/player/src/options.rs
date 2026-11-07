@@ -1,7 +1,7 @@
 //! 起動時の引数。
 //!
 //! ```text
-//! biwa-player [--game-dir <DIR> | --wasm <FILE>] [--assets <DIR>] [--headless] [--trace] [--collector <auto|drc|null>]
+//! biwa-runtime [--game-dir <DIR> | --wasm <FILE>] [--assets <DIR>] [--headless] [--trace] [--collector <auto|drc|null>]
 //! ```
 //!
 //! ゲームの場所 (指定が無いとき) は Tauri 版のプレイヤーと同じく、
@@ -110,7 +110,7 @@ impl Options {
     }
 }
 
-const USAGE: &str = "usage: biwa-player [--game-dir <DIR> | --wasm <FILE>] [--assets <DIR>] [--headless] [--trace] [--collector <auto|drc|null>]";
+const USAGE: &str = "usage: biwa-runtime [--game-dir <DIR> | --wasm <FILE>] [--assets <DIR>] [--headless] [--trace] [--collector <auto|drc|null>]";
 
 /// `<project>/.biwa_build/wasm/<package>.wasm` なら `<project>/assets`。
 fn project_assets(wasm: &Path) -> Option<PathBuf> {

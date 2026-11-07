@@ -1,5 +1,5 @@
 [package]
-name = "biwa-player"
+name = "biwa-runtime"
 version = "0.1.0"
 edition = "2024"
 publish = false
@@ -8,7 +8,7 @@ publish = false
 [workspace]
 
 [[bin]]
-name = "biwa-player"
+name = "biwa-runtime"
 path = "src/main.rs"
 
 [build-dependencies]
