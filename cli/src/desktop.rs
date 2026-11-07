@@ -1,6 +1,7 @@
 //! デスクトップ版の配布物を組み立てる。
 //!
 //! ビルド済みのプレイヤー (`player.rs`) にゲームのデータ (`game/`) を添えるだけで、
+//! ネイティブ版も WebView 版も組み立て方は同じ (違うのは `game/` の中身だけ)。
 //! コンパイルは走らない。そのため、どの OS の上でも全 OS 向けの配布物を作れる。
 //!
 //! | OS      | 配布物                                                              |
@@ -18,31 +19,33 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::player::DesktopOs;
+use crate::player::{DesktopOs, DesktopTarget};
 use crate::project::Project;
 use crate::runtime;
 
-/// プレイヤーが探すゲームのデータのディレクトリ名 (`engine/desktop-tauri/src-tauri/src/main.rs`)。
+/// プレイヤーが探すゲームのデータのディレクトリ名
+/// (`engine/desktop-tauri/src-tauri/src/main.rs`、`engine/desktop-rust/crates/player/src/options.rs`)。
 const GAME_DIR: &str = "game";
 /// macOS の .app に入れるアイコン。
 const MACOS_ICON: &[u8] = include_bytes!("../../engine/desktop-tauri/src-tauri/icons/icon.icns");
 /// macOS の下限。WasmGC が要るので、Safari 18.2 相当の WebKit が入る版 (要確認)。
 const MACOS_MINIMUM_VERSION: &str = "13.0";
 
-/// `os` 向けの配布物を `dist/<os>/` に組み立て、固めたファイルのパスを返す。
+/// `target` 向けの配布物を `dist/<target>/` に組み立て、固めたファイルのパスを返す。
 pub fn assemble(
     project: &Project,
-    os: DesktopOs,
+    target: DesktopTarget,
     player: &Path,
     game_data: &Path,
 ) -> Result<PathBuf> {
-    let out_dir = project.dist_dir().join(os.name());
+    let os = target.os();
+    let out_dir = project.dist_dir().join(target.name());
     remove_if_exists(&out_dir)?;
     std::fs::create_dir_all(&out_dir)
         .with_context(|| format!("failed to create {}", out_dir.display()))?;
 
     let name = &project.name;
-    let archive_base = format!("{name}-{}", os.player_id());
+    let archive_base = format!("{name}-{}", target.player_id());
 
     match os {
         DesktopOs::Windows | DesktopOs::Linux => {
