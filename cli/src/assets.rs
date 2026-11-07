@@ -18,6 +18,7 @@ use rust_embed::RustEmbed;
 #[folder = "../engine/nodejs"]
 #[exclude = "node_modules/*"]
 #[exclude = "dist/*"]
+#[exclude = "dist-runtime/*"]
 #[exclude = ".direnv/*"]
 #[exclude = "flake.*"]
 #[exclude = ".envrc"]

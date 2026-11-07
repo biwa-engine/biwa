@@ -182,7 +182,7 @@ pub(crate) fn build(project: &Project, target: Target, force_rebuild: bool) -> R
 /// biwac はライブラリとして呼ぶ (`biwac` コマンドは経由しない)。
 /// まだ未実装のエラー表示経路で panic することがあるので、
 /// 開発サーバごと落ちないようにここで受け止める。
-fn compile(project: &Project, target: Target, force_rebuild: bool) -> Result<()> {
+pub(crate) fn compile(project: &Project, target: Target, force_rebuild: bool) -> Result<()> {
     let root = project.root.clone();
 
     let result = std::panic::catch_unwind(move || {

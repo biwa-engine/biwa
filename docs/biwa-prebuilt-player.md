@@ -118,6 +118,14 @@ biwa build  : コンパイル → 対象 OS のプレイヤー + エンジンの
      - Actions: `runtime-native.yml` / `runtime-webview.yml` (旧 `player-*.yml`) を `workflow_call` でも呼べるようにし、
        `release.yml` (workflow_dispatch) が CLI 3 OS 分と runtime 6 種類を同じコミットからビルドして、
        ホストの OS ごとに `~/.biwa` にそのまま展開できるアーカイブ (`biwa-toolchain-<host>`) を作る。
+   - **Node.js を無くす (2026-11-07 合意)**: ゲームを作る人の作業から Node.js を無くす。Web 版 (Tier 1) も
+     ビルド済みの Web runtime で組み立てる。Vite / Node はエンジンの開発者と CI だけの道具にする。
+     1. ネイティブ版の dev モード (`biwa dev` の既定) — 済。
+     2. Web runtime のビルド済み化 — 済。`engine/nodejs` の `npm run build:runtime` (`runtime` モード) が、ゲームを
+        焼き込まず `biwa-game.json` と `game.wasm` を実行時に読む Web runtime を作り、CI (`runtime-web.yml`) がツールチェインの
+        `runtime/web/` に入れる。`biwa build --platform web` と WebView 版はそれにゲームのデータを添えるだけ。
+     3. `biwa dev --platform web` を CLI 内蔵の HTTP サーバ + 再読み込みにする。
+     4. ゲームを作る人の経路から Vite と `.biwa_runtime/` を外す。
    - 次: wasm に ABI のバージョンを入れて runtime で照合する (段階 2)。その後、ランチャー
      (`bin/biwa` が `toolchains/<toolchain>/bin/biwa` に渡す)、`biwa toolchain …` / `biwa self update`、
      GitHub Releases とインストールスクリプト (段階 3)。

@@ -357,7 +357,7 @@ fn write_if_changed(path: &Path, contents: &[u8]) -> Result<()> {
 ///
 /// wasm の URL は再ビルドしても変わらないので、これを付けて
 /// ブラウザが古いモジュールを掴んだままになるのを防ぐ。
-fn content_id(bytes: &[u8]) -> String {
+pub fn content_id(bytes: &[u8]) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for b in bytes {
         hash ^= u64::from(*b);
@@ -455,29 +455,6 @@ pub fn spawn_vite(project: &Project, port: Option<u16>) -> Result<std::process::
         .context("failed to start the vite dev server (is Node.js installed?)")
 }
 
-/// Vite で静的ビルドし、`out_dir` に書き出す。
-///
-/// `base` を `./` にして、出力をどこに置いても (Web のサブディレクトリでも、
-/// デスクトップの WebView でも) 相対パスで解決されるようにする。
-/// 中身は丸ごと作り直す。
-pub fn vite_build(project: &Project, out_dir: &Path) -> Result<()> {
-    let status = node_script(&project.runtime_dir(), VITE_SCRIPT)?
-        .arg("build")
-        .arg("--base")
-        .arg("./")
-        .arg("--outDir")
-        .arg(out_dir)
-        .arg("--emptyOutDir")
-        .status()
-        .context("failed to run `vite build` (is Node.js installed?)")?;
-
-    if !status.success() {
-        bail!("`vite build` failed");
-    }
-
-    Ok(())
-}
-
 /// パッケージの `assets/` を、静的ビルドの出力 (`<out_dir>/assets`) へコピーする。
 ///
 /// 開発時はリンク (`link_assets`) だが、配布物は自己完結していなければならない。
@@ -524,11 +501,6 @@ pub fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// wasm の生成物 (エンジンに渡したもの) の場所。
-pub fn placed_wasm(project: &Project) -> PathBuf {
-    project.runtime_dir().join(GAME_DIR).join(WASM_FILE)
 }
 
 /// 開発サーバが監視するディレクトリ。

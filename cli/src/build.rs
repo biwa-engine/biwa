@@ -1,14 +1,15 @@
 //! `biwa build`: 配布物のビルド。
 //!
 //!   - `windows` / `macos` / `linux`: ネイティブの runtime (`engine/desktop-rust`) に、
-//!     ゲームのデータ (`game/` = `game.wasm` + `assets/`) を添えて配布物を組み立てる (`desktop.rs`)。
-//!   - `windows-webview` / `macos-webview` / `linux-webview`: WebView の runtime
-//!     (`engine/desktop-tauri`) に、Web の静的ビルド (Vite) をゲームのデータとして添える。
+//!     ゲームのデータ (`game/` = `game.wasm` + `assets/` + `biwa-game.json`) を添えて配布物を組み立てる (`desktop.rs`)。
+//!   - `windows-webview` / `macos-webview` / `linux-webview`: WebView の runtime (`engine/desktop-tauri`) に、
+//!     Web 版と同じもの (+ WebView の検証ページ) をゲームのデータとして添える。
 //!   - `desktop` (既定): `biwa` が動いている OS 向けのネイティブ版。
-//!   - `web`: Web の静的ビルドをそのまま `dist/web/` に出す。HTTP で配信する。
+//!   - `web`: ビルド済みの Web runtime (`engine/nodejs` の `npm run build:runtime`) に、`game.wasm` +
+//!     `assets/` + `biwa-game.json` を添えて `dist/web/` に出す。HTTP で配信する。
 //!
-//! デスクトップ版はビルド済みの runtime (`toolchain.rs`) を使い、コンパイルは走らないので、
-//! どの OS の上でも全 OS 向けに作れる。
+//! どれもツールチェインのビルド済みの runtime (`toolchain.rs`) にゲームのデータを添えるだけで、
+//! runtime のコンパイルも Vite (Node.js) も走らない。どの OS の上でも全ターゲット向けに作れる。
 //!
 //! 既定が `desktop` なのは、配布形態の第一の目標がデスクトップアプリだからである。
 
@@ -64,19 +65,18 @@ pub enum Platform {
 
 /// 配布物のコード生成ターゲット。
 ///
-/// エンジンの Worker が走らせる wasm に固定する。
+/// どの runtime も wasm を走らせる。
 const TARGET: Target = Target::Wasm;
 
-/// WebView 版のゲームのデータを作る場所 (`.biwa_runtime/` からの相対)。
-const WEBVIEW_GAME_DATA_DIR: &str = "dist-game";
-/// ネイティブ版のゲームのデータを作る場所 (`.biwa_runtime/` からの相対)。
-const NATIVE_GAME_DATA_DIR: &str = "dist-game-native";
-/// ネイティブ版のゲームのデータの中の wasm (`engine/desktop-rust/crates/player/src/options.rs`)。
-const NATIVE_WASM_FILE: &str = "game.wasm";
+/// ゲームのデータを作る場所 (`.biwa_build/` からの相対)。runtime の `game/` になる。
+const GAME_DATA_DIR: &str = "game-data";
+/// ゲームのデータの中の wasm
+/// (`engine/desktop-rust/crates/player/src/options.rs`、`engine/nodejs/src/game/runtime-entry.ts`)。
+const WASM_FILE: &str = "game.wasm";
 /// ゲームのデータの中の、検証ページの置き場所。
 const PROBE_DIR: &str = "__biwa_probe";
-/// ゲームのデータの中の、runtime が読むゲームの情報
-/// (`engine/desktop-tauri/src-tauri/src/main.rs`、`engine/desktop-rust/crates/player/src/options.rs`)。
+/// ゲームのデータの中の、runtime が読むゲームの情報 (`engine/desktop-tauri/src-tauri/src/main.rs`、
+/// `engine/desktop-rust/crates/player/src/options.rs`、`engine/nodejs/src/game/runtime-entry.ts`)。
 const GAME_INFO_FILE: &str = "biwa-game.json";
 
 pub fn run(args: BuildArgs) -> Result<()> {
@@ -86,41 +86,47 @@ pub fn run(args: BuildArgs) -> Result<()> {
         .unwrap_or_else(|| PathBuf::from("."));
     let project = Project::discover(&start_dir)?;
     let (web, targets) = resolve_platforms(&args.platform)?;
+    let webview = targets.iter().any(|t| t.runtime == Runtime::Webview);
 
     println!("Package: {} ({})", project.name, project.root.display());
 
     // runtime が揃っているかは、時間のかかるビルドの前に確かめる。
     let toolchain = Toolchain::select(args.toolchain.as_deref())?;
-    let runtimes = if targets.is_empty() {
-        Vec::new()
+    println!("Toolchain: {}", toolchain.name);
+    let runtimes = targets
+        .iter()
+        .map(|&target| toolchain.runtime(target).map(|path| (target, path)))
+        .collect::<Result<Vec<_>>>()?;
+    // Web 版と WebView 版は、どちらもビルド済みの Web runtime をゲームのデータの土台にする。
+    let web_runtime = if web || webview {
+        Some(toolchain.web_runtime()?)
     } else {
-        println!("Toolchain: {}", toolchain.name);
-        targets
-            .iter()
-            .map(|&target| toolchain.runtime(target).map(|path| (target, path)))
-            .collect::<Result<Vec<_>>>()?
+        None
     };
-    let webview = targets.iter().any(|t| t.runtime == Runtime::Webview);
 
     runtime::ensure_std(&project)?;
-    // Vite (Node) が要るのは Web の静的ビルドを作るときだけ。ネイティブ版は wasm と素材を運ぶだけである。
-    if web || webview {
-        runtime::ensure_engine(&project)?;
-    }
-    // `public/assets` のリンク (`runtime::link_assets`) は張らない。
-    // 静的ビルドはリンクを当てにせず、出力へ直接コピーする (`copy_assets`)。
-    // Windows ではリンクの作成に開発者モードが要るので、配布物のビルドをそれに依らせない。
-
-    dev::build(&project, TARGET, args.rebuild)?;
+    dev::compile(&project, TARGET, args.rebuild)?;
+    let wasm =
+        project
+            .generated_dir(TARGET)
+            .join(format!("{}.{}", project.name, TARGET.bin_extension()));
+    let game = GameData {
+        project: &project,
+        wasm: &wasm,
+        toolchain: &toolchain.name,
+    };
 
     let mut outputs = Vec::new();
 
-    if web {
+    if let Some(web_runtime) = &web_runtime
+        && web
+    {
         let out_dir = project.dist_dir().join("web");
-        build_web(&project, &out_dir)?;
+        game.build_web(&out_dir, web_runtime)?;
         outputs.push(out_dir);
     }
 
+    let data_dir = project.build_dir().join(GAME_DATA_DIR);
     let mut native_data = None;
     let mut webview_data = None;
     for (target, runtime) in &runtimes {
@@ -128,16 +134,19 @@ pub fn run(args: BuildArgs) -> Result<()> {
             Runtime::Native => match &native_data {
                 Some(dir) => dir,
                 None => {
-                    let dir = project.runtime_dir().join(NATIVE_GAME_DATA_DIR);
-                    build_native_game_data(&project, &dir, &toolchain.name)?;
+                    let dir = data_dir.join("native");
+                    game.build_native(&dir)?;
                     native_data.insert(dir)
                 }
             },
             Runtime::Webview => match &webview_data {
                 Some(dir) => dir,
                 None => {
-                    let dir = project.runtime_dir().join(WEBVIEW_GAME_DATA_DIR);
-                    build_webview_game_data(&project, &dir, &toolchain.name)?;
+                    let dir = data_dir.join("webview");
+                    let web_runtime = web_runtime
+                        .as_deref()
+                        .expect("looked up above for WebView targets");
+                    game.build_webview(&dir, web_runtime)?;
                     webview_data.insert(dir)
                 }
             },
@@ -194,58 +203,77 @@ fn resolve_platforms(platforms: &[Platform]) -> Result<(bool, Vec<DesktopTarget>
     Ok((web, targets))
 }
 
-/// Web の静的ビルドを `out_dir` に作る。
-fn build_web(project: &Project, out_dir: &Path) -> Result<()> {
-    runtime::vite_build(project, out_dir)?;
-    runtime::copy_assets(project, out_dir)
+/// ゲームのデータ (runtime の `game/`、または Web 版の出力そのもの) を作るのに要るもの。
+struct GameData<'a> {
+    project: &'a Project,
+    /// コンパイラの出力。
+    wasm: &'a Path,
+    /// 組み立てに使うツールチェインの名前 (`biwa-game.json` に書く)。
+    toolchain: &'a str,
 }
 
-/// ネイティブ版のゲームのデータ (runtime の `game/` になるもの) を作る。
-///
-/// コンパイラが出した wasm と素材、ゲームの情報だけである。
-fn build_native_game_data(project: &Project, out_dir: &Path, toolchain: &str) -> Result<()> {
-    if out_dir.exists() {
-        std::fs::remove_dir_all(out_dir)
-            .with_context(|| format!("failed to remove {}", out_dir.display()))?;
+impl GameData<'_> {
+    /// ネイティブ版: wasm・アセット・ゲームの情報だけ。
+    fn build_native(&self, out_dir: &Path) -> Result<()> {
+        recreate_dir(out_dir)?;
+        self.add_game(out_dir)
     }
-    std::fs::create_dir_all(out_dir)
-        .with_context(|| format!("failed to create {}", out_dir.display()))?;
 
-    let wasm = runtime::placed_wasm(project);
-    std::fs::copy(&wasm, out_dir.join(NATIVE_WASM_FILE))
-        .with_context(|| format!("failed to copy {}", wasm.display()))?;
-    runtime::copy_assets(project, out_dir)?;
-    write_game_info(project, out_dir, toolchain)
+    /// Web 版: ビルド済みの Web runtime (`engine/nodejs` の `npm run build:runtime`) に、wasm・アセット・
+    /// ゲームの情報を添える。runtime はページの横の `biwa-game.json` と `game.wasm` を実行時に読む
+    /// (`engine/nodejs/src/game/runtime-entry.ts`)。
+    fn build_web(&self, out_dir: &Path, web_runtime: &Path) -> Result<()> {
+        recreate_dir(out_dir)?;
+        runtime::copy_dir(web_runtime, out_dir)?;
+        self.add_game(out_dir)
+    }
+
+    /// WebView 版: Web 版に WebView の検証ページを足す。
+    /// 検証ページは実際のゲームの wasm を WebView がコンパイルできるかも見るので、その写しも添える。
+    fn build_webview(&self, out_dir: &Path, web_runtime: &Path) -> Result<()> {
+        self.build_web(out_dir, web_runtime)?;
+        let probe_dir = out_dir.join(PROBE_DIR);
+        assets::extract::<Probe>(&probe_dir)?;
+        copy_file(self.wasm, &probe_dir.join(WASM_FILE))
+    }
+
+    /// wasm・アセット・ゲームの情報を `out_dir` に置く。
+    fn add_game(&self, out_dir: &Path) -> Result<()> {
+        copy_file(self.wasm, &out_dir.join(WASM_FILE))?;
+        runtime::copy_assets(self.project, out_dir)?;
+        self.write_info(out_dir)
+    }
+
+    /// runtime が読むゲームの情報 (ウィンドウのタイトルなど) を書く。
+    ///
+    /// `buildId` は wasm の内容から決まる値で、Web 版がブラウザのキャッシュを避けるのに使う。
+    /// `toolchain` はどのツールチェインで組み立てたか (runtime は読まない。不具合の報告で版を知るため)。
+    fn write_info(&self, out_dir: &Path) -> Result<()> {
+        let wasm = std::fs::read(self.wasm)
+            .with_context(|| format!("failed to read {}", self.wasm.display()))?;
+        let info = serde_json::json!({
+            "name": self.project.name,
+            "title": self.project.name,
+            "version": self.project.version.as_deref().unwrap_or("0.1.0"),
+            "buildId": runtime::content_id(&wasm),
+            "toolchain": self.toolchain,
+        });
+        let info_path = out_dir.join(GAME_INFO_FILE);
+        std::fs::write(&info_path, serde_json::to_string_pretty(&info)?)
+            .with_context(|| format!("failed to write {}", info_path.display()))
+    }
 }
 
-/// WebView 版のゲームのデータ (runtime の `game/` になるもの) を作る。
-///
-/// Web の静的ビルドに、runtime が読むゲームの情報と、WebView の検証ページを足す。
-/// 検証ページは実際のゲームの wasm を WebView がコンパイルできるかも見るので、その写しも添える。
-fn build_webview_game_data(project: &Project, out_dir: &Path, toolchain: &str) -> Result<()> {
-    build_web(project, out_dir)?;
-    write_game_info(project, out_dir, toolchain)?;
-
-    let probe_dir = out_dir.join(PROBE_DIR);
-    assets::extract::<Probe>(&probe_dir)?;
-    let wasm = runtime::placed_wasm(project);
-    std::fs::copy(&wasm, probe_dir.join("game.wasm"))
-        .with_context(|| format!("failed to copy {}", wasm.display()))?;
-
-    Ok(())
+fn recreate_dir(dir: &Path) -> Result<()> {
+    if dir.exists() {
+        std::fs::remove_dir_all(dir)
+            .with_context(|| format!("failed to remove {}", dir.display()))?;
+    }
+    std::fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))
 }
 
-/// runtime が読むゲームの情報 (ウィンドウのタイトルなど) を書く。
-///
-/// `toolchain` はどのツールチェインで組み立てたか (runtime は読まない。不具合の報告で版を知るため)。
-fn write_game_info(project: &Project, out_dir: &Path, toolchain: &str) -> Result<()> {
-    let info = serde_json::json!({
-        "name": project.name,
-        "title": project.name,
-        "version": project.version.as_deref().unwrap_or("0.1.0"),
-        "toolchain": toolchain,
-    });
-    let info_path = out_dir.join(GAME_INFO_FILE);
-    std::fs::write(&info_path, serde_json::to_string_pretty(&info)?)
-        .with_context(|| format!("failed to write {}", info_path.display()))
+fn copy_file(from: &Path, to: &Path) -> Result<()> {
+    std::fs::copy(from, to)
+        .map(|_| ())
+        .with_context(|| format!("failed to copy {} to {}", from.display(), to.display()))
 }

@@ -6,6 +6,7 @@
 #
 #   bin/biwa[.exe]                                         ← そのホストの CLI
 #   toolchains/<toolchain>/runtime/<runtime-id>/biwa-runtime[.exe]   ← 全ターゲットの runtime (6 種類)
+#   toolchains/<toolchain>/runtime/web/                    ← ビルド済みの Web runtime (Web 版・WebView 版の土台)
 #
 # 全ターゲットの runtime を入れるのは、どの OS の上でも全 OS 向けの配布物を作れるようにするため。
 # 成果物は `biwa-toolchain-<host>` (中身は `biwa-<toolchain>-<host>.{tar.gz,zip}`)。
@@ -21,6 +22,9 @@ jobs:
 
   runtime-webview:
     uses: ./.github/workflows/runtime-webview.yml
+
+  runtime-web:
+    uses: ./.github/workflows/runtime-web.yml
 
   cli:
     strategy:
@@ -89,7 +93,7 @@ jobs:
           if-no-files-found: error
 
   bundle:
-    needs: [runtime-native, runtime-webview, cli]
+    needs: [runtime-native, runtime-webview, runtime-web, cli]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -115,6 +119,8 @@ jobs:
               cp artifacts/biwa-runtime-$id/* "$dir/"
               chmod +x "$dir"/*
             done
+            mkdir -p "$root/toolchains/$toolchain/runtime/web"
+            cp -R artifacts/biwa-runtime-web/. "$root/toolchains/$toolchain/runtime/web/"
             name="biwa-$toolchain-$host"
             if [ "$host" = windows-x86_64 ]; then
               (cd "$root" && zip -qr "$GITHUB_WORKSPACE/out/$name.zip" .)

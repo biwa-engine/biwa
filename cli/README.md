@@ -5,8 +5,8 @@
 Biwa でゲームを作るのに必要なもの (コンパイラ・エンジン・標準ライブラリ) は
 すべてこのバイナリ (とツールチェインの runtime) が持っている。
 `biwa dev` と打てばゲームが動くところまで行けることを目標とする。
-既定のネイティブの runtime で開発・デスクトップ版のビルドをするなら Node.js も要らない
-(Web 版の確認とビルド、WebView 版のビルドには今は Node.js が要る。いずれ要らなくする)。
+開発 (既定のネイティブの runtime) と配布物のビルド (どの形態も) に Node.js は要らない
+(`biwa dev --platform web` だけはまだ要る。いずれ要らなくする)。
 デスクトップ版のビルド (`biwa build`) も Rust などのビルド環境を要らない。
 OS ごとのエンジン本体 (runtime) は Biwa の CI がビルドしておき、
 `biwa build` はそれにゲームのデータを添えて組み立てるだけだからである (後述)。
@@ -97,26 +97,27 @@ biwa build --platform web                   # → dist/web/
 - **ネイティブ** (`windows` / `macos` / `linux`、既定): `engine/desktop-rust/`。
   wasm を wasmtime で動かし、wgpu で描く。ゲームのデータは wasm とアセットだけ (Node.js は要らない)。
 - **WebView** (`windows-webview` / `macos-webview` / `linux-webview`): `engine/desktop-tauri/`。
-  Web の静的ビルド (`vite build`) を OS の WebView で表示する。
+  Web 版と同じもの (ビルド済みの Web runtime + ゲームのデータ) を OS の WebView で表示する。
 
 コード生成のターゲットは `wasm` に固定している。
 
 やることは順に:
 
-1. **(デスクトップ版のみ) runtime を探す** — 時間のかかるビルドの前に、
-   指定された OS の runtime が揃っているかを確かめる (下記)。
-2. **同梱物を揃える** — `biwa dev` の 1. と同じ (std とエンジンの展開。エンジンは Web 版・WebView 版のときだけ)。
-   ただし `assets/` のリンクは張らない (5. でコピーする)。
-3. **ビルドする** / **生成物をエンジンに渡す** — `biwa dev` の 2.〜3. と同じ。
-4. **(Web 版・WebView 版のみ) 静的ビルドする** — `.biwa_runtime/` で `vite build --base ./` を走らせる。
-   - `base` が `./` なので、出力はどこに置いても動く
-     (Web のサブディレクトリでも、デスクトップの WebView の独自スキームでも)。
-   - Vite が出すもの (JS・wasm・Worker) は `_biwa/` に入る
-     (`engine/nodejs/vite.config.ts` の `build.assetsDir`)。
-     既定の `assets/` だと、パッケージの `assets/` を公開する位置とぶつかるため。
-5. **(Web 版・WebView 版のみ) アセットをコピーする** — `assets/` を出力の `assets/` へ丸ごとコピーする。
-   配布物は自己完結していなければならないので、リンクにはしない。
-6. **(デスクトップ版のみ) 組み立てる** — 下記。
+1. **runtime を探す** — 時間のかかるビルドの前に、指定された形態の runtime がツールチェインに揃っているかを
+   確かめる (下記)。Web 版と WebView 版はビルド済みの Web runtime (`<toolchain>/runtime/web/`) を使う。
+2. **std を揃えてビルドする** — `biwa dev` と同じ。出力は `.biwa_build/wasm/<package>.wasm`。
+3. **ゲームのデータを作る** — どれも `game.wasm` (2. の出力の写し)・`assets/` のコピー・`biwa-game.json`
+   (名前・タイトル・版・`buildId` (wasm の内容から決まる値)・ツールチェインの名前)。
+   - Web 版: ビルド済みの Web runtime を写した上に置き、それがそのまま `dist/web/` になる。Web runtime はゲームを
+     焼き込まず、ページの横の `biwa-game.json` と `game.wasm` を実行時に読む (`engine/nodejs/src/game/runtime-entry.ts`)。
+     `base` が `./` なので、出力はどこに置いても動く。
+   - WebView 版: Web 版と同じものに検証ページを足す (`.biwa_build/game-data/webview/`)。
+   - ネイティブ版: `game.wasm`・`assets/`・`biwa-game.json` だけ (`.biwa_build/game-data/native/`)。
+   - 配布物は自己完結していなければならないので、アセットはリンクではなくコピーにする。
+4. **(デスクトップ版のみ) 組み立てる** — 下記。
+
+Vite (Node.js) は使わない。Web runtime は Biwa の CI (`.github/workflows/runtime-web.yml`) がエンジンの JS を
+1 度だけビルドしたもので、ゲームを作る人の手元ではビルドしない。
 
 `--platform web` の出力 (`dist/web/`) は静的ファイルなので、そのまま HTTP で配信できる。
 ただし wasm の実行に `SharedArrayBuffer` が要るので、配信側で
@@ -265,12 +266,11 @@ repository はパッケージに 1 つしか持てず、hub 側にもそれを�
     deps/std/                      ← CLI が用意する依存パッケージ
     wasm/<pkg>.wasm                ← biwac の出力 (--target wasm)
     typescript/{<pkg>.ts, std.ts}  ← biwac の出力 (--target typescript)
-  .biwa_runtime/                   ← エンジン (Vite プロジェクト) の展開先
+    game-data/{native,webview}/    ← デスクトップ版の game/ の元 (biwa build)
+  .biwa_runtime/                   ← エンジン (Vite プロジェクト) の展開先 (biwa dev --platform web のみ)
     public/assets → ../../assets   ← 上の assets/ へのシンボリックリンク (biwa dev)
     src/engine/{vm,api}/*.ts       ← kernel と syscall の実装
     src/game/{game.wasm, entry.ts} ← 配られた生成物 (typescript なら *.ts)
-    dist-game-native/              ← ネイティブ版の game/ の元 (biwa build)
-    dist-game/                     ← WebView 版の game/ の元 (biwa build)
   dist/
     windows/                       ← biwa build --platform windows の出力
       <name>/{<name>.exe, game/}
@@ -384,8 +384,8 @@ macOS の .app に入れるアイコンも `include_bytes!` で焼き込む (`sr
 - `biwa new <package>`
   `<package>/biwa-package.json` と `<package>/src/main.biwa` を作る。
 - `biwa build` の残り
-  runtime の同梱 (または初回のダウンロード)、Node.js を不要にすること
-  (エンジンの JS をビルド済みにする)、ゲームごとのアイコン・ウィンドウの設定、
+  runtime の配布 (GitHub Releases・インストールスクリプト・`biwa` 自身による更新)、
+  `biwa dev --platform web` から Node.js を外すこと (CLI に HTTP サーバを内蔵する)、ゲームごとのアイコン・ウィンドウの設定、
   macOS の Developer ID での署名・公証、Windows のコード署名、
   モバイル向けの出力 ([`docs/desktop-build.md`](../docs/desktop-build.md) §5)。
 - アセットの検査と選別

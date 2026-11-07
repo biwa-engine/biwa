@@ -8,7 +8,7 @@ runtime は 2 種類ある (2026-11-02 から)。
 | `--platform`                                          | runtime                                                 | `game/` の中身          |
 | ----------------------------------------------------- | ------------------------------------------------------- | ----------------------- |
 | `windows` / `macos` / `linux` (既定の `desktop`)      | **ネイティブ** (`engine/desktop-rust`。wasmtime + wgpu) | `game.wasm` + `assets/` |
-| `windows-webview` / `macos-webview` / `linux-webview` | WebView (`engine/desktop-tauri`。Tauri)                 | Web の静的ビルド (Vite) |
+| `windows-webview` / `macos-webview` / `linux-webview` | WebView (`engine/desktop-tauri`。Tauri)                 | ビルド済みの Web runtime + `game.wasm` + `assets/` (Web 版と同じ) |
 
 ネイティブの runtime の中身と段階ごとの記録は `engine/desktop-rust/README.md` にある。
 この文書の §2 以降の WebView の話 (検証ページ・独自スキーム・localhost) は WebView 版だけのものである。
@@ -90,21 +90,24 @@ biwa build --platform web               → dist/web/
 
 ### `biwa build` (`cli/src/build.rs`, `desktop.rs`, `toolchain.rs`)
 
+どの形態も、ツールチェインのビルド済みの runtime にゲームのデータを添えるだけで、Node.js (Vite) は使わない
+(2026-11-07 から。それまで Web 版と WebView 版はゲームごとに `vite build` していた)。
+
 ネイティブ版:
 
-1. コンパイルし、wasm (`.biwa_runtime/game/game.wasm`) とパッケージの `assets/`、`biwa-game.json` を
-   ゲームのデータにする (`.biwa_runtime/dist-game-native/`)。Node.js (Vite) は使わない。
+1. コンパイルし、wasm (`.biwa_build/wasm/<package>.wasm`) を `game.wasm` として、パッケージの `assets/`、
+   `biwa-game.json` と合わせてゲームのデータにする (`.biwa_build/game-data/native/`)。
 2. OS ごとに、ビルド済みの runtime にゲームのデータを添えて組み立て、固める (下の表)。
 
-WebView 版:
+Web 版 (`dist/web/`) と WebView 版:
 
-1. コンパイルし、Web の静的ビルド (`vite build`) を作る。
-   - `base` は `./`。Vite が出すもの (JS・wasm・Worker) は `_biwa/` に置く
-     (`engine/nodejs/vite.config.ts` の `build.assetsDir`。既定の `assets/` はパッケージの `assets/` と重なるため)。
-   - パッケージの `assets/` は出力へコピーする (開発時のようなリンクにはしない)。
-2. デスクトップ版では、それに `biwa-game.json` と検証ページ (`__biwa_probe/`、ゲームの wasm の写し付き) を足して
-   ゲームのデータにする (`.biwa_runtime/dist-game/`)。
-3. OS ごとに、ビルド済みの runtime にゲームのデータを添えて組み立て、固める。
+1. ビルド済みの Web runtime (`<toolchain>/runtime/web/`。`engine/nodejs` を `npm run build:runtime` したもの) を
+   写し、`game.wasm`・`assets/`・`biwa-game.json` を添える。Web runtime はゲームを焼き込まず、ページの横の
+   `biwa-game.json` と `game.wasm` を実行時に読む (`engine/nodejs/src/game/runtime-entry.ts`)。
+   - Web runtime の `base` は `./`、Vite が出すもの (JS・Worker) は `_biwa/` にある
+     (`engine/nodejs/vite.config.ts` の `runtime` モード。既定の `assets/` はパッケージの `assets/` と重なるため)。
+2. WebView 版では、それに検証ページ (`__biwa_probe/`、ゲームの wasm の写し付き) を足してゲームのデータにする
+   (`.biwa_build/game-data/webview/`)。OS ごとに、ビルド済みの runtime にゲームのデータを添えて組み立て、固める。
 
 | OS      | `dist/<os>/` にできるもの                                                      |
 | ------- | ------------------------------------------------------------------------------ |
@@ -133,18 +136,18 @@ WebView 版は `dist/<os>-webview/` に、`<name>-<os>-webview-<arch>.{zip,tar.g
     biwa-game.json            ← runtime が読むゲームの情報 (無くても動く。いまは title だけ読む)
 ```
 
-WebView 版: `game/` は Web の静的ビルド (`biwa build --platform web` の `dist/web/` と同じもの) に、
-runtime 用の 2 つを足しただけである。
+WebView 版: `game/` は Web 版 (`biwa build --platform web` の `dist/web/`) と同じものに、検証ページを足しただけである。
 
 ```
 <name>/                       (macOS は <name>.app/Contents/)
   <name>[.exe]                ← runtime (biwa-runtime を改名したもの。macOS は MacOS/<name>)
   game/                       (macOS は Resources/game/)
-    index.html                ← runtime が最初に開くページ (必須)
-    _biwa/                    ← エンジンの JS・Worker・ゲームの wasm (Vite の出力。名前にハッシュが付く)
+    index.html                ← runtime が最初に開くページ (必須。Web runtime)
+    _biwa/                    ← エンジンの JS・Worker (Web runtime。名前にハッシュが付く)
+    favicon.svg ほか           ← エンジンの public/ の中身 (Web runtime)
+    game.wasm                 ← ゲーム (必須)
     assets/                   ← パッケージの assets/ のコピー
-    favicon.svg ほか           ← エンジンの public/ の中身
-    biwa-game.json            ← runtime が読むゲームの情報 (無くても動く)
+    biwa-game.json            ← ゲームの情報 (必須。Web runtime が名前と buildId を読む)
     __biwa_probe/             ← WebView の検証ページ (--probe で開く。無くても動く)
       index.html, probe.js, worker.js, game.wasm
 ```
@@ -202,6 +205,7 @@ CLI と runtime は「ツールチェイン」という単位で揃えて使う 
     webview-windows-x86_64/biwa-runtime.exe   ← WebView (runtime-webview.yml)
     webview-macos-universal/biwa-runtime
     webview-linux-x86_64/biwa-runtime
+    web/                                      ← ビルド済みの Web runtime (runtime-web.yml。静的ファイル)
 ```
 
 `biwa build` は CLI と同じ名前のツールチェインの runtime を使う。実験のために別のものを使うときは
@@ -245,7 +249,7 @@ runtime だけの workflow (`runtime-native.yml` / `runtime-webview.yml`) も pu
 ### ゲームをビルドする人
 
 - `biwa` (リポジトリの `cli/` で `cargo build --release`。いまは手元でビルドする)。
-- Node.js (npm 付き)。WebView 版と Web 版の静的ビルドに使う (ネイティブ版だけなら要らない)。
+- Node.js は要らない (どの形態もビルド済みの runtime を使う。`biwa dev --platform web` だけはまだ要る)。
 - ビルド済みの runtime (上記)。
 - **Rust も C++ Build Tools も Xcode も要らない** (runtime をビルドしないため)。
 - `biwa build` はリンクを作らないので、Windows の開発者モードは要らない (`biwa dev` は `assets/` のリンクに要る)。
@@ -456,7 +460,7 @@ rcodesign の `verify` は ad-hoc の空の CMS を問題として報告する�
   (`engine/desktop-rust/README.md`)。
 
 - runtime の入手: `biwa` に同梱するか、版の合うものを初回にダウンロードする (GitHub Releases など)。
-- エンジンの JS をビルド済みにし、開発サーバを `biwa` に内蔵する (Node.js を不要にする。メモの段階 3)。
+- 開発サーバを `biwa` に内蔵する (`biwa dev --platform web` から Node.js を不要にする)。エンジンの JS のビルド済み化は済んだ。
 - ゲームごとのアイコン・ウィンドウの大きさを `biwa-package.json` などから与える。
   - Windows の exe のアイコンは `editpe` (純 Rust) で差し替えられる見込み。いまは runtime の既定のアイコン。
   - macOS は `Resources/icon.icns` を差し替えるだけ。いまは `engine/desktop-tauri/src-tauri/icons/icon.icns`。

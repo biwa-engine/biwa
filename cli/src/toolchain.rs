@@ -20,7 +20,9 @@
 //! ```
 //!
 //! `<runtime-id>` は `native-windows-x86_64` / `native-macos-universal` / `native-linux-x86_64` /
-//! `webview-windows-x86_64` / `webview-macos-universal` / `webview-linux-x86_64`。
+//! `webview-windows-x86_64` / `webview-macos-universal` / `webview-linux-x86_64`、
+//! それと `web` (ビルド済みの Web runtime。実行ファイルではなく静的ファイルのディレクトリで、
+//! Web 版と WebView 版のゲームのデータの土台になる)。
 //! CI の成果物 `biwa-runtime-<runtime-id>` と揃えてある。
 //!
 //! 使うツールチェインは `--toolchain <NAME>`、環境変数 `BIWA_TOOLCHAIN`、この CLI のコミットの順に決める
@@ -123,6 +125,9 @@ impl DesktopTarget {
     }
 }
 
+/// ビルド済みの Web runtime の id (`<toolchain>/runtime/web/`)。
+pub const WEB_RUNTIME_ID: &str = "web";
+
 /// この CLI をビルドしたコミット (`build.rs`)。既定のツールチェインの名前。
 pub const COMMIT: &str = env!("BIWA_COMMIT");
 
@@ -178,6 +183,22 @@ impl Toolchain {
         if path.is_file() {
             return Ok(path);
         }
+        let what = format!("the Biwa runtime for {}", target.name());
+        bail!(self.missing(&what, &path, &target.runtime_id()))
+    }
+
+    /// ビルド済みの Web runtime (`engine/nodejs` の `npm run build:runtime` の出力) のディレクトリ。
+    /// Web 版と WebView 版のゲームのデータの土台になる。
+    pub fn web_runtime(&self) -> Result<PathBuf> {
+        let dir = self.dir.join("runtime").join(WEB_RUNTIME_ID);
+        if dir.join("index.html").is_file() {
+            return Ok(dir);
+        }
+        bail!(self.missing("the Biwa web runtime", &dir, WEB_RUNTIME_ID))
+    }
+
+    /// runtime が見つからないときのエラーの文。
+    fn missing(&self, what: &str, path: &Path, runtime_id: &str) -> String {
         let installed = self.installed();
         let hint = if self.name == COMMIT && self.name.ends_with("-dirty") {
             "\nThis CLI was built from uncommitted changes, so no released toolchain matches it; \
@@ -185,14 +206,12 @@ impl Toolchain {
         } else {
             ""
         };
-        bail!(
-            "the Biwa runtime for {} is not found at {}\n\
-             (extract a Biwa release archive into {}, or place the `biwa-runtime-{}` build artifact there)\n\
+        format!(
+            "{what} is not found at {}\n\
+             (extract a Biwa release archive into {}, or place the `biwa-runtime-{runtime_id}` build artifact there)\n\
              installed toolchains: {}{hint}",
-            target.name(),
             path.display(),
             self.home_display(),
-            target.runtime_id(),
             if installed.is_empty() {
                 "(none)".to_string()
             } else {
