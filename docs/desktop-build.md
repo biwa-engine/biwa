@@ -27,7 +27,8 @@
   (wgpu が見えていないウィンドウには描かないため。`engine/desktop-rust/README.md` の段 6) → 直した。再確認待ち。
 - **実機の再確認** (2026-11-07): macOS は白い画面が直り、中身の 16:9 と全画面を確認。Windows はウィンドウの縦横比の固定と
   全画面を確認。Linux は中身の 16:9 と全画面を確認。残った 3 件 (縮めたときの Link の文字のはみ出し、macOS のウィンドウの
-  縦横比、Windows の起動時の白い矩形) を直した (`engine/desktop-rust/README.md` の段 6)。再確認待ち。
+  縦横比、Windows の起動時の白い矩形) を直した (`engine/desktop-rust/README.md` の段 6)。
+- **再々確認** (2026-11-07): Windows の白い矩形と macOS の縦横比は解消。縮めたときに Message Window の行間が縮まない件を直した。
 - Windows のリリースビルドは PowerShell などから起動すると、そのコンソールに `[biwa]` のログ (使っている GPU など) が出る。
 
 状況 (WebView):

@@ -131,6 +131,9 @@ impl TextShaper for TextSystem {
             builder.set_line_break_override(Some(LINE_BREAKS));
             builder.push_default(StyleProperty::FontFamily(FontFamily::Source(DEFAULT_FAMILIES.into())));
             builder.push_default(StyleProperty::Locale(Some(self.japanese.clone())));
+            // 段落の文字の大きさ。これを渡さないと parley の既定 (16 物理ピクセル) になり、
+            // 縮めて描くと行の高さがそこで止まって縮まなくなる。
+            builder.push_default(StyleProperty::FontSize(paragraph.base_size));
             builder.push_default(StyleProperty::LineHeight(match paragraph.line_height {
                 biwa_player_core::text::LineHeight::Normal => LineHeight::MetricsRelative(1.0),
                 biwa_player_core::text::LineHeight::Relative(r) => LineHeight::FontSizeRelative(r),
@@ -266,7 +269,12 @@ mod tests {
     }
 
     fn paragraph(width: f32) -> ParagraphStyle {
-        ParagraphStyle { max_width: width, line_height: biwa_player_core::text::LineHeight::Relative(1.8), center: false }
+        ParagraphStyle {
+            max_width: width,
+            line_height: biwa_player_core::text::LineHeight::Relative(1.8),
+            center: false,
+            base_size: 16.0,
+        }
     }
 
     #[test]
@@ -346,6 +354,18 @@ mod tests {
             t.shape(&[span("あいう", 20.0)], ParagraphStyle { center: true, ..paragraph(200.0) });
         let left = centered.glyphs.first().unwrap().x;
         assert!((left - (200.0 - free.width) / 2.0).abs() < 1.0, "left {left}");
+    }
+
+    #[test]
+    fn line_height_follows_the_paragraph_size() {
+        let mut t = TextSystem::new();
+        let lines = |t: &mut TextSystem, base: f32| {
+            t.shape(&[span("あいう\nかきく", 4.0)], ParagraphStyle { base_size: base, ..paragraph(1000.0) }).height
+        };
+        // 段落の大きさが文字より大きいと、行の高さはそれで決まる (CSS の strut)。
+        assert!((lines(&mut t, 16.0) - 16.0 * 1.8 * 2.0).abs() < 0.5, "{}", lines(&mut t, 16.0));
+        // 縮めて描くとき (段落の大きさも同じ比で縮む) は、行の高さも同じ比で縮む。
+        assert!((lines(&mut t, 4.0) - 4.0 * 1.8 * 2.0).abs() < 0.5, "{}", lines(&mut t, 4.0));
     }
 
     #[test]

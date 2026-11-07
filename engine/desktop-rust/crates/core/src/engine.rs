@@ -17,7 +17,7 @@ use crate::geometry::{Color, Rect, Viewport};
 use crate::image::{ImageHandle, ImageRequest, normalize_asset_path};
 use crate::layout::{LayoutBox, LayoutTree, Layouter};
 use crate::syscall::{SceneStart, Syscall, UiId};
-use crate::text::{LineHeight, ParagraphStyle, ShapedText, TextShaper, TextSpan, TextStyle};
+use crate::text::{DEFAULT_FONT_SIZE, LineHeight, ParagraphStyle, ShapedText, TextShaper, TextSpan, TextStyle};
 use crate::ui::{Background, ElementKind, LayoutSlot, SceneOutputs, UiAction, UiError, UiTree};
 
 /// Message Window の文字の行の高さ (文字の大きさに対する倍率)。TypeScript 版の `line-height: 1.8` と揃える。
@@ -432,7 +432,12 @@ impl Engine {
             let slack = scale.max(1.0);
             let shaped = shaper.shape(
                 &spans,
-                ParagraphStyle { max_width: area.width + slack, line_height: text.line_height, center: text.center },
+                ParagraphStyle {
+                    max_width: area.width + slack,
+                    line_height: text.line_height,
+                    center: text.center,
+                    base_size: DEFAULT_FONT_SIZE * scale,
+                },
             );
             self.text_shapes.insert(
                 id,
@@ -474,7 +479,12 @@ impl Engine {
                 })
                 .collect();
             let shaped =
-                shaper.shape(&spans, ParagraphStyle { max_width: area.width, line_height: LINE_HEIGHT, center: false });
+                shaper.shape(&spans, ParagraphStyle {
+                    max_width: area.width,
+                    line_height: LINE_HEIGHT,
+                    center: false,
+                    base_size: DEFAULT_FONT_SIZE * s,
+                });
             self.message_shapes.insert(
                 id,
                 ShapeCache { generation: content.generation(), width: area.width.to_bits(), scale: s.to_bits(), shaped },

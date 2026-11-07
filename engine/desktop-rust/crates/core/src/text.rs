@@ -36,7 +36,14 @@ pub struct ParagraphStyle {
     pub line_height: LineHeight,
     /// 各行を `max_width` の中で中央に寄せる (Link・ボタンの文字)。
     pub center: bool,
+    /// 段落そのものの文字の大きさ (物理ピクセル)。CSS の親要素の font-size にあたり、
+    /// 行の高さはこの大きさの行の高さを下回らない (CSS の strut と同じ)。
+    pub base_size: f32,
 }
+
+/// CSS の既定の文字の大きさ (論理ピクセル)。[`ParagraphStyle::base_size`] は普通これに拡大率を掛けたもの。
+/// TypeScript 版は文字の書式を断片にだけ付け、段落 (要素) の font-size はブラウザの既定のままなので、それに合わせる。
+pub const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 /// 行の高さ。
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -20,7 +20,7 @@
 
 use biwa_player_core::geometry::{Rect, Viewport};
 use biwa_player_core::layout::{BoxStyle, Flow, LayoutBox, LayoutNode, LayoutTree, Layouter};
-use biwa_player_core::text::{ParagraphStyle, TextShaper, TextSpan, TextStyle};
+use biwa_player_core::text::{DEFAULT_FONT_SIZE, ParagraphStyle, TextShaper, TextSpan, TextStyle};
 use biwa_player_core::ui::UiSize;
 use taffy::prelude::*;
 use taffy::{BoxSizing, compute_leaf_layout};
@@ -75,7 +75,12 @@ impl Layouter for TaffyLayouter {
                     .collect();
                 let shaped = shaper.shape(
                     &spans,
-                    ParagraphStyle { max_width: max_width * scale, line_height: text.line_height, center: false },
+                    ParagraphStyle {
+                        max_width: max_width * scale,
+                        line_height: text.line_height,
+                        center: false,
+                        base_size: DEFAULT_FONT_SIZE * scale,
+                    },
                 );
                 Size {
                     width: known.width.unwrap_or((shaped.width / scale).ceil()),
