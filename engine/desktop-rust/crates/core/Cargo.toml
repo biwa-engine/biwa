@@ -1,0 +1,9 @@
+[package]
+name = "biwa-player-core"
+description = "Engine logic of the Biwa native player: syscall model, message windows, clock, and the interfaces of text and drawing."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# 外部の crate に依存しない。ここに具体的な crate (parley・wgpu ...) が入ったら切り分けの失敗である。
+[dependencies]

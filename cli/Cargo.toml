@@ -7,9 +7,6 @@ edition = "2024"
 anyhow = "1.0.104"
 biwac_base = { version = "0.1.0", path = "../compiler/src/biwac_base" }
 biwac_driver = { path = "../compiler/src/biwac_driver" }
-# `--target` の候補を出すためだけに要る。
-# どの feature でどのバックエンドが入るかを知っているのはこの crate である。
-biwac_generator = { path = "../compiler/src/biwac_generator" }
 # `biwa publish` が biwa-package.json (バージョン・説明・依存) をフルに読むのに使う。
 # `Project` (project.rs) は名前しか見ないので、これとは別に要る。
 biwac_metadata_loader = { path = "../compiler/src/biwac_metadata_loader" }
@@ -19,3 +16,10 @@ notify = "8.2.0"
 rust-embed = { version = "8.12.0", features = ["include-exclude"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+# `biwa build` が配布物を固める (Windows / macOS は zip、Linux は tar.gz)。
+zip = { version = "9.0.2", default-features = false, features = ["deflate"] }
+tar = "0.4.46"
+flate2 = "1.1.10"
+# `biwa build` が組み立てた macOS の .app に ad-hoc 署名する (どの OS の上でも)。
+# 公証 (notarize) は使わないので既定の feature は切る。
+apple-codesign = { version = "0.29.0", default-features = false }

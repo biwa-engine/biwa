@@ -3,15 +3,27 @@
 Biwa エンジンの基盤エンジン実装 (Node.js 版)。
 描画は PixiJS (WebGL) と DOM、ビルドと開発サーバは Vite。
 
-このディレクトリは `biwa` コマンドに同梱され、`biwa dev` 実行時に
-プロジェクトの `.biwa_runtime/` へ展開される。Vite のルートはそこになる。
-エンジン単体でも `npm run dev` で起動でき、その場合はゲームが無い状態
-(`src/game/entry.ts` のプレースホルダ) で立ち上がる。
+これを Vite でビルドしたもの (`npm run build:runtime`、出力は `dist-runtime/`) が **Web runtime** である。
+ゲームを焼き込まない静的ファイル一式で、Biwa の CI (`.github/workflows/runtime-web.yml`) がビルドしてツールチェインに入れ、
+`biwa build --platform web` (と WebView 版) がゲームのデータを添えて配る。`biwa dev --platform web` も同じものを
+CLI に内蔵した HTTP サーバで配る。ゲームを作る人の手元で Node.js / Vite は要らない。
+
+ゲームは、ページの横に置かれた `biwa-game.json` と `game.wasm` を実行時に読む (`src/game/entry.ts`)。
+
+### エンジンを開発するとき
+
+```sh
+npm run watch:runtime                                   # 変更のたびに dist-runtime/ を作り直す
+biwa dev --platform web --web-runtime <this>/dist-runtime   # 別の端末で、ゲームのパッケージの中から
+```
+
+`biwa dev` は `dist-runtime/` も監視し、作り直されたらページを読み直させる (HMR は無く、ページ全体を読み直す)。
 
 ## ゲームコードとの境界
 
 コンパイラは Biwa のコードを **wasm または TypeScript** に変換する。
-ゲーム側の入口は `biwa dev` が生成するスタブ `src/game/entry.ts` を経由して呼ばれる。
+ゲーム側の入口は `src/game/entry.ts` を経由して呼ばれる (いまは wasm だけ。TypeScript ターゲット (deprecated) は
+読み込む経路が無く、`main.ts` の `kind: "typescript"` の分岐は残っているだけである)。
 起動の流れはどちらのターゲットでも同じである:
 
 1. `__biwa_entrypoint` (= `fn main()`) を呼ぶ。ランタイムが名前で呼ぶゲーム側の関数はこれだけである。ゲーム側がその中で `Window[S]` を組み立てて
@@ -37,8 +49,7 @@ src/main.ts
 
 | 規約                              | 実体                                                                      |
 | --------------------------------- | ------------------------------------------------------------------------- |
-| `src/game/entry.ts`               | `biwa dev` が生成するスタブ。default export が `BiwaBackend`              |
-| `@biwa/engine/<path>`             | std から参照されるエンジン実装。Vite alias で解決 (TypeScript ターゲット) |
+| `src/game/entry.ts`               | ページの横の `biwa-game.json` と `game.wasm` を読む。default export が `BiwaBackend` |
 | `biwa:engine` / `biwa:runtime`    | wasm の import 名前空間 (wasm ターゲット)                                 |
 | `BiwaGame` (`src/engine/game.ts`) | `std::game::Game` に対応する構造                                          |
 
@@ -195,9 +206,8 @@ QuickJS + ASYNCIFY との比較、セーブ・ロードの方針) は
 アセットはゲームのパッケージ直下の `assets/` に置かれる (`src/` の兄弟)。
 `.biwa` が書くパスは**その `assets/` を基準とした相対パス**である。
 
-`biwa dev` はそのディレクトリを `.biwa_runtime/public/assets` へリンクする。
-`public/` の中身はそのまま URL のルートに出るので、
-エンジンから見たアセットの位置は常にこうなる。
+`biwa build` は配布物の `assets/` にそれをコピーし、`biwa dev --platform web` は `/assets/` で配る。
+どちらもページの横にあるので、エンジンから見たアセットの位置は常にこうなる。
 
 ```
 .biwa が書いたパス  →  `${import.meta.env.BASE_URL}assets/<path>`
@@ -234,7 +244,7 @@ src/
   components/
     TextBox.ts          # メッセージウィンドウ。断片の列と文字送り。MessageArea ごとに 1 つ
   game/
-    entry.ts            # `biwa dev` が生成して上書きする (リポジトリのものはプレースホルダ)
+    entry.ts            # ゲームの読み込み口 (`biwa-game.json` と `game.wasm` を実行時に読む)
 ```
 
 ## Message Window と Content API

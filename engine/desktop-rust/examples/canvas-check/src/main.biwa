@@ -1,0 +1,79 @@
+// ネイティブのプレイヤーの canvas の確かめ (`engine/desktop-rust/README.md` の段 4)。
+//
+// - Canvas は画面の左半分だけにする。はみ出したものは Canvas の外に描かれてはいけない。
+// - marker.png は左半分が赤・右半分が青で、上端に白い帯がある (向きが分かる)。
+//   1 ページ目: 中央に回転なし。
+//   2 ページ目: 30 度回す。biwa の角度は正が反時計回りなので、白い帯は右上がりになる。
+//   3 ページ目: 右へ動かして Canvas の右端からはみ出させる (はみ出した分は切れる)。
+// - レイヤー: panel (レイヤー 0) の上に marker (レイヤー 1)。作った順と逆にしてある。
+
+import std::string::String;
+import std::collections::Vec;
+import std::game::Game;
+import std::game::ui::GameWindow;
+import std::game::config::Config;
+import std::game::config::DeveloperConfig;
+import std::game::image::Image;
+import std::game::color::Color;
+import std::game::color::Alpha;
+import std::time::Duration::ms;
+import std::convert::Into;
+import std::game::ui::UiElement;
+import std::game::ui::Window;
+import std::game::ui::Page;
+import std::game::ui::Canvas;
+import std::game::ui::MessageArea;
+import std::game::ui::Layers;
+import std::game::ui::ScenePage;
+import std::game::ui::SceneStartButton;
+import std::game::ui::vw;
+import std::game::ui::vh;
+import std::game::ui::percent;
+import std::game::canvas::Ch;
+import std::game::canvas::Cx::cx;
+import std::game::canvas::Cy::cy;
+import std::game::canvas::Cw::cw;
+import std::game::canvas::Ch::ch;
+import std::game::canvas::Theta::theta;
+
+struct CheckState {}
+
+type CheckGame = Game[CheckState];
+type CheckUi = UiElement[CheckState];
+
+fn main() {
+  let canvas = Canvas::new().width(percent(50.0)).height(percent(100.0));
+  let message_area = MessageArea::new().
+      width(percent(100.0)).
+      height(percent(20.0)).
+      margin_top(vh(80.0)).
+      padding_top(percent(1.0)).
+      padding_left(percent(2.0)).
+      background_color(Color::new(0, 0, 0, 191));
+  let body: CheckUi = Layers::new(Vec::of(canvas.into())).push(message_area.into()).into();
+  let scene_page = ScenePage::new(canvas.canvas_id(), message_area.message_area_id(), Vec::of(body));
+  let start: CheckUi = SceneStartButton::new(new_game).
+      width(vw(30.0)).
+      height(vh(8.0)).
+      background_color(Color::green()).
+      text("start").
+      into();
+  Window::new(opening, scene_page, Vec::of(Page::new("main", Vec::of(start)))).show();
+}
+
+fn new_game(window: GameWindow) -> CheckGame {
+  Game::new(window, "canvascheck", CheckState {}, Config::new(DeveloperConfig::default()))
+}
+
+scene opening(g: CheckGame) -> CheckGame {{
+    #let marker = Image::new("marker.png").
+        show_in_canvas(g.canvas(), 1, cx(0.0), cy(0.0), cw(40.0), Ch::Auto, Alpha::opaque())
+    #let panel = Image::new("panel.png").
+        show_in_canvas(g.canvas(), 0, cx(0.0), cy(0.0), cw(100.0), ch(100.0), Alpha::opaque())
+    回転なし。上端に白い帯、左が赤、右が青。 >>
+    #marker.and().rotate_and(theta(30.0)).animate_for(ms(300))
+    30 度 (反時計回り)。白い帯が右上がりになる。 >>
+    #marker.and().x_move_and(cx(45.0)).animate_for(ms(300))
+    右へ動かした。Canvas (左半分) の右端で切れる。 >>
+    #endscene g
+}}

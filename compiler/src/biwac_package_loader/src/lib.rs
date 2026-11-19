@@ -266,6 +266,9 @@ fn read_module_files(srcs: &mut SourceHolder, module_tree: &ModuleTree) {
     let mut f = File::open(&*module_tree.path).unwrap();
     let mut src = String::new();
     f.read_to_string(&mut src).unwrap();
+    // 改行を `\n` に揃える。字句解析以降は `\n` だけを改行として扱い、
+    // span も正規化後の文字列のオフセットになる (`biwac_base::normalize_newlines`)。
+    let src = biwac_base::normalize_newlines(src);
     srcs.mods.insert(
         module_tree.mod_id,
         ModSource {

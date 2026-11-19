@@ -8,11 +8,6 @@
 
     /* Bundler mode */
     "moduleResolution": "bundler",
-    "paths": {
-      // std の native TypeScript が書く論理パス。vite.config.ts の alias と対応させる。
-      // baseUrl を使わない場合、この tsconfig からの相対パスとして解決される。
-      "@biwa/engine/*": ["./src/engine/*"]
-    },
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
@@ -20,10 +15,8 @@
 
     /* Linting */
     // NOTE: 未使用シンボルの検査は有効にしない。
-    // `src/game/` にはコンパイラが生成した TypeScript が同居しており、
-    // 未使用の引数 (native 実装のスタブなど) が普通に現れるため。
-    // 生成物を型検査の対象から外すより、std とエンジン API の食い違いを
-    // ここで捕まえられるほうが価値が高い。
+    // かつて `src/game/` にコンパイラが生成した TypeScript (deprecated のターゲット) が同居しており、
+    // 未使用の引数が普通に現れたため。
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },

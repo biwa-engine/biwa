@@ -13,11 +13,18 @@ use biwac_span::Span;
 pub use error::TokenizeError;
 pub use token::{TkKind, TkKindName, Token};
 
+/// `src` は改行を `\n` に揃えたもの ([`biwac_base::normalize_newlines`]) でなければならない。
+/// 改行は `\n` だけを見る。
 pub fn lex<'src>(
     interner: &mut IdentInterner,
     file_id: ModId,
     src: &'src str,
 ) -> Result<Vec<Token<'src>>, TokenizeError> {
+    debug_assert!(
+        biwac_base::is_newline_normalized(src),
+        "source must be newline-normalized before lexing"
+    );
+
     let regions = divide_regions(file_id, src)?;
 
     let pretokens = pre_lex(file_id, src, regions)?;

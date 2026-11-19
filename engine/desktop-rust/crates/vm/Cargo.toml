@@ -1,0 +1,11 @@
+[package]
+name = "biwa-player-vm"
+description = "Runs a Biwa game (WasmGC) on wasmtime in its own thread and turns its imports into engine syscalls."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# wasmtime は差し替える見込みがほぼ無いので、公開 API に出てよい (Cargo.toml の方針の例外)。
+[dependencies]
+biwa-player-core.workspace = true
+wasmtime.workspace = true

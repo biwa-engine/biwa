@@ -1,11 +1,9 @@
-//! `biwa` バイナリに同梱する資産。
+//! `biwa` バイナリに同梱する資産 (標準ライブラリ `std` のソースと、WebView の検証ページ)。
 //!
-//! ユーザーの環境に用意させるのは Node.js だけである。
-//! エンジン (Node.js 版) と標準ライブラリ `std` はこのバイナリが持っていて、
-//! 必要になった時点でプロジェクト内に展開する。
+//! エンジン (runtime) は同梱しない。ツールチェインのビルド済みのものを使う (`toolchain.rs`)。
 //!
 //! デバッグビルドでは rust-embed が実行時にディスクから読むため、
-//! リポジトリ内のエンジンや std を編集するとそのまま反映される。
+//! リポジトリ内の std を編集するとそのまま反映される。
 //! リリースビルドではバイナリに焼き込まれる。
 
 use std::path::Path;
@@ -13,16 +11,12 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use rust_embed::RustEmbed;
 
-/// エンジン (Node.js 版) 一式。Vite プロジェクトそのもの。
+/// WebView の検証ページ。デスクトップ版のゲームのデータに同梱する (`build.rs`)。
+///
+/// runtime 本体 (`engine/desktop-tauri`) は同梱しない。CI でビルドしたものを使う (`toolchain.rs`)。
 #[derive(RustEmbed)]
-#[folder = "../engine/nodejs"]
-#[exclude = "node_modules/*"]
-#[exclude = "dist/*"]
-#[exclude = ".direnv/*"]
-#[exclude = "flake.*"]
-#[exclude = ".envrc"]
-#[exclude = "CLAUDE.md"]
-pub struct Engine;
+#[folder = "../engine/desktop-tauri/probe"]
+pub struct Probe;
 
 /// 標準ライブラリ `std` のソース。
 #[derive(RustEmbed)]

@@ -1,0 +1,16 @@
+[package]
+name = "biwa-player-render"
+description = "GPU rendering of the Biwa native player's draw lists (wgpu), with a glyph atlas (etagere)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# wgpu / etagere の型はこの crate の外に出さない。
+# 描くもの (core::draw) と、描く先のウィンドウ (raw-window-handle のトレイト) だけを受け取る。
+[dependencies]
+biwa-player-core.workspace = true
+wgpu.workspace = true
+etagere.workspace = true
+bytemuck.workspace = true
+pollster.workspace = true
+raw-window-handle.workspace = true

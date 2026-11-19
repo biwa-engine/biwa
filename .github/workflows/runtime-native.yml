@@ -1,0 +1,89 @@
+# Biwa のネイティブの runtime (engine/desktop-rust) を 3 OS でビルドする。
+#
+# runtime はゲームに依らない汎用の実行ファイルで、`biwa build --platform windows|macos|linux`
+# (既定の `desktop` も) はこれにゲームのデータ (`game.wasm` + `assets/`) を添えて配布物を組み立てる
+# (docs/biwa-prebuilt-player.md, cli/src/toolchain.rs)。
+# 成果物は `biwa-runtime-<id>` という名前で上がる。CLI と組にした配布物は release.yml が作る。
+# 単独で使うときは `~/.biwa/toolchains/<toolchain>/runtime/<id>/` に置く。
+# (WebView の runtime は runtime-webview.yml)
+name: runtime-native
+
+on:
+  workflow_dispatch:
+  # release.yml から呼ぶ (CLI と同じコミットの runtime を揃えるため)。
+  workflow_call:
+  push:
+    paths:
+      - "engine/desktop-rust/**"
+      - ".github/workflows/runtime-native.yml"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: native-windows-x86_64
+            os: windows-latest
+            file: biwa-runtime.exe
+          - id: native-macos-universal
+            os: macos-latest
+            file: biwa-runtime
+          # glibc の古い版でも動くように、なるべく古い runner でビルドする。
+          - id: native-linux-x86_64
+            os: ubuntu-22.04
+            file: biwa-runtime
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: engine/desktop-rust
+    steps:
+      - uses: actions/checkout@v4
+
+      # fontconfig はフォントを探すのに使う (リンクする)。
+      # CJK のフォントは文字の整形のテストが使う (配布物には要らない)。
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libfontconfig1-dev fonts-noto-cjk
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine/desktop-rust -> target
+
+      - name: Build (Windows / Linux)
+        if: runner.os != 'macOS'
+        shell: bash
+        run: |
+          cargo build --release -p biwa-runtime
+          mkdir -p out
+          cp target/release/${{ matrix.file }} out/
+
+      # Apple Silicon と Intel の両方で動く universal バイナリにする。
+      # 署名は `biwa build` が .app を組み立てたあとに付け直すので、ここではしない。
+      - name: Build (macOS universal)
+        if: runner.os == 'macOS'
+        run: |
+          cargo build --release -p biwa-runtime --target aarch64-apple-darwin
+          cargo build --release -p biwa-runtime --target x86_64-apple-darwin
+          mkdir -p out
+          lipo -create -output out/biwa-runtime \
+            target/aarch64-apple-darwin/release/biwa-runtime \
+            target/x86_64-apple-darwin/release/biwa-runtime
+          lipo -info out/biwa-runtime
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: biwa-runtime-${{ matrix.id }}
+          path: engine/desktop-rust/out/${{ matrix.file }}
+          if-no-files-found: error
+
+      # 成果物を上げてから試す (文字の整形のテストは OS のフォントに依るので、落ちても実機で試せるように)。
+      # 描画のテストは GPU を使わない (render のテストは計算だけ)。
+      - name: Test
+        run: cargo test --release --workspace

@@ -1,0 +1,11 @@
+[package]
+name = "biwa-player-layout"
+description = "Box layout of the Biwa native player's UI (taffy), behind core's Layouter trait."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# taffy の型はこの crate の外に出さない。外から見えるのは core::layout のトレイトの実装だけ。
+[dependencies]
+biwa-player-core.workspace = true
+taffy.workspace = true

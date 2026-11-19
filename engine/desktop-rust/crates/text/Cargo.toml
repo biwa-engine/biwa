@@ -1,0 +1,16 @@
+[package]
+name = "biwa-player-text"
+description = "Text shaping and glyph rasterization for the Biwa native player (parley + swash), behind the core text interfaces."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# parley / swash の型はこの crate の外に出さない。外から見えるのは core::text のトレイトの実装だけ。
+[dependencies]
+biwa-player-core.workspace = true
+parley.workspace = true
+swash.workspace = true
+# parley が使う ICU4X は、std のときに警告を eprintln で直に出す。日本語の分かち書きの辞書を入れていないので
+# 整形のたびに「No segmentation model ... Chinese/Japanese」が出る (改行位置には影響しない。辞書は約数 MB)。
+# `logging` を立てると `log` crate 経由になり、ロガーを置かない限り何も出ない。
+icu_provider = { version = "2", default-features = false, features = ["logging"] }
