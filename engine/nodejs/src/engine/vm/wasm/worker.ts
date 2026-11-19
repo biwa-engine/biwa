@@ -8,6 +8,7 @@
  * このファイルは Worker としてのみ読み込まれる。
  */
 
+import { checkAbi } from "./abi";
 import { SyscallChannel, type WorkerMessage } from "./bridge";
 import {
   ENGINE_NAMESPACE,
@@ -139,6 +140,8 @@ async function run(
     );
   }
   const bytes = await response.arrayBuffer();
+  // ツールチェインの合わない生成物は、分かりにくい失敗をする前に止める。
+  checkAbi(bytes);
 
   const module = await WebAssembly.compile(bytes);
 

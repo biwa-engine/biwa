@@ -1,22 +1,64 @@
-# Biwa のツールチェイン (CLI + 全ターゲットの runtime) を組み立てる。手で実行する (workflow_dispatch)。
+# Biwa のツールチェイン (CLI + 全ターゲットの runtime) を組み立て、GitHub Release として公開する。
 #
-# ツールチェインはバージョンの単位で、名前はコミットの先頭 12 文字 (cli/build.rs と cli/src/toolchain.rs)。
-# CLI と runtime を同じコミットから同じ実行の中でビルドし、ゲームを作る人の OS (ホスト) ごとに、
-# `~/.biwa` (BIWA_HOME) にそのまま展開できるアーカイブにする:
+# 2 通りの起動のしかたがある:
+#   - 手で実行 (workflow_dispatch) → nightly。ツールチェインの名前はコミットの先頭 12 文字、
+#     タグは `nightly-<commit>` (prerelease)。
+#   - タグ `v<major>.<minor>.<patch>` の push → 版。ツールチェインの名前は `<major>.<minor>.<patch>`。
+# `biwa toolchain install` / `biwa update` / `biwa self update` と install スクリプトは、この release を見る
+# (`cli/src/manage/releases.rs`)。方針は ~/memo/biwa-toolchain-install-update.md と docs/desktop-build.md。
 #
-#   bin/biwa[.exe]                                         ← そのホストの CLI
-#   toolchains/<toolchain>/runtime/<runtime-id>/biwa-runtime[.exe]   ← 全ターゲットの runtime (6 種類)
-#   toolchains/<toolchain>/runtime/web/                    ← ビルド済みの Web runtime (Web 版・WebView 版の土台)
+# release の資産 (`<host>` は windows-x86_64 / macos-universal / linux-x86_64):
+#   biwa-<name>-<host>.{tar.gz,zip}   `~/.biwa` (BIWA_HOME) にそのまま展開できる形:
+#       bin/biwa[.exe]                                     ← ランチャー (下と同じ実行ファイル)
+#       toolchains/<name>/bin/biwa[.exe]                   ← そのホストの CLI
+#       toolchains/<name>/runtime/<runtime-id>/biwa-runtime[.exe]   ← 全ターゲットの runtime (6 種類)
+#       toolchains/<name>/runtime/web/                     ← ビルド済みの Web runtime
+#   biwa-cli-<name>-<host>[.exe]      CLI だけ (`biwa self update` が使う)
+#   SHA256SUMS                        上のすべての SHA-256
 #
 # 全ターゲットの runtime を入れるのは、どの OS の上でも全 OS 向けの配布物を作れるようにするため。
-# 成果物は `biwa-toolchain-<host>` (中身は `biwa-<toolchain>-<host>.{tar.gz,zip}`)。
-# 展開のしかたは docs/desktop-build.md。方針は docs/biwa-prebuilt-player.md。
 name: release
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
 
 jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.meta.outputs.name }}
+      tag: ${{ steps.meta.outputs.tag }}
+      commit: ${{ steps.meta.outputs.commit }}
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - id: meta
+        run: |
+          set -euo pipefail
+          commit="${GITHUB_SHA::12}"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+            name="$version"
+            tag="$GITHUB_REF_NAME"
+            prerelease=false
+          else
+            version=""
+            name="$commit"
+            tag="nightly-$commit"
+            prerelease=true
+          fi
+          {
+            echo "name=$name"
+            echo "tag=$tag"
+            echo "commit=$commit"
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "toolchain: $name (tag $tag)"
+
   runtime-native:
     uses: ./.github/workflows/runtime-native.yml
 
@@ -27,6 +69,7 @@ jobs:
     uses: ./.github/workflows/runtime-web.yml
 
   cli:
+    needs: meta
     strategy:
       fail-fast: false
       matrix:
@@ -46,8 +89,13 @@ jobs:
       run:
         working-directory: cli
         shell: bash
+    env:
+      # 版の release ならツールチェインの名前を版にする (cli/build.rs)。nightly では空 (名前はコミット)。
+      BIWA_RELEASE_VERSION: ${{ needs.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       # Biwa Package Hub の URL はリポジトリの変数があれば焼き込む (tools/hub/client/build.rs)。
       # 空のまま渡すと空の URL が焼き込まれるので、あるときだけ置く。
@@ -93,8 +141,11 @@ jobs:
           if-no-files-found: error
 
   bundle:
-    needs: [runtime-native, runtime-webview, runtime-web, cli]
+    needs: [meta, runtime-native, runtime-webview, runtime-web, cli]
     runs-on: ubuntu-latest
+    env:
+      NAME: ${{ needs.meta.outputs.name }}
+      COMMIT: ${{ needs.meta.outputs.commit }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -103,50 +154,82 @@ jobs:
       - name: Assemble
         run: |
           set -euo pipefail
-          toolchain="${GITHUB_SHA::12}"
           runtimes="native-windows-x86_64 native-macos-universal native-linux-x86_64
                     webview-windows-x86_64 webview-macos-universal webview-linux-x86_64"
           mkdir -p out
           for host in windows-x86_64 macos-universal linux-x86_64; do
             root="stage/$host"
-            mkdir -p "$root/bin"
+            tc="$root/toolchains/$NAME"
+            exe=biwa
+            if [ "$host" = windows-x86_64 ]; then exe=biwa.exe; fi
+            mkdir -p "$root/bin" "$tc/bin"
             # 成果物の取り出しで実行ビットが落ちるので付け直す。
-            cp artifacts/biwa-cli-$host/* "$root/bin/"
-            chmod +x "$root"/bin/*
+            cp "artifacts/biwa-cli-$host/$exe" "$tc/bin/$exe"
+            cp "artifacts/biwa-cli-$host/$exe" "$root/bin/$exe"
+            chmod +x "$tc/bin/$exe" "$root/bin/$exe"
             for id in $runtimes; do
-              dir="$root/toolchains/$toolchain/runtime/$id"
+              dir="$tc/runtime/$id"
               mkdir -p "$dir"
               cp artifacts/biwa-runtime-$id/* "$dir/"
               chmod +x "$dir"/*
             done
-            mkdir -p "$root/toolchains/$toolchain/runtime/web"
-            cp -R artifacts/biwa-runtime-web/. "$root/toolchains/$toolchain/runtime/web/"
-            name="biwa-$toolchain-$host"
+            mkdir -p "$tc/runtime/web"
+            cp -R artifacts/biwa-runtime-web/. "$tc/runtime/web/"
+
+            name="biwa-$NAME-$host"
             if [ "$host" = windows-x86_64 ]; then
               (cd "$root" && zip -qr "$GITHUB_WORKSPACE/out/$name.zip" .)
+              cp "$tc/bin/$exe" "out/biwa-cli-$NAME-$host.exe"
             else
               tar -czf "out/$name.tar.gz" -C "$root" .
+              cp "$tc/bin/$exe" "out/biwa-cli-$NAME-$host"
             fi
           done
-          # Linux の CLI が自分の名前として同じツールチェインを名乗るか確かめる。
-          ./stage/linux-x86_64/bin/biwa --version | tee /dev/stderr | grep -q "($toolchain)"
+          (cd out && sha256sum * > SHA256SUMS)
+          # Linux の CLI が同じツールチェインを名乗るか確かめる。
+          ./stage/linux-x86_64/toolchains/$NAME/bin/biwa --version | tee /dev/stderr | grep -q "($COMMIT)"
           ls -la out
-          find stage -type f | sort
+          cat out/SHA256SUMS
 
+      # Actions の成果物としても残す (release を作らずに試すとき用)。
       - uses: actions/upload-artifact@v4
         with:
-          name: biwa-toolchain-windows-x86_64
-          path: out/*-windows-x86_64.zip
+          name: biwa-release
+          path: out/*
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v4
+  publish:
+    needs: [meta, bundle]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      NAME: ${{ needs.meta.outputs.name }}
+      TAG: ${{ needs.meta.outputs.tag }}
+      PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          name: biwa-toolchain-macos-universal
-          path: out/*-macos-universal.tar.gz
-          if-no-files-found: error
+          name: biwa-release
+          path: out
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: biwa-toolchain-linux-x86_64
-          path: out/*-linux-x86_64.tar.gz
-          if-no-files-found: error
+      - name: Create the release
+        run: |
+          set -euo pipefail
+          if [ "$PRERELEASE" = true ]; then
+            title="Biwa nightly $NAME"
+            notes="Nightly toolchain built from $GITHUB_SHA. Install it with \`biwa toolchain install $NAME\` (or \`biwa toolchain install nightly\` for the newest nightly)."
+            flags=(--prerelease --target "$GITHUB_SHA")
+          else
+            title="Biwa $NAME"
+            notes="Install it with \`biwa toolchain install $NAME\`, or update with \`biwa update\`."
+            flags=()
+          fi
+          # やり直し (re-run) では既にあるので、資産を上書きするだけにする。
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber
+          else
+            gh release create "$TAG" out/* --title "$title" --notes "$notes" "${flags[@]}"
+          fi

@@ -13,6 +13,8 @@ on:
   # release.yml から呼ぶ (CLI と同じコミットの runtime を揃えるため)。
   workflow_call:
   push:
+    # タグの push (版の release) では走らせない。release.yml が workflow_call で呼ぶ。
+    branches: ["**"]
     paths:
       - "engine/desktop-tauri/src-tauri/**"
       - "engine/desktop-tauri/placeholder/**"

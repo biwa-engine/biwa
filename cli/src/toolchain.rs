@@ -2,8 +2,8 @@
 //!
 //! ツールチェインは「この CLI (コンパイラ・std・エンジンの JS を含む) + 全ターゲットの runtime」のまとまりで、
 //! バージョンの単位である。コンパイラが出す wasm と runtime の間には約束 (syscall の番号など) があるので、
-//! runtime は CLI と同じツールチェインのものを使う。バージョン番号がまだ無いので、名前はビルドしたコミット
-//! ([`COMMIT`]、`build.rs` が焼き込む)。
+//! runtime は CLI と同じツールチェインのものを使う。名前は版 (`0.1.0`) か、版の無いもの (nightly) は
+//! ビルドしたコミット ([`NAME`]、`build.rs` が焼き込む)。インストールと更新は `crate::manage`。
 //!
 //! runtime は 2 種類ある。
 //!   - ネイティブ (`engine/desktop-rust`): wasmtime を同梱した Rust 製。`--platform windows|macos|linux`
@@ -15,7 +15,8 @@
 //! 置き場所 (`<home>` は環境変数 `BIWA_HOME`、無ければ `~/.biwa`):
 //!
 //! ```text
-//! <home>/bin/biwa[.exe]                                     ← この CLI
+//! <home>/bin/biwa[.exe]                                     ← ランチャー (`crate::manage`)
+//! <home>/toolchains/<toolchain>/bin/biwa[.exe]              ← この CLI
 //! <home>/toolchains/<toolchain>/runtime/<runtime-id>/biwa-runtime[.exe]
 //! ```
 //!
@@ -25,8 +26,9 @@
 //! Web 版と WebView 版のゲームのデータの土台になる)。
 //! CI の成果物 `biwa-runtime-<runtime-id>` と揃えてある。
 //!
-//! 使うツールチェインは `--toolchain <NAME>`、環境変数 `BIWA_TOOLCHAIN`、この CLI のコミットの順に決める
-//! (前の 2 つは実験用。別のコミットの runtime と組み合わせると動かないことがある)。
+//! 使う runtime は `--toolchain <NAME>`、環境変数 `BIWA_TOOLCHAIN`、この CLI のツールチェインの順に決める。
+//! ランチャーから起動されたときは、ランチャーが選んだものが `BIWA_TOOLCHAIN` で来る (この CLI と同じもの)。
+//! 前の 2 つで別のツールチェインの runtime と組み合わせると、ABI の照合で止まることがある。
 
 use std::path::{Path, PathBuf};
 
@@ -128,11 +130,11 @@ impl DesktopTarget {
 /// ビルド済みの Web runtime の id (`<toolchain>/runtime/web/`)。
 pub const WEB_RUNTIME_ID: &str = "web";
 
-/// この CLI をビルドしたコミット (`build.rs`)。既定のツールチェインの名前。
-pub const COMMIT: &str = env!("BIWA_COMMIT");
+/// この CLI のツールチェインの名前 (`build.rs`)。版の release なら版 (`0.1.0`)、それ以外はコミット。
+pub const NAME: &str = env!("BIWA_TOOLCHAIN_NAME");
 
-/// `biwa --version` に出す文字列。
-pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("BIWA_COMMIT"), ")");
+/// `biwa --version` に出す文字列: `0.1.0 (<commit>)`、版の無いものは `nightly (<commit>)` (`build.rs`)。
+pub const VERSION: &str = env!("BIWA_VERSION_STRING");
 
 /// Biwa の置き場所 (環境変数 `BIWA_HOME`、無ければ `~/.biwa`)。
 pub fn biwa_home() -> Result<PathBuf> {
@@ -165,7 +167,7 @@ impl Toolchain {
                     .ok()
                     .filter(|v| !v.is_empty())
             })
-            .unwrap_or_else(|| COMMIT.to_string());
+            .unwrap_or_else(|| NAME.to_string());
         if name.is_empty() || name.contains(['/', '\\']) || name == "." || name == ".." {
             bail!("invalid toolchain name `{name}`");
         }
@@ -200,7 +202,7 @@ impl Toolchain {
     /// runtime が見つからないときのエラーの文。
     fn missing(&self, what: &str, path: &Path, runtime_id: &str) -> String {
         let installed = self.installed();
-        let hint = if self.name == COMMIT && self.name.ends_with("-dirty") {
+        let hint = if self.name == NAME && self.name.ends_with("-dirty") {
             "\nThis CLI was built from uncommitted changes, so no released toolchain matches it; \
              pass --toolchain <NAME> (or set BIWA_TOOLCHAIN) to use one of the installed toolchains."
         } else {

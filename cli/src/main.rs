@@ -9,6 +9,7 @@ mod build;
 mod desktop;
 mod dev;
 mod files;
+mod manage;
 mod project;
 mod publish;
 mod serve;
@@ -42,15 +43,45 @@ enum Command {
 
     /// パッケージを Biwa Package Hub に公開する
     Publish(publish::PublishArgs),
+
+    /// ツールチェインを入れる・選ぶ・消す
+    Toolchain {
+        #[command(subcommand)]
+        command: manage::ToolchainCommand,
+    },
+
+    /// 既定のツールチェインを最新にする (ランチャーも)
+    Update,
+
+    /// ランチャー (`~/.biwa/bin/biwa`) 自身の管理
+    #[command(name = "self")]
+    SelfManage {
+        #[command(subcommand)]
+        command: manage::SelfCommand,
+    },
 }
 
 fn main() {
+    // `~/.biwa/bin/biwa` (ランチャー) なら、管理以外のコマンドはツールチェインの CLI に渡す。
+    if let Some(result) = manage::forward_if_launcher() {
+        match result {
+            Ok(code) => std::process::exit(code),
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     let cli = Cli::parse();
 
     let result = match cli.command {
         Command::Dev(args) => dev::run(args),
         Command::Build(args) => build::run(args),
         Command::Publish(args) => publish::run(args),
+        Command::Toolchain { command } => manage::run_toolchain(command),
+        Command::Update => manage::run_update(),
+        Command::SelfManage { command } => manage::run_self(command),
     };
 
     if let Err(e) = result {

@@ -1410,6 +1410,12 @@ mod tests {
         // .wat はデバッグ用に残る。
         let wat = std::fs::read_to_string(dir.join("test1.wat")).expect(".wat was not written");
         assert!(wat.starts_with("(module"), "{wat}");
+        // runtime が照合する ABI の版が custom section に入る。
+        let wasm = std::fs::read(dir.join("test1.wasm")).expect(".wasm was not written");
+        assert_eq!(
+            biwac_generator::arch::wasm::abi_version(&wasm),
+            Some(biwac_generator::arch::wasm::ABI_VERSION)
+        );
         // ホスト関数の import 名は std のソースが決めている。
         assert!(
             wat.contains("(import \"biwa:engine\" \"sys_content_push_text\""),

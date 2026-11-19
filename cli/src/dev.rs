@@ -79,6 +79,7 @@ pub fn run(args: DevArgs) -> Result<()> {
         .clone()
         .unwrap_or_else(|| PathBuf::from("."));
     let project = Project::discover(&start_dir)?;
+    project.check_toolchain()?;
 
     println!("Package: {} ({})", project.name, project.root.display());
 

@@ -85,6 +85,7 @@ pub fn run(args: BuildArgs) -> Result<()> {
         .clone()
         .unwrap_or_else(|| PathBuf::from("."));
     let project = Project::discover(&start_dir)?;
+    project.check_toolchain()?;
     let (web, targets) = resolve_platforms(&args.platform)?;
     let webview = targets.iter().any(|t| t.runtime == Runtime::Webview);
 
