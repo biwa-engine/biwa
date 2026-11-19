@@ -54,6 +54,9 @@ fn run_game(wasm: &[u8], options: &VmOptions, channels: Channels) -> Result<VmSt
     config.wasm_gc(true).wasm_function_references(true).collector(options.collector.to_wasmtime());
     let engine = Engine::new(&config)?;
 
+    // ツールチェインの合わない生成物は、分かりにくい失敗をする前に止める。
+    crate::abi::check(wasm).map_err(wasmtime::Error::msg)?;
+
     let compile_start = Instant::now();
     let module = Module::new(&engine, wasm)?;
     let compile = compile_start.elapsed();

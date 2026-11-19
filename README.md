@@ -8,6 +8,24 @@
 
 Games are written using the **Biwa language**, which is designed to combine simplicity in storytelling with rich expressive capabilities.
 
+## インストール / Install
+
+まだ版 (v0.1.0 など) は出ていないので、nightly を入れます。
+No versioned release exists yet, so install a nightly.
+
+```sh
+# macOS / Linux
+curl -sSf https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.sh | sh -s -- --toolchain nightly
+```
+
+```powershell
+# Windows (PowerShell)
+$env:BIWA_TOOLCHAIN_SPEC = "nightly"; irm https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.ps1 | iex
+```
+
+更新は `biwa update`、詳しくは [docs/toolchain.md](./docs/toolchain.md)。
+Update with `biwa update`; see [docs/toolchain.md](./docs/toolchain.md) for details.
+
 ## ライセンス / LICENSE
 
 MIT ライセンスです。 [LICENSE](./LICENSE)を参照してください。

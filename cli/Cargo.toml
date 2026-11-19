@@ -23,3 +23,7 @@ flate2 = "1.1.10"
 # `biwa build` が組み立てた macOS の .app に ad-hoc 署名する (どの OS の上でも)。
 # 公証 (notarize) は使わないので既定の feature は切る。
 apple-codesign = { version = "0.29.0", default-features = false }
+# ツールチェインのインストールと更新 (`src/manage/`)。GitHub Releases から取る。
+# `biwa_hub_client` と同じく blocking と rustls (OpenSSL に頼らない)。
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+sha2 = "0.10"

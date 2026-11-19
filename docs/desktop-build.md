@@ -192,57 +192,20 @@ echo '{ "title": "mygame" }' > mygame/game/biwa-game.json   # 任意
 ### ツールチェインと runtime の置き場所
 
 CLI と runtime は「ツールチェイン」という単位で揃えて使う (コンパイラが出す wasm と runtime の間に約束があるため)。
-バージョン番号がまだ無いので、ツールチェインの名前はビルドしたコミットの先頭 12 文字 (`biwa --version` に出る。
-手元で未コミットの変更からビルドした CLI は `-dirty` が付く)。
+置き場所・入れ方・更新のしかた・版の名前は [`docs/toolchain.md`](toolchain.md) にある。要点だけ:
 
 ```
-<home>/                                   ← 環境変数 BIWA_HOME、無ければ ~/.biwa
-  bin/biwa[.exe]                          ← CLI (いまはこれが実体。いずれランチャーにする)
-  toolchains/<toolchain>/runtime/
-    native-windows-x86_64/biwa-runtime.exe    ← ネイティブ (runtime-native.yml)
-    native-macos-universal/biwa-runtime
-    native-linux-x86_64/biwa-runtime
-    webview-windows-x86_64/biwa-runtime.exe   ← WebView (runtime-webview.yml)
-    webview-macos-universal/biwa-runtime
-    webview-linux-x86_64/biwa-runtime
-    web/                                      ← ビルド済みの Web runtime (runtime-web.yml。静的ファイル)
+~/.biwa/bin/biwa                                   ← ランチャー
+~/.biwa/toolchains/<name>/bin/biwa                 ← CLI
+~/.biwa/toolchains/<name>/runtime/<runtime-id>/    ← native-* / webview-* / web
 ```
 
-`biwa build` は CLI と同じ名前のツールチェインの runtime を使う。実験のために別のものを使うときは
-`--toolchain <NAME>` (または環境変数 `BIWA_TOOLCHAIN`)。
-
-#### 入手する (Actions の release ワークフロー)
-
-`.github/workflows/release.yml` を手で実行すると (workflow_dispatch)、同じコミットから CLI 3 OS 分と runtime 6 種類を
-ビルドし、ホストの OS ごとに `~/.biwa` にそのまま展開できるアーカイブを作る
-(成果物 `biwa-toolchain-<host>`、中身は `biwa-<toolchain>-<host>.{tar.gz,zip}`)。
-どのアーカイブにも全ターゲットの runtime が入っているので、どの OS の上でも全 OS 向けの配布物を作れる。
-
-```sh
-# macOS / Linux (host は macos-universal か linux-x86_64)
-gh run download <run-id> -R biwa-engine/biwa -n biwa-toolchain-<host> -D /tmp/biwa
-mkdir -p ~/.biwa && tar -xzf /tmp/biwa/biwa-*-<host>.tar.gz -C ~/.biwa
-export PATH="$HOME/.biwa/bin:$PATH"     # シェルの設定に書く
-biwa --version
-```
-
-```powershell
-# Windows (PowerShell)
-gh run download <run-id> -R biwa-engine/biwa -n biwa-toolchain-windows-x86_64 -D $env:TEMP\biwa
-Expand-Archive $env:TEMP\biwa\biwa-*-windows-x86_64.zip -DestinationPath $env:USERPROFILE\.biwa -Force
-$env:Path = "$env:USERPROFILE\.biwa\bin;$env:Path"    # 恒久的にはユーザの環境変数 Path に足す
-biwa --version
-```
-
-展開は上書きで、`toolchains/` の下はツールチェインごとに分かれるので、前のものは残る (`bin/biwa` だけが入れ替わる)。
-macOS で curl / gh で取ったファイルには quarantine が付かないので、Gatekeeper には止められない。
+`biwa build` は CLI と同じツールチェインの runtime を使う。入れるのは `install/install.sh` (`install.ps1`) か
+`biwa toolchain install`。release は `.github/workflows/release.yml` が GitHub Releases に作る。
 
 runtime だけの workflow (`runtime-native.yml` / `runtime-webview.yml`) も push で走る。その成果物
 `biwa-runtime-<runtime-id>` を手で `toolchains/<name>/runtime/<runtime-id>/` に置き、`--toolchain <name>` で使ってもよい
-(手元でビルドした CLI で試すとき。CLI とコミットがずれるので、組み合わせが合うかは自分で確かめる)。
-
-将来は配布サーバ (GitHub Releases) とインストールスクリプト、`biwa` 自身による更新にする
-(`~/memo/biwa-toolchain-versioning-and-release.md`)。
+(手元でビルドした CLI で試すとき。ABI が合わなければ runtime が読み込みで止まる)。
 
 ## 2. 準備
 
@@ -459,7 +422,7 @@ rcodesign の `verify` は ad-hoc の空の CMS を問題として報告する�
 - ネイティブ版: Windows / macOS の実機での確認 (段階 6)。リンクのインライン表示・ポインタの形・スクロールは未対応
   (`engine/desktop-rust/README.md`)。
 
-- runtime の入手: `biwa` に同梱するか、版の合うものを初回にダウンロードする (GitHub Releases など)。
+- (済) runtime の入手: ツールチェインとして GitHub Releases から入れる (`docs/toolchain.md`)。
 - (済) エンジンの JS のビルド済み化と、開発サーバの `biwa` への内蔵。ゲームを作る人の作業に Node.js は要らない。
 - ゲームごとのアイコン・ウィンドウの大きさを `biwa-package.json` などから与える。
   - Windows の exe のアイコンは `editpe` (純 Rust) で差し替えられる見込み。いまは runtime の既定のアイコン。

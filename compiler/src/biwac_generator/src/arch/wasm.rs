@@ -8,6 +8,33 @@ pub mod structure;
 
 pub use emit::{WasmError, emit};
 
+/// 生成物と runtime の間の約束 (syscall の import の名前と引数、UI の property の番号、
+/// `biwa:runtime` の import、export の名前など) の版。
+///
+/// 生成物の custom section [`ABI_SECTION`] に u32 (little endian) で書き、
+/// runtime (`engine/desktop-rust/crates/vm`、`engine/nodejs/src/engine/vm/wasm/worker.ts`) が
+/// 読み込むときに照合する。合わなければ、分かりにくい失敗 (LinkError や trap) の前に止まる。
+///
+/// **約束を変えたら上げ、runtime の側も合わせる。** std の `[[native(arch="wasm")]]` の import 宣言を
+/// 変えたときもここである (std はツールチェインの一部なので、コンパイラと同じ版で配られる)。
+pub const ABI_VERSION: u32 = 1;
+
+/// [`ABI_VERSION`] を書く custom section の名前。
+pub const ABI_SECTION: &str = "biwa.abi";
+
+/// wasm バイナリの [`ABI_SECTION`] を読む。無い・壊れているときは `None`。
+pub fn abi_version(binary: &[u8]) -> Option<u32> {
+    for payload in wasmparser::Parser::new(0).parse_all(binary) {
+        if let Ok(wasmparser::Payload::CustomSection(section)) = payload
+            && section.name() == ABI_SECTION
+        {
+            let bytes: [u8; 4] = section.data().try_into().ok()?;
+            return Some(u32::from_le_bytes(bytes));
+        }
+    }
+    None
+}
+
 /// WAT を wasm バイナリにする。
 ///
 /// アセンブルしたあと検証まで通す。

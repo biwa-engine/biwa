@@ -15,6 +15,8 @@
   ブロッキング syscall は `Atomics.wait` でそのスレッドを止める。syscall の実装は `src/engine/api/*`。
   syscall を足すときは `wasm/contract.ts` の区分、`wasm/host.ts` の対応表、
   `library/std` の `[[native(arch="wasm")]]` (import 宣言も) を対で変更する。
+  約束 (import・property の番号など) を変えたら ABI の版を上げる: コンパイラ `biwac_generator::arch::wasm::ABI_VERSION`、
+  `wasm/abi.ts`、ネイティブの `engine/desktop-rust/crates/vm/src/abi.rs` の 3 か所 (`docs/toolchain.md` の ABI)。
   止まらない syscall は `wasm/bridge.ts` がまとめて 1 通で流す。
   Worker はゲームの実行中にイベントループへ帰らないので、
   流す契機はそこで明示している (`contract.ts` の `FLUSH_AFTER_CAST`)。

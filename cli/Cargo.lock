@@ -406,9 +406,11 @@ dependencies = [
  "clap",
  "flate2",
  "notify",
+ "reqwest",
  "rust-embed",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tar",
  "zip 9.0.2",
 ]

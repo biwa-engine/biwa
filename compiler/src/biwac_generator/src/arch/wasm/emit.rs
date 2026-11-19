@@ -367,6 +367,14 @@ impl<'a> Emitter<'a> {
             let _ = writeln!(out, "  (export \"{name}\" (func ${fn_name}))");
         }
 
+        // runtime との約束の版 (`super::ABI_VERSION`)。runtime は読み込むときにこれを照合する。
+        let abi: String = super::ABI_VERSION
+            .to_le_bytes()
+            .iter()
+            .map(|b| format!("\\{b:02x}"))
+            .collect();
+        let _ = writeln!(out, "  (@custom \"{}\" \"{abi}\")", super::ABI_SECTION);
+
         out.push_str(")\n");
         Ok(out)
     }

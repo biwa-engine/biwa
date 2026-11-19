@@ -14,6 +14,28 @@ OS ごとのエンジン本体 (runtime) は Biwa の CI がビルドしてお�
 コンパイラ biwac は**ライブラリとして**呼ぶ (`biwac_driver::compile`)。
 `biwac` コマンドを起動することはない。
 
+## インストールとツールチェイン
+
+```sh
+curl -sSf https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.sh | sh   # macOS / Linux
+irm https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.ps1 | iex       # Windows
+```
+
+省略すると最新の版を入れる。版がまだ無いあいだはエラーになるので、nightly を明示する
+(`sh -s -- --toolchain nightly`、Windows は `$env:BIWA_TOOLCHAIN_SPEC = "nightly"`)。
+
+`~/.biwa/bin/biwa` は**ランチャー**で、`dev` / `build` などは選んだツールチェインの CLI
+(`~/.biwa/toolchains/<name>/bin/biwa`) に渡す。ツールチェインは `--toolchain`・`BIWA_TOOLCHAIN`・
+`biwa-package.json` の `toolchain` (最小要件)・既定の順に選ぶ。
+
+```sh
+biwa toolchain list | install [SPEC] | default [NAME] | remove NAME
+biwa update          # 既定のツールチェインを最新に (ランチャーも)
+biwa self update     # ランチャーだけを最新に
+```
+
+仕組みは [`docs/toolchain.md`](../docs/toolchain.md)。実装は `src/manage/`。
+
 ## コマンド
 
 ### `biwa dev`
@@ -329,10 +351,12 @@ runtime (ネイティブ・WebView・Web) は同梱しない。CI でビルド�
 
 ## 今回の実装対象外
 
+- コード署名、パッケージマネージャ (Homebrew・winget・scoop)、`toolchain` の上限と自動インストール
+  (`docs/toolchain.md` の「まだやらないこと」)。
+
 - `biwa new <package>`
   `<package>/biwa-package.json` と `<package>/src/main.biwa` を作る。
 - `biwa build` の残り
-  runtime の配布 (GitHub Releases・インストールスクリプト・`biwa` 自身による更新)、
   ゲームごとのアイコン・ウィンドウの設定、
   macOS の Developer ID での署名・公証、Windows のコード署名、
   モバイル向けの出力 ([`docs/desktop-build.md`](../docs/desktop-build.md) §5)。

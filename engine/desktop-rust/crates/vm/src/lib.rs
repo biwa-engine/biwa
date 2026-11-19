@@ -13,6 +13,7 @@
 //!   JS 版では「JS にしか実体を置けない」ために `local` という区分が要ったが、ここでは
 //!   wasm のスレッドの中で済むだけで、エンジンには来ない。
 
+pub mod abi;
 mod host;
 mod run;
 mod values;
