@@ -1,9 +1,7 @@
 /**
- * メインスレッド側の kernel。wasm から届いた syscall をエンジンの API に流す。
+ * メインスレッド側の kernel。wasm から届いた syscall をエンジンの API (`api/*`) に流す。
  *
- * TypeScript 経路の `vm/kernel.ts` と役割は同じで、違うのは輸送路だけである。
- * scene の中断は generator の `yield` ではなく Worker のブロックで起きる。
- * syscall の実装そのもの (`api/*`) は両者で共有している。
+ * scene の中断は Worker のブロック (`Atomics.wait`) で起きる。
  */
 
 import {

@@ -1,18 +1,16 @@
-[[native(arch="typescript")]]
+[[native(arch="wasm")]]
 type Vec[T] = {{
-  Array<T>
+  externref
 }};
 
 impl[T] Vec[T] {
-  [[native(arch="typescript")]]
+  [[native(arch="wasm")]]
   fn push(self, v: T) {{
-    self.push(v);
-    return;
   }}
   
-  [[native(arch="typescript")]]
+  [[native(arch="wasm")]]
   fn new() -> Self {{
-    return [];
+    ref.null extern
   }}
 }
 

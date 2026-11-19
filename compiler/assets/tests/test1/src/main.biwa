@@ -75,15 +75,6 @@ fn foo() {
   let ab = PairIntT::new(0, aa).x();
 }
 
-[[native(arch="typescript")]]
-fn native_add(x: Int, y: Int) -> Int {{
-  console.log("Hello, TypeScript World!");
-  return x + y;
-}}
-
-// 同じ名前で arch 違いの native を並べる。
-// 選ばれていない arch のものは def collection の前に落とされるので、
-// シンボルは衝突しない。
 [[native(arch="wasm")]]
 fn native_add(x: Int, y: Int) -> Int {{
   local.get 0
@@ -198,10 +189,6 @@ struct MyGameState {}
 type MyGame = Game[MyGameState];
 
 // エントリポイント。ランタイムが起動時に呼ぶ。`Window` を組み立てて `show()` する。
-//
-// このフィクスチャは `--emit mir` (TypeScript ターゲット) でもビルドするが、
-// `--emit mir` は TypeScript 固有の検査 (`SceneValueOnTypeScript`) の手前で終わるので、
-// scene をそのまま値として渡せる。
 fn main() {
   Window::new(opening).show();
 }
@@ -337,7 +324,6 @@ fn trait_demo() -> Int {
 // `T::from_level(..)` と `v.level2()` の呼び先は、
 // `T` が具体になる単相化まで決まらない。
 // wasm は単相化で普通の直接呼び出しに潰す。
-// TypeScript は未対応で、driver が codegen の手前で弾く。
 
 struct Wrapper[T] {
   inner: T,

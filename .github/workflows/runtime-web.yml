@@ -1,7 +1,7 @@
 # Biwa のビルド済みの Web runtime (engine/nodejs のエンジンの JS 一式) を作る。
 #
 # ゲームに依らない静的ファイルで、ページの横に置かれた `biwa-game.json` と `game.wasm` を実行時に読む
-# (engine/nodejs/src/game/runtime-entry.ts)。`biwa build --platform web` と WebView 版は、これにゲームのデータを
+# (engine/nodejs/src/game/entry.ts)。`biwa build --platform web` と WebView 版は、これにゲームのデータを
 # 添えるだけなので、ゲームを作る人の手元で Node.js / Vite は要らない (docs/biwa-prebuilt-player.md)。
 # 成果物は `biwa-runtime-web` という名前で上がる。CLI と組にした配布物は release.yml が作る。
 # 単独で使うときは `~/.biwa/toolchains/<toolchain>/runtime/web/` に中身を置く。

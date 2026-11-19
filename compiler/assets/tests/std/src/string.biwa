@@ -1,9 +1,3 @@
-[[lang="string"]]
-[[native(arch="typescript")]]
-pub type String = {{
-  string
-}};
-
 // wasm では文字列はホストが持つ。biwa 側はハンドルを持つだけである。
 // WasmGC のオブジェクトはホストから中身を覗けないので、
 // 文字列のように「ホストが読み書きするもの」は externref にする。
@@ -14,11 +8,6 @@ pub type String = {{
 }};
 
 impl String {
-  [[native(arch="typescript")]]
-  pub fn concat(self, other: Self) -> Self {{
-    return self + other;
-  }}
-
   [[native(arch="wasm")]]
   pub fn concat(self, other: Self) -> Self {{
     local.get 0

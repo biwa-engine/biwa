@@ -21,10 +21,9 @@ biwa dev --platform web --web-runtime <this>/dist-runtime   # 別の端末で、
 
 ## ゲームコードとの境界
 
-コンパイラは Biwa のコードを **wasm または TypeScript** に変換する。
-ゲーム側の入口は `src/game/entry.ts` を経由して呼ばれる (いまは wasm だけ。TypeScript ターゲット (deprecated) は
-読み込む経路が無く、`main.ts` の `kind: "typescript"` の分岐は残っているだけである)。
-起動の流れはどちらのターゲットでも同じである:
+コンパイラは Biwa のコードを **wasm** (WasmGC を使った 1 つのモジュール) に変換する
+(TypeScript のターゲットは issue #23 で廃止した)。
+ゲームは `src/game/entry.ts` が読み込み、`src/main.ts` が Worker で走らせる。起動の流れはこうである:
 
 1. `__biwa_entrypoint` (= `fn main()`) を呼ぶ。ランタイムが名前で呼ぶゲーム側の関数はこれだけである。ゲーム側がその中で `Window[S]` を組み立てて
    `show()` し、UI の syscall が出る。**エンジンは UI を何も置かない**。
@@ -36,105 +35,20 @@ biwa dev --platform web --web-runtime <this>/dist-runtime   # 別の端末で、
    Window の `main_scene(game)` を始める。関数は預けた番号で指す (`docs/host-function-values.md`)
    (2 回目以降の開始は未定義。いまは最初の 1 回だけ)
 
-```
-src/main.ts
-  ├─ kind: "wasm"        → runWasm(url)                     ← Worker で wasm を走らせる
-  └─ kind: "typescript"  → kernel.run(mainScene(game))      ← scene (generator)
-```
-
-どちらで来ても、エンジン API の実装 (`src/engine/api/*`) は同じものが呼ばれる。
-違うのは「どこで動いていて、どうやって中断するか」だけである。
-
 エンジンが知っているのは以下だけで、パッケージ名や生成されたシンボル名は知らない。
 
 | 規約                              | 実体                                                                      |
 | --------------------------------- | ------------------------------------------------------------------------- |
-| `src/game/entry.ts`               | ページの横の `biwa-game.json` と `game.wasm` を読む。default export が `BiwaBackend` |
-| `biwa:engine` / `biwa:runtime`    | wasm の import 名前空間 (wasm ターゲット)                                 |
-| `BiwaGame` (`src/engine/game.ts`) | `std::game::Game` に対応する構造                                          |
+| `src/game/entry.ts`               | ページの横の `biwa-game.json` と `game.wasm` を読む。default export が `BiwaGame` |
+| `biwa:engine` / `biwa:runtime`    | wasm の import 名前空間                                                   |
+| `__biwa_entrypoint` ほか          | wasm の export (`vm/wasm/worker.ts`)                                      |
 
 ## エンジン API は syscall である
 
 ゲームコードから見ると、エンジンの API はシステムコールにあたる。
 呼ぶとエンジン側 (kernel land) の処理に入り、
 API によっては完了までブロックし、API によっては処理を積んで直ちに返る。
-
-中断をどう作るかはターゲットで違う。
-
-### TypeScript ターゲット
-
-**scene は generator function として出力される。** これが VM にあたる。
-`yield` が syscall 命令で、kernel が `next()` で結果を書き戻して再開する。
-
-```ts
-// 生成された scene
-export function* main(g) {
-  yield write("こんにちは。"); // ← レジスタに積んで VM exit
-  yield wait(); // ← クリックが来るまで再開しない
-  return g;
-}
-```
-
-| 層                        | 役割                                     | 対応するもの         |
-| ------------------------- | ---------------------------------------- | -------------------- |
-| std (`base_engine.biwa`)  | syscall の記述子を組み立てる             | レジスタに引数を積む |
-| コンパイラ (codegen)      | scene の中に `yield` を置く              | syscall 命令         |
-| `src/engine/vm/kernel.ts` | 記述子を処理し、結果を書き戻して再開する | kernel land          |
-
-```
-src/engine/vm/
-  syscall.ts   # syscall 番号と記述子の型 (std との唯一の合意点)
-  kernel.ts    # VM を回すループ
-  handlers.ts  # syscall 番号 → 実装の対応表
-src/engine/api/
-  context.ts    # 現在のエンジン実体 (syscall の実装が参照する)
-  message.ts    # Content API (push / flush / clear) と waitForClick
-  object.ts     # canvas オブジェクトの生成・遷移・削除
-  transition.ts # param / kind の番号と曲線 (std との合意点)
-```
-
-kernel を通るのは**中断する syscall だけ**である。
-中断しない syscall (canvas オブジェクトの操作など) は
-std の native が `@biwa/engine/api/*` を直接呼ぶので、記述子にならない。
-
-| syscall    | 対応する std の関数   | ふるまい                 |
-| ---------- | --------------------- | ------------------------ |
-| `Sys.Wait` | `base_engine::wait`   | クリックまで**中断する** |
-
-Content API (`sys_content_push_text` / `sys_content_flush` /
-`sys_content_clear`) は中断しないので番号を持たない。
-std の native が `@biwa/engine/api/message` を直接呼ぶ。
-
-`await_transitions` / `sleep` は TypeScript ターゲットには無い。
-コンパイラが `yield` を置くのは今のところ novel statement の展開先だけで、
-任意の関数呼び出しを中断させる手段が無いためである (wasm ターゲット専用)。
-
-**その `Sys.Wait` すら、いまは TypeScript 経路では届かない。**
-`sys_wait` を呼ぶのは std の `content_flush_and_wait()` という普通の関数で、
-statement の位置には無いので `yield` が置かれない
-(`docs/content-api.md` の段 2)。TypeScript は tier 2 なので当面このままである。
-
-実装が Promise を返せばブロッキング syscall で、解決するまで scene を再開しない。
-値をそのまま返せば非ブロッキング syscall で、scene はそのまま走り続ける。
-非ブロッキング syscall が続いてフレームを落とさないよう、
-8ms を超えたら一度 `requestAnimationFrame` に制御を返す。
-
-### 中断できるのは scene の中だけ
-
-generator にしているのは scene だけなので、
-
-- 中断する syscall は scene の中にしか現れない (novel statement の展開先なので構文上そうなる)
-- 中断しない API (画像を出す、名前を変える) は普通の関数呼び出しでよい。
-  std の native 実装が `@biwa/engine/api/*` を直接呼ぶ
-- 普通の `fn` からブロッキング API を呼ぶことはできない
-
-kernel が `next()` を呼ばない限り VM は止まったままなので、
-ポーズ・スキップ・オート・速度調整はこのループの外側で決められる。
-`scene.return()` で巻き戻せば、シーンの強制終了もできる。
-
-### wasm ターゲット
-
-生成物は WasmGC を使った 1 つのモジュールで、エンジン API はホスト関数の import になる。
+エンジン API はホスト関数の import になる。
 
 ```wat
 (import "biwa:engine" "sys_content_flush" (func $sys_content_flush))
@@ -152,7 +66,16 @@ src/engine/vm/wasm/
   bridge.ts    # SAB のプロトコル
   worker.ts    # wasm の instantiate と実行。ここが VM の中
   host.ts      # メインスレッド側の kernel。syscall を api/* に流す
+src/engine/api/
+  context.ts    # 現在のエンジン実体 (syscall の実装が参照する)
+  message.ts    # Content API (push / flush / clear) と waitForClick
+  object.ts     # canvas オブジェクトの生成・遷移・削除
+  ui.ts         # UI Element の生成・property・子・ハンドラ
+  transition.ts # param / kind の番号と曲線 (std との合意点)
 ```
+
+ブロッキング syscall の実装は Promise を返し、`host.ts` が解決を待ってから Worker を起こす。
+止まっているのは Worker だけなので、ポーズ・スキップ・オート・速度調整はその外側で決められる。
 
 | import                                          | 区分         | 実行される場所                    |
 | ----------------------------------------------- | ------------ | --------------------------------- |
@@ -226,12 +149,12 @@ QuickJS + ASYNCIFY との比較、セーブ・ロードの方針) は
 
 ```
 src/
-  main.ts               # 起動: レンダラ初期化 → コンテキスト登録 → ターゲットに応じて実行
+  main.ts               # 起動: レンダラ初期化 → コンテキスト登録 → wasm を Worker で実行
   engine/
-    game.ts             # ゲームコードとの境界の型 (BiwaGame / BiwaEntrypoint / BiwaBackend)
-    vm/                 # scene を駆動する kernel と syscall の定義
+    game.ts             # 走らせるゲームの情報 (BiwaGame)
+    vm/handlerTable.ts  # Biwa から預かった関数の表 (Worker が持つ)
     vm/wasm/            # wasm 生成物を Worker で走らせる側
-    api/                # syscall の実装 (std からも `@biwa/engine/api/*` として呼ばれる)
+    api/                # syscall の実装 (`vm/wasm/host.ts` から呼ばれる)
     api/assets.ts       # `.biwa` が書くアセットのパスを URL に直す
     api/transition.ts   # param / kind の番号と曲線・波形 (std との合意点)
     canvas/
@@ -354,5 +277,5 @@ DOM レイヤーと UI コンポーネントの定義は将来 XML で行う。
 - [ ] 動画 / GIF のバックエンド (`create_object` は拡張子で分ける前提で書いてある)
 - [ ] `preload` (テクスチャが読めるまでオブジェクトは見えないので、
       その間のフェードインは見えないまま終わる)
-- [ ] ポーズ・オート・スキップ (エンジン時計の `timeScale` と kernel の駆動間隔)
+- [ ] ポーズ・オート・スキップ (エンジン時計の `timeScale`)
 - [ ] Tauri アダプター (ファイルアクセスの抽象化)

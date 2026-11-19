@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
-/// ゲームの情報のパス (`engine/nodejs/src/game/runtime-entry.ts`)。
+/// ゲームの情報のパス (`engine/nodejs/src/game/entry.ts`)。
 const GAME_INFO_PATH: &str = "biwa-game.json";
 /// wasm のパス (同上)。
 const GAME_WASM_PATH: &str = "game.wasm";

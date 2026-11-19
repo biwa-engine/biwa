@@ -71,10 +71,11 @@ pub struct AssignStmt {
 
 /// novel statement が展開された syscall の発行。
 ///
-/// 中身は普通の呼び出し式である。それでも statement として残しているのは、
-/// **どこで中断しうるか**をコード生成が知る必要があるからである。
-/// 中断できるのは scene の中だけで、その位置を決めるのはコンパイラである
-/// (`docs/execution-model.md` を参照)。
+/// 中身は普通の呼び出し式で、型推論・MIR 構築は普通の呼び出しとして扱う。
+/// 区別して残しているのは、novel statement から来たことを LSP などが見分けられるようにするためである。
+/// (かつての TypeScript のターゲットは、ここに `yield` を置いて scene を中断させていた。
+/// wasm ではブロッキング syscall がホスト側で待つので、コンパイラは中断を作らない。
+/// `docs/execution-model.md` を参照)
 #[derive(Debug, Clone)]
 pub struct NovelSyscallStmt {
     pub call: Expr,

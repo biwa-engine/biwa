@@ -1,5 +1,8 @@
 # ホストとの関数の受け渡し
 
+> **注 (2026-11-19)**: TypeScript のターゲットは廃止した (issue #23)。コンパイラ・std・Web runtime から TypeScript の経路は取り除いてある。
+> 本文の TypeScript のターゲットに関する記述は、書いた当時の記録として残している。
+
 Biwa の関数の値 (`fn(A) -> R`。名前の付いた関数・scene・無名関数) を syscall でホスト (エンジン) に渡し、
 ホストが後でそれを呼ぶときの規定。UI のハンドラ (`Window.main_scene`、`SceneStartButton.on_click`、
 いずれ `Button.on_click` / `Window.on_event`) の土台である。

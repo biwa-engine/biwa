@@ -18,7 +18,7 @@ use super::codec::{DiskDecode, DiskEncode, DiskVec, impl_u32_newtype_codec};
 use crate::error::DepMetadataError;
 
 pub const BIWAC_DEPENDENCY_METADATA_MAGIC: &[u8; 4] = b"bwmt";
-pub const BIWAC_DEPENDENCY_METADATA_FORMAT_VERSION: u32 = 15;
+pub const BIWAC_DEPENDENCY_METADATA_FORMAT_VERSION: u32 = 16;
 
 // --- インデックス / オフセット型 ---
 
@@ -556,11 +556,6 @@ pub struct DiskFnData {
     /// `trait_of` と同じく、0 個か 1 個で `Option` を表す。
     /// 付いているかどうかはヘッダの [`SYMBOL_FLAG_HOST_EXPORT`] にも立つ。
     pub host_export: DiskVec<DiskStringOffset>,
-    /// scene か。scene なら 1。
-    ///
-    /// scene はまだ関数型の値にできず (TypeScript では generator function で呼び方が違う)、
-    /// 依存元が値にしようとしたら型エラーにするのに使う。
-    pub is_scene: u32,
 }
 
 impl DiskDecode for DiskFnData {
@@ -588,8 +583,6 @@ impl DiskDecode for DiskFnData {
         pos += n;
         let (host_export, n) = DiskVec::<DiskStringOffset>::decode(&bytes[pos..])?;
         pos += n;
-        let (is_scene, n) = u32::decode(&bytes[pos..])?;
-        pos += n;
         Ok((
             Self {
                 name,
@@ -603,7 +596,6 @@ impl DiskDecode for DiskFnData {
                 has_self,
                 trait_of,
                 host_export,
-                is_scene,
             },
             pos,
         ))
@@ -623,7 +615,6 @@ impl DiskEncode for DiskFnData {
         self.has_self.encode(buf);
         self.trait_of.encode(buf);
         self.host_export.encode(buf);
-        self.is_scene.encode(buf);
     }
 }
 

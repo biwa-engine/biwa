@@ -40,7 +40,6 @@ pub struct Game[S] {
 //
 // `scene foo(g: MyGame) -> MyGame {{ .. }}` は `Scene[MyGameState]` の値として渡せる
 // (例えば UI の `Window` の `main_scene` に。`docs/ui-api.md` の改訂版)。
-// wasm では scene は普通の関数である。TypeScript では generator function なので、まだ値にできない。
 pub type Scene[S] = fn(Game[S]) -> Game[S];
 
 impl[S] Game[S] {

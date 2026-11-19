@@ -1,7 +1,6 @@
 // Option[T] 型
 //
-// enum で書かれている。以前は「TypeScript では `T | null`、
-// wasm では `anyref`」という native 表現だったが、
+// enum で書かれている。以前は「wasm では `anyref`」という native 表現だったが、
 // その方式では `Option[Int]` や `Option[String]` が書けなかった
 // (wasm の anyref に入るのは WasmGC の参照型だけで、
 //  Int や externref は入らないため)。

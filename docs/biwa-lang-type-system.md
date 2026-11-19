@@ -206,7 +206,7 @@ trait solver は、関連関数やメソッドがその型の直接的なimplに
 
 - **ジェネリクスの trait 制限** (`impl[T: Gyao] Bbb[T]`)。
   2 段目で入れる。呼び先が単相化まで決まらないので、
-  wasm は単相化で、TypeScript は witness (辞書) を引数で渡して解く
+  wasm は単相化で解く
 - 既定実装 (trait の項目に本体を書く)
 - 関連型、スーパートレイト、blanket impl (`impl[T] T: Foo`)
 - `[T as Gyao]::guee()` の明示的な曖昧さ解消構文。

@@ -2,7 +2,7 @@
  * wasm 生成物とエンジンの境界の定義。
  *
  * ここが std (`library/std/src/game/base_engine.biwa` の `[[native(arch="wasm")]]`)
- * との唯一の合意点である。TypeScript 経路における `vm/syscall.ts` に相当する。
+ * との唯一の合意点である。
  *
  * std は `(import "biwa:engine" "sys_*" ...)` を自分で書き、コンパイラはそれを
  * そのまま生成物の先頭に置く。つまり import の名前空間と名前は

@@ -230,9 +230,7 @@ pub fn native_arch<'a>(attrs: &'a Attrs, interner: &IdentInterner) -> Option<(&'
 /// `[[native(arch = "...")]]` の arch がコンパイラの知る名前か検証する。
 ///
 /// 検証は [`biwac_base::Target::ALL`] に対して行う。
-/// cargo feature で絞った「このビルドで生成できるターゲット」ではない。
-/// `typescript` feature だけでビルドしたコンパイラでも、
-/// std に書かれた `arch = "wasm"` は正当な記述でなければならないためである。
+/// 廃止した `typescript` もここで「知らない arch」になる。
 fn check_arch(attr: &Attribute, interner: &IdentInterner, errors: &mut Vec<AttrError>) {
     let AttrBody::List(args) = &attr.body else {
         return;

@@ -25,8 +25,3 @@ biwac_mir_transform = { path = "../biwac_mir_transform"}
 biwac_generator = { path = "../biwac_generator"}
 biwac_dependency_fetcher = { path = "../biwac_dependency_fetcher"}
 colored.workspace = true
-
-[features]
-default = [ "typescript", "wasm" ]
-typescript = [ "biwac_generator/typescript" ]
-wasm = [ "biwac_generator/wasm" ]

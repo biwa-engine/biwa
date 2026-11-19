@@ -2,12 +2,11 @@ mod dep_graph;
 
 use colored::Colorize;
 use std::{
-    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use biwac_base::{IdentInterner, PackageId, PackageName, SourceHolder, Target};
+use biwac_base::{IdentInterner, PackageId, SourceHolder, Target};
 use biwac_dependency_metadata::{DepMetadata, ExternalPackage, SymbolIndexMap};
 use biwac_fingerprint::{Fingerprint, Freshness, PackageHashes, SourceEntry, StaleReason};
 use biwac_hash::Hash64;
@@ -39,7 +38,7 @@ impl Default for BuildOptions {
         Self {
             force_rebuild: false,
             emit_mir: false,
-            target: Target::TypeScript,
+            target: Target::Wasm,
         }
     }
 }
@@ -131,23 +130,6 @@ pub fn compile(pkg_root_path: PathBuf, options: BuildOptions) -> Result<(), ()> 
         }
     }
 
-    // 生成物は import 文が `./<package>.ts` を指すため、
-    // 自パッケージと推移的依存の .ts が同じディレクトリに並んでいる必要がある。
-    //
-    // 再ビルドしたものだけでなく **グラフの全パッケージ** を対象にする。
-    // キャッシュが効いた依存の .ts も要るし、
-    // 依存から外れたパッケージの .ts は消さなければならない。
-    let build_dir_path = prepare_build_dir(&pkg_root_path, options.target)?;
-    if !options.emit_mir {
-        collect_dep_bins(
-            &dep_graph.all_packages(),
-            metadata.metadata.name.value(),
-            &packages_dir,
-            &build_dir_path,
-            options.target,
-        )?;
-    }
-
     build_or_reuse_package(
         pkg_root_path,
         &packages_dir,
@@ -223,8 +205,7 @@ fn build_or_reuse_package(
 
     // wasm では単相化がプログラム全体の操作なので、
     // 根を持たないライブラリからは成果物が出ない。
-    let produces_binary =
-        is_playable_package(&pkg_root) || options.target.library_produces_binary();
+    let produces_binary = is_playable_package(&pkg_root);
 
     let freshness = check_freshness(
         &build_dir_path,
@@ -283,9 +264,7 @@ fn build_or_reuse_package(
     // 依存の `.biwamir` を読む。
     //
     // 単相化の入力であり、同時に「書き出した MIR が読み戻せるか」の検査でもある。
-    // 依存の本体を取り込むターゲット (wasm) では必須で、
-    // そうでないターゲットでも `--emit mir` のときは検査のために読む。
-    let dep_mirs = if options.emit_mir || options.target.consumes_dependency_mir() {
+    let dep_mirs = {
         let deps: Vec<(PackageId, String, Hash64)> = external_packages
             .iter()
             .filter_map(|p| {
@@ -297,8 +276,6 @@ fn build_or_reuse_package(
             })
             .collect();
         load_dep_mirs(&deps, packages_dir, options.target, &mut interner, depth)?
-    } else {
-        Vec::new()
     };
 
     let hashes = load_analyze_and_codegen_single_package(
@@ -385,13 +362,7 @@ fn check_freshness(
         return Freshness::Stale(StaleReason::UnreadableFingerprint);
     };
 
-    previous.freshness(
-        compiler_identity(),
-        metadata,
-        dep_hashes,
-        sources,
-        options.target.consumes_dependency_mir(),
-    )
+    previous.freshness(compiler_identity(), metadata, dep_hashes, sources)
 }
 
 /// playable (`main.biwa` を持つ) パッケージか。
@@ -681,123 +652,52 @@ fn load_analyze_and_codegen_single_package(
         return Ok(hashes);
     }
 
-    match options.target {
-        Target::TypeScript => {
-            // TypeScript は tier 2 で、ジェネリクスの trait 制限に未対応である。
-            //
-            // ジェネリクスを保ったまま 1 回だけ出力する設計なので、
-            // 実行時に型引数が残らず、`T::guee()` の呼び先を決められない。
-            // 対応するには witness (辞書) を引数で渡す仕組みが要る
-            // (`docs/trait.md` の第 3 段)。
-            //
-            // 黙って壊れたものを出さないよう、codegen の手前で止める。
-            // MIR は TypeScript でも組み立てているので、ここで見られる。
-            let unsupported: Vec<TraitBoundOnTypeScript> = trait_calls_in(&mir)
-                .into_iter()
-                .map(|span| TraitBoundOnTypeScript { span })
-                .collect();
-            if !unsupported.is_empty() {
-                print_errors(&unsupported, interner, &srcs, metadata);
-                return Err(());
-            }
+    // ライブラリは wasm の成果物を持たない。
+    // 単相化はプログラム全体の操作で、根を持つのは playable だけである。
+    if pkg_kind.is_playable() {
+        let mono = monomorphize_program(
+            &hir,
+            &mir,
+            &ext_pkgs_for_ty,
+            &dep_mirs,
+            &entrypoints,
+            &host_exports,
+            interner,
+        )?;
 
-            // scene の値も TypeScript では扱えない。
-            // scene は generator function で、呼ぶ側が `yield*` で委譲しなければならないが、
-            // 関数の値を通した呼び出しでは、呼び先が scene かどうかが呼ぶ側で分からない。
-            let is_scene = |def_id: &biwac_span::ValDefId| {
-                if def_id.pkg().is_self() {
-                    matches!(
-                        hir.vals.get(def_id),
-                        Some(biwac_hir::ValDefKind::NovelScene(_))
-                    )
-                } else {
-                    ext_pkgs_for_ty
-                        .iter()
-                        .find(|(pkg_id, _)| *pkg_id == def_id.pkg())
-                        .is_some_and(|(_, meta)| meta.is_scene(def_id.local_idx()))
-                }
-            };
-            let unsupported: Vec<SceneValueOnTypeScript> = scene_values_in(&mir, is_scene)
-                .into_iter()
-                .map(|span| SceneValueOnTypeScript { span })
-                .collect();
-            if !unsupported.is_empty() {
-                print_errors(&unsupported, interner, &srcs, metadata);
-                return Err(());
-            }
+        let mangler =
+            biwac_generator::mangle::Mangler::new(&hir, interner, &srcs, &ext_pkgs_for_ty);
 
-            // codegen も lang item を使う。
-            // novel statement を std の関数呼び出しに展開するため。
-            // 外部パッケージのメタデータはシンボル名のマングリングに使う
-            // (外部シンボルは HIR に無く span もダミーのため)。
-            let bin = biwac_generator::arch::typescript::generate(
-                &hir,
-                interner,
-                &srcs,
-                &ext_pkgs_for_ty,
-                &entrypoints,
-                &host_exports,
-            );
+        let wat =
+            biwac_generator::arch::wasm::emit(&mono, &mangler, &host_exports).map_err(|e| {
+                eprintln!("Error: wasm code generation failed: {e}");
+                biwac_base::print_error_finish_message(1);
+            })?;
 
-            write_bin(
-                &build_dir_path,
-                options.target,
-                &metadata.metadata.name,
-                &bin,
-            )
-            .unwrap();
-        }
-        Target::Wasm => {
-            // ライブラリは wasm の成果物を持たない。
-            // 単相化はプログラム全体の操作で、根を持つのは playable だけである。
-            if pkg_kind.is_playable() {
-                let mono = monomorphize_program(
-                    &hir,
-                    &mir,
-                    &ext_pkgs_for_ty,
-                    &dep_mirs,
-                    &entrypoints,
-                    &host_exports,
-                    interner,
-                )?;
+        // .wat は成果物として残す。デバッグではこちらを読む。
+        let wat_path = target_dir(&build_dir_path, options.target)
+            .join(format!("{}.wat", metadata.metadata.name.value()));
+        std::fs::write(&wat_path, &wat).map_err(|e| {
+            eprintln!("Error: failed to write {:?}: {}", wat_path, e);
+            biwac_base::print_error_finish_message(1);
+        })?;
 
-                // マングリングは TypeScript と同じものを使う。
-                // ホスト側の実装がターゲット間で対応付けやすくなる。
-                let mangler =
-                    biwac_generator::mangle::Mangler::new(&hir, interner, &srcs, &ext_pkgs_for_ty);
+        // アセンブルと検証はその場で行う。外部ツールは要らない。
+        let binary = biwac_generator::arch::wasm::assemble(&wat).map_err(|e| {
+            eprintln!("Error: {e}");
+            eprintln!("  (see {})", wat_path.display());
+            biwac_base::print_error_finish_message(1);
+        })?;
 
-                let wat = biwac_generator::arch::wasm::emit(&mono, &mangler, &host_exports)
-                    .map_err(|e| {
-                        eprintln!("Error: wasm code generation failed: {e}");
-                        biwac_base::print_error_finish_message(1);
-                    })?;
-
-                // .wat は成果物として残す。デバッグではこちらを読む。
-                let wat_path = target_dir(&build_dir_path, options.target)
-                    .join(format!("{}.wat", metadata.metadata.name.value()));
-                std::fs::write(&wat_path, &wat).map_err(|e| {
-                    eprintln!("Error: failed to write {:?}: {}", wat_path, e);
-                    biwac_base::print_error_finish_message(1);
-                })?;
-
-                // アセンブルと検証はその場で行う。外部ツールは要らない。
-                let binary = biwac_generator::arch::wasm::assemble(&wat).map_err(|e| {
-                    eprintln!("Error: {e}");
-                    eprintln!("  (see {})", wat_path.display());
-                    biwac_base::print_error_finish_message(1);
-                })?;
-
-                let path = bin_path(
-                    &build_dir_path,
-                    options.target,
-                    metadata.metadata.name.value(),
-                );
-                std::fs::write(&path, binary).map_err(|e| {
-                    eprintln!("Error: failed to write {:?}: {}", path, e);
-                    biwac_base::print_error_finish_message(1);
-                })?;
-            }
-        }
+        let path = bin_path(
+            &build_dir_path,
+            options.target,
+            metadata.metadata.name.value(),
+        );
+        std::fs::write(&path, binary).map_err(|e| {
+            eprintln!("Error: failed to write {:?}: {}", path, e);
+            biwac_base::print_error_finish_message(1);
+        })?;
     }
 
     Ok(hashes)
@@ -1039,112 +939,6 @@ fn check_attributes(
 }
 
 /// 収集済みのエラーをまとめて表示する。
-/// TypeScript ターゲットが扱えない、実装が単相化まで決まらない呼び出し。
-#[derive(Debug)]
-struct TraitBoundOnTypeScript {
-    span: biwac_span::Span,
-}
-
-impl biwac_base::BiwacError for TraitBoundOnTypeScript {
-    fn print_error_message(&self, ctx: &biwac_base::ErrorContext) {
-        ctx.diagnostic("The TypeScript target does not support trait bounds on generics yet.")
-            .label(
-                biwac_base::DiagSpan::new(self.span.module(), self.span.begin(), self.span.end()),
-                "the implementation cannot be chosen here",
-            )
-            .note(
-                "TypeScript keeps generics instead of monomorphizing, \
-                 so the type argument is gone at run time; \
-                 build for the wasm target, or avoid the bound",
-            )
-            .print();
-    }
-}
-
-/// TypeScript ターゲットが扱えない、scene の値。
-#[derive(Debug)]
-struct SceneValueOnTypeScript {
-    span: biwac_span::Span,
-}
-
-impl biwac_base::BiwacError for SceneValueOnTypeScript {
-    fn print_error_message(&self, ctx: &biwac_base::ErrorContext) {
-        ctx.diagnostic("The TypeScript target does not support scenes as values yet.")
-            .label(
-                biwac_base::DiagSpan::new(self.span.module(), self.span.begin(), self.span.end()),
-                "a scene is used as a value here",
-            )
-            .note(
-                "a scene is a generator function in TypeScript and must be delegated to with \
-                 `yield*`, but a call through a function value cannot tell whether it calls a scene; \
-                 build for the wasm target",
-            )
-            .print();
-    }
-}
-
-/// scene を値として使っている位置 (scene への関数参照) を集める。
-fn scene_values_in(
-    mir: &biwac_mir::Mir,
-    is_scene: impl Fn(&biwac_span::ValDefId) -> bool,
-) -> Vec<biwac_span::Span> {
-    use biwac_mir::{Const, Operand, Rvalue, StatementKind, TerminatorKind};
-
-    let refers_scene =
-        |op: &Operand| matches!(op, Operand::Const(Const::FnDef(def_id, _)) if is_scene(def_id));
-
-    let mut out = Vec::new();
-    for item in mir.items.values() {
-        let biwac_mir::MirItem::Body(body) = item else {
-            continue;
-        };
-        for block in &body.blocks {
-            for stmt in &block.stmts {
-                let StatementKind::Assign(_, rvalue) = &stmt.kind;
-                let found = match rvalue {
-                    Rvalue::Use(op) | Rvalue::UnaryOp(_, op) => refers_scene(op),
-                    Rvalue::BinaryOp(_, l, r) => refers_scene(l) || refers_scene(r),
-                    Rvalue::Aggregate(_, members) => members.iter().any(|(_, op)| refers_scene(op)),
-                    Rvalue::Discriminant(_) => false,
-                };
-                if found {
-                    out.push(stmt.span.clone());
-                }
-            }
-            if let TerminatorKind::Call { callee, args, .. } = &block.term.kind {
-                let callee_is_scene =
-                    matches!(callee, biwac_mir::Callee::Indirect(op) if refers_scene(op));
-                if callee_is_scene || args.iter().any(refers_scene) {
-                    out.push(block.term.span.clone());
-                }
-            }
-        }
-    }
-    out.sort_by_key(|s| s.begin());
-    out
-}
-
-/// 実装がまだ決まっていない呼び出しの位置を集める。
-fn trait_calls_in(mir: &biwac_mir::Mir) -> Vec<biwac_span::Span> {
-    let mut out = Vec::new();
-    for item in mir.items.values() {
-        let biwac_mir::MirItem::Body(body) = item else {
-            continue;
-        };
-        for block in &body.blocks {
-            if let biwac_mir::TerminatorKind::Call {
-                callee: biwac_mir::Callee::TraitAssoc { .. },
-                ..
-            } = &block.term.kind
-            {
-                out.push(block.term.span.clone());
-            }
-        }
-    }
-    out.sort_by_key(|s| s.begin());
-    out
-}
-
 fn print_errors<E: biwac_base::BiwacError>(
     errors: &[E],
     interner: &biwac_base::IdentInterner,
@@ -1160,80 +954,6 @@ fn print_errors<E: biwac_base::BiwacError>(
         e.print_error_message(&ctx);
     }
     biwac_base::print_error_finish_message(errors.len());
-}
-
-/// 依存パッケージの生成物を自パッケージの出力ディレクトリに集める。
-///
-/// 各パッケージは自分の .biwa_build/typescript/<name>.ts に出力するが、
-/// codegen が生成する import は `./<package>.ts` という相対パスなので、
-/// ルートパッケージの出力ディレクトリに推移的依存も含めて並べる必要がある。
-///
-/// 再ビルドしたものだけでなく **依存グラフの全パッケージ** が対象である。
-/// キャッシュが効いた依存の .ts も並んでいなければならないし、
-/// 依存から外れたパッケージの .ts は取り除かなければならない。
-fn collect_dep_bins(
-    dep_names: &[String],
-    self_pkg_name: &str,
-    packages_dir: &Path,
-    build_dir_path: &Path,
-    target: Target,
-) -> Result<(), ()> {
-    if !target.collects_dependency_binaries() {
-        return Ok(());
-    }
-
-    let dst_dir = target_dir(build_dir_path, target);
-    std::fs::create_dir_all(&dst_dir).map_err(|e| {
-        eprintln!("Error: failed to create {:?}: {}", dst_dir, e);
-    })?;
-
-    for dep_name in dep_names {
-        let file_name = format!("{}.{}", dep_name, target.bin_extension());
-        let src = packages_dir
-            .join(dep_name)
-            .join(biwac_base::BIWA_BUILD_DIRECTORY_NAME)
-            .join(target.build_subdir())
-            .join(&file_name);
-        let dst = dst_dir.join(&file_name);
-
-        std::fs::copy(&src, &dst).map_err(|e| {
-            eprintln!("Error: failed to copy {:?} to {:?}: {}", src, dst, e);
-        })?;
-    }
-
-    // グラフから消えたパッケージの生成物を掃除する。
-    // 残したままだと、依存を外したのに古いコードが出力に紛れ続ける。
-    let ext = target.bin_extension();
-    let mut keep: HashSet<String> = dep_names.iter().map(|n| format!("{n}.{ext}")).collect();
-    keep.insert(format!("{self_pkg_name}.{ext}"));
-
-    let Ok(entries) = std::fs::read_dir(&dst_dir) else {
-        return Ok(());
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some(ext) {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if !keep.contains(name) {
-            let _ = std::fs::remove_file(&path);
-        }
-    }
-
-    Ok(())
-}
-
-fn write_bin(
-    build_dir_path: &Path,
-    target: Target,
-    pkg_name: &PackageName,
-    bin: &str,
-) -> Result<(), std::io::Error> {
-    let path = bin_path(build_dir_path, target, pkg_name.value());
-    std::fs::write(path, bin)
 }
 
 #[cfg(test)]
@@ -1351,7 +1071,7 @@ mod tests {
             BuildOptions {
                 force_rebuild: true,
                 emit_mir: true,
-                target: biwac_base::Target::TypeScript,
+                target: biwac_base::Target::Wasm,
             },
         )
         .expect("MIR emission failed");
@@ -1370,7 +1090,7 @@ mod tests {
         Path::new("../../assets/tests")
             .join(pkg)
             .join(biwac_base::BIWA_BUILD_DIRECTORY_NAME)
-            .join(biwac_base::Target::TypeScript.build_subdir())
+            .join(biwac_base::Target::Wasm.build_subdir())
     }
 
     /// `--emit mir` でビルドし、書かれた `.biwamir` を返す。
@@ -1384,10 +1104,7 @@ mod tests {
             .expect("MIR was not written")
     }
 
-    // MIR でしか扱えない構文を含むフィクスチャ。
-    //
-    // TypeScript の codegen は while 文とブロック文が todo!() のままなので、
-    // このパッケージは `--emit mir` でしかビルドできない。
+    // while 文・メンバへの代入・struct literal などを含むフィクスチャ。MIR の形を確かめる。
     #[test]
     fn mir_fixture() {
         let mir = emit_mir_of("mir_fixture");

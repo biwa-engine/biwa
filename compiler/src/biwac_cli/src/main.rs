@@ -24,11 +24,7 @@ struct Args {
     #[arg(long, value_enum)]
     emit: Option<EmitKind>,
 
-    /// Code generation target.
-    ///
-    /// 選べるのはこのコンパイラが生成できるターゲット
-    /// (cargo feature で決まる) のうちの 1 つである。
-    /// 候補が 1 つしか無ければ省略できる。
+    /// Code generation target. `wasm` is the only one (and the default).
     #[arg(long)]
     target: Option<String>,
 }
@@ -39,33 +35,16 @@ enum EmitKind {
     Mir,
 }
 
-/// `--target` を解決する。
-///
-/// 候補が 1 つしか無ければ省略できる。
-/// 複数あるのに省略されたら、どれを作りたいのか決められないのでエラーにする。
+/// `--target` を解決する。省略したら wasm (唯一のターゲット) である。
 fn resolve_target(requested: Option<&str>) -> Result<biwac_base::Target, String> {
-    let available = biwac_generator::available_targets();
-
     match requested {
-        Some(name) => match biwac_base::Target::from_name(name) {
-            Some(t) if available.contains(&t) => Ok(t),
-            Some(t) => Err(format!(
-                "target `{t}` is not available in this build of biwac (available: {})",
-                biwac_base::describe_targets(&available)
-            )),
-            None => Err(format!(
+        None => Ok(biwac_base::Target::Wasm),
+        Some(name) => biwac_base::Target::from_name(name).ok_or_else(|| {
+            format!(
                 "unknown target `{name}` (available: {})",
-                biwac_base::describe_targets(&available)
-            )),
-        },
-        None => match available.as_slice() {
-            [only] => Ok(*only),
-            [] => Err("this build of biwac has no code generation target".to_string()),
-            many => Err(format!(
-                "--target is required because this build of biwac can produce {}",
-                biwac_base::describe_targets(many)
-            )),
-        },
+                biwac_base::describe_targets(biwac_base::Target::ALL)
+            )
+        }),
     }
 }
 

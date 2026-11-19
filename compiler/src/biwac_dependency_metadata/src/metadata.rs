@@ -304,8 +304,6 @@ impl DepMetadata {
             // `[[host_export="..."]]` の export 名。
             // 属性の付与対象はトップレベルの `fn` だけなので、assoc fn には無い。
             host_export: Option<&'h str>,
-            // scene か。依存元が scene を値にしようとしたら型エラーにするのに使う。
-            is_scene: bool,
             vis: biwac_hir::DeclaredVisibility,
         }
         let mut top_fn_items: Vec<TopFnItem> = hir
@@ -318,7 +316,6 @@ impl DepMetadata {
                     ValDefKind::Native(f) => (&f.name, &f.signature, f.vis),
                     ValDefKind::NovelScene(ns) => (&ns.name, &ns.signature, ns.vis),
                 };
-                let is_scene = matches!(val_kind, ValDefKind::NovelScene(_));
                 let ig = sig.impl_genargs.as_slice();
                 Some(TopFnItem {
                     val_def_id: *def_id,
@@ -326,7 +323,6 @@ impl DepMetadata {
                     signature: sig,
                     impl_genargs: ig,
                     host_export: host_exports.get(*def_id),
-                    is_scene,
                     vis: vis.declared,
                 })
             })
@@ -925,7 +921,7 @@ impl DepMetadata {
         // --- top-level fn ボディ ---
         for item in &top_fn_items {
             let fn_sym = val_to_sym.get(&item.val_def_id).map(|s| s.0).unwrap_or(0);
-            let mut fn_data = impl_encode_fn_data(
+            let fn_data = impl_encode_fn_data(
                 item.name,
                 item.signature,
                 item.impl_genargs,
@@ -942,7 +938,6 @@ impl DepMetadata {
                 fn_sym,
                 &mut symbol_index,
             );
-            fn_data.is_scene = u32::from(item.is_scene);
             let body = SymbolBody::Fn(fn_data);
             push_body(
                 &mut body_builder,
@@ -1744,7 +1739,6 @@ impl DepMetadata {
                         self.svh_ty(&mut h, t);
                     }
                     h.write_u32(d.has_self);
-                    h.write_u32(d.is_scene);
                     h.write_usize(d.trait_of.0.len());
                     for t in &d.trait_of.0 {
                         self.svh_ty(&mut h, t);
@@ -2142,14 +2136,6 @@ impl DepMetadata {
             }
             owners
         })
-    }
-
-    /// そのシンボルが scene か。
-    pub fn is_scene(&self, sym_idx: u32) -> bool {
-        matches!(
-            self.get_symbol_body(sym_idx as usize),
-            Ok(SymbolBody::Fn(d)) if d.is_scene != 0
-        )
     }
 
     /// 関連関数・メソッドの impl self 型を復元する。
@@ -3485,7 +3471,5 @@ fn impl_encode_fn_data(
         rty,
         impl_self_ty: disk_impl_self_ty,
         host_export: DiskVec(host_export.map(|n| strings.push(n)).into_iter().collect()),
-        // scene かは呼ぶ側 (トップレベル関数の書き出し) が書き込む。
-        is_scene: 0,
     }
 }

@@ -9,11 +9,6 @@ pub fn fact(n: Int) -> Int {
   }
 }
 
-[[native(arch="typescript")]]
-pub fn native_sqrt(x: Int) -> Float {{
-  return Math.sqrt(x);
-}}
-
 [[native(arch="wasm")]]
 pub fn native_sqrt(x: Int) -> Float {{
   local.get 0

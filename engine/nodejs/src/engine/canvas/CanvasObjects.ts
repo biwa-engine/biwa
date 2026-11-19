@@ -111,7 +111,6 @@ export class CanvasObjects {
   private readonly surfaces: CanvasSurfaces;
 
   private readonly objects = new Map<number, CanvasObject>();
-  private nextId = 1;
 
   /**
    * エンジン時計 [ms]。
@@ -136,16 +135,6 @@ export class CanvasObjects {
 
   constructor(surfaces: CanvasSurfaces) {
     this.surfaces = surfaces;
-  }
-
-  /**
-   * 新しいオブジェクト id を採る。
-   *
-   * TypeScript ターゲット用。wasm ターゲットでは Worker が自分で採る
-   * (メインスレッドと往復せずに id を返すため)。どちらか一方しか使われない。
-   */
-  allocId(): number {
-    return this.nextId++;
   }
 
   // --- syscall の実体 ---------------------------------------------------

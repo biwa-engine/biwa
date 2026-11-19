@@ -1,5 +1,8 @@
 # scene の実行モデル: syscall による VM exit と再開
 
+> **注 (2026-11-19)**: TypeScript のターゲットは廃止した (issue #23)。コンパイラ・std・Web runtime から TypeScript の経路は取り除いてある。
+> 本文の TypeScript のターゲットに関する記述は、書いた当時の記録として残している。
+
 ## 何を解きたいのか
 
 Biwa の `scene` は、エンジンの API を呼びながら進む。

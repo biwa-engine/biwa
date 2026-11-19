@@ -24,10 +24,11 @@ fn main() {
   let ab = PairIntT::new(0, aa).x();
 }
 
-[[native(arch="typescript")]]
+[[native(arch="wasm")]]
 fn native_add(x: Int, y: Int) -> Int {{
-  console.log("Hello, TypeScript World!");
-  return x + y;
+  local.get 0
+  local.get 1
+  i32.add
 }}
 
 struct MyGameState {}

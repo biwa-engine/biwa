@@ -4,7 +4,7 @@ import package::option::Option::None;
 
 // 可変長の配列。
 //
-// TypeScript では素の Array、wasm ではホスト (Worker) が持つ JS の配列である。
+// 実体はホスト (Worker) が持つ JS の配列である。
 // wasm の値をホスト側に置くのは、`String` や `Map` と同じ理由による
 // (可変長のコンテナを wasm 側で持つ手段がまだない)。
 //
@@ -12,11 +12,6 @@ import package::option::Option::None;
 // **要素の型は参照型 (struct) に限る**。`Vec[Int]` や `Vec[String]` は
 // バックエンドがエラーにする。
 // (`Option[T]` はこの制約から外れた。enum になったため)
-[[native(arch="typescript")]]
-pub type Vec[T] = {{
-  Array<T>
-}};
-
 [[native(arch="wasm")]]
 pub type Vec[T] = {{
   externref
@@ -24,11 +19,6 @@ pub type Vec[T] = {{
 
 impl[T] Vec[T] {
   // 空のVecを生成
-  [[native(arch="typescript")]]
-  pub fn new() -> Self {{
-    return [];
-  }}
-
   [[native(arch="wasm")]]
   pub fn new() -> Self {{
     call $sys_vec_new
@@ -39,11 +29,6 @@ impl[T] Vec[T] {
   // `new()` は要素の型が戻り値にしか現れないため、
   // 文脈から決められない場所では使えない (コンパイラの制限)。
   // 引数から要素の型が決まるこちらならどこでも書ける。
-  [[native(arch="typescript")]]
-  pub fn of(value: T) -> Self {{
-    return [value];
-  }}
-
   [[native(arch="wasm")]]
   pub fn of(value: T) -> Self {{
     local.get 0
@@ -51,11 +36,6 @@ impl[T] Vec[T] {
   }}
 
   // 値を後ろに追加
-  [[native(arch="typescript")]]
-  pub fn push(self, value: T) {{
-    self.push(value);
-  }}
-
   [[native(arch="wasm")]]
   pub fn push(self, value: T) {{
     local.get 0
@@ -64,11 +44,6 @@ impl[T] Vec[T] {
   }}
 
   // 長さを取得
-  [[native(arch="typescript")]]
-  pub fn len(self) -> Uint {{
-    return self.length;
-  }}
-
   [[native(arch="wasm")]]
   pub fn len(self) -> Uint {{
     local.get 0
@@ -89,11 +64,6 @@ impl[T] Vec[T] {
   }
 
   // 範囲を検査しない取り出し。範囲外を渡してはならない。
-  [[native(arch="typescript")]]
-  pub fn get_unchecked(self, index: Uint) -> T {{
-    return self[index];
-  }}
-
   [[native(arch="wasm")]]
   pub fn get_unchecked(self, index: Uint) -> T {{
     local.get 0
@@ -103,22 +73,12 @@ impl[T] Vec[T] {
   }}
 }
 
-[[native(arch="typescript")]]
-pub type Map[K, V] = {{
-  Map<K, V>
-}};
-
 [[native(arch="wasm")]]
 pub type Map[K, V] = {{
   externref
 }};
 
 impl[K, V] Map[K, V] {
-  [[native(arch="typescript")]]
-  pub fn insert(self, key: K, value: V) {{
-    self.set(key, value);
-  }}
-
   [[native(arch="wasm")]]
   pub fn insert(self, key: K, value: V) {{
     local.get 0
@@ -136,11 +96,6 @@ impl[K, V] Map[K, V] {
     }
   }
 
-  [[native(arch="typescript")]]
-  pub fn has(self, key: K) -> Bool {{
-    return self.has(key);
-  }}
-
   [[native(arch="wasm")]]
   pub fn has(self, key: K) -> Bool {{
     local.get 0
@@ -154,12 +109,6 @@ impl[K, V] Map[K, V] {
   //
   // `Map.prototype.get` の戻りは `V | undefined` なので、
   // キーの存在を先に確かめてある前提で押し込む。
-  [[native(arch="typescript")]]
-  pub fn get_unchecked(self, key: K) -> V {{
-    // 型引数の名前はマングルされるので、native の中では書けない。
-    return self.get(key) as any;
-  }}
-
   [[native(arch="wasm")]]
   pub fn get_unchecked(self, key: K) -> V {{
     local.get 0

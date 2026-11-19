@@ -173,8 +173,7 @@ export function isKnownStringProperty(kind: number): boolean {
  * (引数と戻り値) で呼ぶ。形が合っていることは std の型付きの API が保証し、
  * ホストは引数・戻り値の中身を見ない (`docs/host-function-values.md`)。
  *
- * 呼ぶのは SceneStartButton が押されたとき (`UIObjects` の `SceneStartRequest` → wasm は Worker、
- * TypeScript は `main.ts`)。`on_click` で `Game[S]` を作り、ScenePage を表示してから `main_scene` を呼ぶ。
+ * 呼ぶのは SceneStartButton が押されたとき (`UIObjects` の `SceneStartRequest` → Worker)。`on_click` で `Game[S]` を作り、ScenePage を表示してから `main_scene` を呼ぶ。
  */
 export const HandlerKind = {
   /**
@@ -215,14 +214,9 @@ export const Unit = {
 
 // --- syscall の実装 (engine().ui への合流) ----------------------------------
 //
-// どのターゲットから来てもここに合流する (`api/object.ts` と同じ構造)。
+// `vm/wasm/host.ts` がこれを呼ぶ (`api/object.ts` と同じ構造)。ui_id は Worker が採番する。
 // 中断しない syscall なので、失敗してもログに出すに留める
 // (呼び出し元は積んで直ちに返っているため、投げても届かない)。
-
-/** 新しい ui_id を採る。TypeScript ターゲット用 (wasm は Worker が自分で採る)。 */
-export function allocUiId(): number {
-  return engine().ui.allocId();
-}
 
 /** UI Element を作る。 */
 export function createUiElement(id: number, kind: number): void {
@@ -277,8 +271,7 @@ export function pushUiChild(parent: number, child: number): void {
 }
 
 /**
- * Element にハンドラを設定する。`handle` は預けた関数の番号である
- * (wasm は Worker の表、TypeScript は `api/handler.ts` の表)。
+ * Element にハンドラを設定する。`handle` は預けた関数の番号である (Worker の表)。
  *
  * 同じ Element・同じ種類に設定し直すと置き換わり、古い関数は手放される。
  */

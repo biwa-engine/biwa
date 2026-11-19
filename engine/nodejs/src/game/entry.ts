@@ -4,11 +4,10 @@
 //   biwa-game.json   ゲームの情報 (名前・タイトル・buildId)
 //   game.wasm        コンパイラの出力
 //   assets/          パッケージのアセット
-// TypeScript のターゲット (deprecated) は扱わない。
 //
 // `biwa dev --platform web` も同じ runtime を CLI に内蔵した HTTP サーバで配る (`cli/src/serve.rs`)。そのときは `biwa-game.json` に
 // `dev: true` が付き、建て直しの知らせ (`__biwa_dev/events`、Server-Sent Events) を受けてページを読み直す。
-import type { BiwaBackend } from "../engine/game";
+import type { BiwaGame } from "../engine/game";
 
 const GAME_INFO = "biwa-game.json";
 const GAME_WASM = "game.wasm";
@@ -35,7 +34,7 @@ function listenForReload(): void {
   });
 }
 
-async function load(): Promise<BiwaBackend> {
+async function load(): Promise<BiwaGame> {
   // 再ビルドのたびに書き換わるので、キャッシュを使わない。
   const response = await fetch(GAME_INFO, { cache: "no-store" });
   if (!response.ok) {
@@ -48,13 +47,12 @@ async function load(): Promise<BiwaBackend> {
     listenForReload();
   }
   return {
-    kind: "wasm",
     packageName: info.title ?? info.name ?? "Biwa",
     url: GAME_WASM,
     buildId: info.buildId ?? String(Date.now()),
   };
 }
 
-const backend: BiwaBackend = await load();
+const game: BiwaGame = await load();
 
-export default backend;
+export default game;

@@ -131,6 +131,7 @@ biwa build  : コンパイル → 対象 OS のプレイヤー + エンジンの
         埋め込み・`.biwa_runtime/` への展開・生成物のスタブを消した。`engine/nodejs` の `src/game/entry.ts` は
         実行時にゲームを読むエントリそのものになった。エンジンの開発は `npm run watch:runtime` と
         `biwa dev --platform web --web-runtime <engine/nodejs>/dist-runtime`。TypeScript ターゲットは読み込む経路が無くなった。
+        その後、TypeScript のターゲット自体をコンパイラ・std・Web runtime から廃止した (issue #23)。
    - 次: wasm に ABI のバージョンを入れて runtime で照合する (段階 2)。その後、ランチャー
      (`bin/biwa` が `toolchains/<toolchain>/bin/biwa` に渡す)、`biwa toolchain …` / `biwa self update`、
      GitHub Releases とインストールスクリプト (段階 3)。

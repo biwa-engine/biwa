@@ -1,14 +1,10 @@
 import { setEngineContext } from "./engine/api/context";
-import { lookupHandler, releaseHandlers } from "./engine/api/handler";
 import { CanvasObjects } from "./engine/canvas/CanvasObjects";
 import { CanvasSurfaces } from "./engine/canvas/CanvasSurfaces";
-import type { BiwaBackend } from "./engine/game";
 import { Renderer } from "./engine/Renderer";
-import { type SceneStartRequest, UIObjects } from "./engine/ui/UIObjects";
-import { type BiwaScene, Kernel } from "./engine/vm/kernel";
-import { createSyscallTable } from "./engine/vm/handlers";
+import { UIObjects } from "./engine/ui/UIObjects";
 import { runWasm } from "./engine/vm/wasm/host";
-import backend from "./game/entry";
+import game from "./game/entry";
 import "./style.css";
 
 // UI (Window/Page/Link/Canvas/MessageArea/...) を載せる層。
@@ -52,58 +48,15 @@ setEngineContext({
   host,
 });
 
-document.title = `${backend.packageName} — Biwa`;
+document.title = `${game.packageName} — Biwa`;
 
 // エンジンは UI を何も置かない。`fn main()` が Window を表示して初めて画面に何かが出る。
-await runGame(backend);
-
-/**
- * ゲームを走らせる。
- *
- * 流れはどちらのターゲットでも同じである:
- * `fn main()` で Window を表示 → SceneStartButton が押されるのを待つ →
- * Window の ScenePage の出力先で `GameWindow` を作り、ボタンの `on_click(window)` で `Game[S]` を作る →
- * ScenePage を見せる → Window の `main_scene(game)`。
- *
- * どちらのターゲットでも、エンジンから見えるのは syscall の流れだけである。
- * 違うのは「どこで動いていて、どうやって中断するか」でしかない。
- */
-async function runGame(backend: BiwaBackend): Promise<void> {
-  switch (backend.kind) {
-    case "typescript": {
-      // ゲームコードもこのスレッドで走るので、預けた関数はこのスレッドの表にある。
-      ui.setHandlerReleaser(releaseHandlers);
-      backend.entrypoint();
-
-      // 2 回目以降の開始は未定義 (§19 の R8) なので、最初の 1 回だけ受け取る。
-      const request = await new Promise<SceneStartRequest>((resolve) => {
-        ui.setSceneStarter(resolve);
-      });
-      ui.setSceneStarter(() => {});
-      const onClick = lookupHandler(request.onClick);
-      const mainScene = lookupHandler(request.mainScene);
-      if (onClick === undefined || mainScene === undefined) {
-        throw new Error("[biwa] the handlers to start the scene are not retained");
-      }
-
-      const game = onClick(
-        backend.gameWindowNew(request.canvasId, request.messageAreaId),
-      );
-      ui.enterScenePage(request.windowId);
-      // scene は generator なので、呼んだだけでは何も起きない。
-      // kernel が next() で駆動し、yield された syscall を処理して結果を書き戻す。
-      // (TypeScript ではまだ scene を関数の値にできない (R2) ので、ここには届かない)
-      const kernel = new Kernel(createSyscallTable());
-      await kernel.run(mainScene(game) as BiwaScene);
-      return;
-    }
-    case "wasm": {
-      // 生成物は Worker で走る。ブロッキング syscall は Worker のスレッドを止める。
-      // buildId を付けるのは、再ビルドで同じ URL のまま中身が変わるためである。
-      const url = new URL(backend.url, location.href);
-      url.searchParams.set("v", backend.buildId);
-      await runWasm(url.href);
-      return;
-    }
-  }
-}
+//
+// 流れ: `fn main()` で Window を表示 → SceneStartButton が押されるのを待つ →
+// Window の ScenePage の出力先で `GameWindow` を作り、ボタンの `on_click(window)` で `Game[S]` を作る →
+// ScenePage を見せる → Window の `main_scene(game)`。
+// 生成物は Worker で走り、ブロッキング syscall は Worker のスレッドを止める (`engine/vm/wasm/`)。
+// buildId を付けるのは、再ビルドで同じ URL のまま中身が変わるためである。
+const url = new URL(game.url, location.href);
+url.searchParams.set("v", game.buildId);
+await runWasm(url.href);
