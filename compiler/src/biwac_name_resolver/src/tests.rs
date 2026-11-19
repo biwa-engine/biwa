@@ -75,11 +75,7 @@ fn test1() {
     // std は同じ名前で arch 違いの native を並べているので、
     // 落とさずに渡すとシンボルが衝突する。
     pkg.walk_modules_mut(|module| {
-        biwac_attribute::retain_for_target(
-            &mut module.ast,
-            biwac_base::Target::TypeScript,
-            &interner,
-        );
+        biwac_attribute::retain_for_target(&mut module.ast, biwac_base::Target::Wasm, &interner);
     });
 
     let _hir = NameResolver::new(&metadata, external_packages, pkg_name, &mut pkg)

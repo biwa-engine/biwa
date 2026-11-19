@@ -5,7 +5,6 @@
 //! `[[native(arch="wasm")]]` の本体が WAT で書かれているためである。
 //! バイナリを直接組み立てると、native の本体を差し込むために
 //! WAT のパーサを別途持つことになる。テキストなら同じ土俵で連結できる。
-//! TypeScript バックエンドが native の TypeScript をそのまま差し込むのと同じ立て付けである。
 //!
 //! # 値の表現
 //!
@@ -59,7 +58,6 @@ const STRING_CONST_IMPORT: &str = r#"(import "biwa:runtime" "string_const"
     (func $__biwa_string_const (param i32 i32) (result externref)))"#;
 
 /// ランタイムが起動時に呼ぶ関数 (`fn main()`) の名前。
-/// TypeScript バックエンドと同じ規約である。
 const ENTRYPOINT_NAME: &str = "__biwa_entrypoint";
 
 #[derive(Debug)]

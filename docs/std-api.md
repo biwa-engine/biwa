@@ -183,7 +183,7 @@ payload は生の型のまま入るので、**`Option[Int]` も `Option[String]`
 以前は wasm で `anyref` に詰めていたため、参照型しか入れられなかった。
 
 `unwrap` の none 側は `std::panic::abort()` を呼ぶ。
-wasm では `unreachable` (trap)、TypeScript では例外になる。
+wasm の `unreachable` (trap) になる。
 
 ## Vec
 
@@ -194,7 +194,7 @@ let found = images.get(1);   // Option[T]。範囲外なら none
 images.len()
 ```
 
-TypeScript では素の `Array`、wasm ではホスト (Worker) が持つ JS の配列で、
+実体はホスト (Worker) が持つ JS の配列で、
 `sys_vec_*` として Worker 内で完結する syscall になっている。
 要素は `anyref` として渡るので、**wasm では要素の型は参照型 (struct) に限る**。
 (`Option[T]` はこの制約から外れた。enum になったため)
@@ -225,8 +225,6 @@ std を書く / std を使うときに踏むもの。回避方法つき。
 | `if` を式として `let` の右辺に置けない (`match` は置ける)                                       | 文の形に崩すか、`match` を使う                                                       |
 | パターンを入れ子にできない (`Some(Rgb(r, g, b))`)                                               | いったん束縛して、もう一度 `match` する                                              |
 | `match` はノベルの `#` コード行では書けない                                                     | 関数に切り出して呼ぶ                                                                 |
-| `await_transitions` / `sleep` は wasm 専用                                                      | TypeScript では `yield` を任意の呼び出しに置けない (`docs/media-object-model.md`)    |
-| TypeScript 生成器に `while` / ブロック文 / ブロックを含む if **式** が無い (`todo!()` で落ちる) | tier 1 の wasm では動く。tier 2 では `if cond { return .. } ..` のように文の形に崩す |
 
 `scene` の `{{ }}` の中はノベルテキストなので、`//` から始まる行、
 または `//` 以降がコメントになる。

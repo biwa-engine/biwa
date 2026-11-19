@@ -56,14 +56,7 @@ pub(crate) fn doc_modpath(pkg_root: &Path, doc_path: &Path) -> Option<ModPath> {
     ModPath::from_file_name(&rel_str)
 }
 
-/// このモジュールが読み込む対象の target。
-///
-/// # 既知の制約
-/// LSP には `--target` 相当の指定が無いので固定している。現状 Tier1 として
-/// 面倒を見ているのは wasm 側 (TypeScript は generics の trait 境界が
-/// 未対応で `std` 自体のビルドが通らないことがある) なので `Wasm` にしている。
-/// TypeScript 向けの `[[native(arch = "typescript")]]` しか持たない関数は
-/// ここでは「native 実装が無い」扱いで落ち、意図しない診断が出ることがある。
+/// このモジュールが読み込む対象の target (唯一のターゲットである wasm)。
 pub(crate) const TARGET: Target = Target::Wasm;
 
 /// 直接依存パッケージのメタデータを読み込む。

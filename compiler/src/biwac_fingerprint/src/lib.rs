@@ -11,8 +11,7 @@
 //! 3. 依存グラフ (推移閉包) の各パッケージの SVH — 上流のインタフェース変更
 //! 4. `src/**/*.biwa` の内容 — 自パッケージのソース変更
 //!
-//! 依存の **本体** (`.biwamir`) のハッシュも記録するが、比較するかどうかは
-//! ターゲット次第である。[`Fingerprint::freshness`] の `compare_mir` を参照。
+//! 5. 依存の **本体** (`.biwamir`) のハッシュ — wasm は単相化で依存の本体を出力に取り込む
 //!
 //! 3 が推移閉包なのは、パッケージのビルドが直接依存だけでなく
 //! 推移閉包すべてのメタデータを読むからである
@@ -64,11 +63,9 @@ pub fn fingerprint_path(build_dir: &Path, pkg_name: &str) -> PathBuf {
 
 /// あるパッケージが下流に対して見せる 2 つのハッシュ。
 ///
-/// インタフェースと本体を分けて持つのは、両者で伝播の仕方が違うからである。
-/// TypeScript の出力には依存の本体が入らないので、
-/// 依存の関数の中身が変わっても下流を建て直す必要はない。
-/// 単相化するターゲット (WASM 等) は依存の本体を自分の出力に取り込むので、
-/// そちらでは `mir` の変化も伝播しなければならない。
+/// どちらが変わっても下流は建て直す (単相化は依存の本体を自分の出力に取り込むので、
+/// `mir` の変化も伝播する)。分けて持つのは、建て直す理由を区別して見せるためである
+/// (`StaleReason::DependencyChanged` / `DependencyBodyChanged`)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PackageHashes {
     /// `.biwameta` の SVH。シグニチャだけを見たハッシュ。
@@ -293,17 +290,14 @@ impl Fingerprint {
     /// `sources` は今回集めたもの。
     /// 一致すれば前回のハッシュを返し、そのパッケージのビルドを飛ばせる。
     ///
-    /// `compare_mir` は「依存の本体を自分の出力に取り込むターゲットか」である。
-    /// 真なら依存の `.biwamir` のハッシュも比較する。
-    /// 偽のときに比較してしまうと、依存の関数の中身を直しただけで
-    /// 下流が丸ごと建て直ることになる (出力は変わらないのに)。
+    /// 依存の `.biwamir` のハッシュも比較する。wasm は単相化で依存の本体を取り込むので、
+    /// 依存の関数の中身が変われば建て直さなければならない。
     pub fn freshness(
         &self,
         compiler: Hash64,
         metadata: &PackageMetadata,
         deps: &[(PackageId, PackageHashes)],
         sources: &[SourceEntry],
-        compare_mir: bool,
     ) -> Freshness {
         if self.compiler != compiler {
             return Freshness::Stale(StaleReason::CompilerChanged);
@@ -321,7 +315,7 @@ impl Fingerprint {
             if before.0 != now.0 || before.1.svh != now.1.svh {
                 return Freshness::Stale(StaleReason::DependencyChanged);
             }
-            if compare_mir && before.1.mir != now.1.mir {
+            if before.1.mir != now.1.mir {
                 return Freshness::Stale(StaleReason::DependencyBodyChanged);
             }
         }

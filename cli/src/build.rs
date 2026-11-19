@@ -71,12 +71,12 @@ const TARGET: Target = Target::Wasm;
 /// ゲームのデータを作る場所 (`.biwa_build/` からの相対)。runtime の `game/` になる。
 const GAME_DATA_DIR: &str = "game-data";
 /// ゲームのデータの中の wasm
-/// (`engine/desktop-rust/crates/player/src/options.rs`、`engine/nodejs/src/game/runtime-entry.ts`)。
+/// (`engine/desktop-rust/crates/player/src/options.rs`、`engine/nodejs/src/game/entry.ts`)。
 const WASM_FILE: &str = "game.wasm";
 /// ゲームのデータの中の、検証ページの置き場所。
 const PROBE_DIR: &str = "__biwa_probe";
 /// ゲームのデータの中の、runtime が読むゲームの情報 (`engine/desktop-tauri/src-tauri/src/main.rs`、
-/// `engine/desktop-rust/crates/player/src/options.rs`、`engine/nodejs/src/game/runtime-entry.ts`)。
+/// `engine/desktop-rust/crates/player/src/options.rs`、`engine/nodejs/src/game/entry.ts`)。
 const GAME_INFO_FILE: &str = "biwa-game.json";
 
 pub fn run(args: BuildArgs) -> Result<()> {
@@ -221,7 +221,7 @@ impl GameData<'_> {
 
     /// Web 版: ビルド済みの Web runtime (`engine/nodejs` の `npm run build:runtime`) に、wasm・アセット・
     /// ゲームの情報を添える。runtime はページの横の `biwa-game.json` と `game.wasm` を実行時に読む
-    /// (`engine/nodejs/src/game/runtime-entry.ts`)。
+    /// (`engine/nodejs/src/game/entry.ts`)。
     fn build_web(&self, out_dir: &Path, web_runtime: &Path) -> Result<()> {
         recreate_dir(out_dir)?;
         files::copy_dir(web_runtime, out_dir)?;

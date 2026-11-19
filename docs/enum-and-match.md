@@ -1,5 +1,8 @@
 # enum と match
 
+> **注 (2026-11-19)**: TypeScript のターゲットは廃止した (issue #23)。コンパイラ・std・Web runtime から TypeScript の経路は取り除いてある。
+> 本文の TypeScript のターゲットに関する記述は、書いた当時の記録として残している。
+
 **実装済み。** 以下は方針と、実装の過程で分かったことである。
 
 `docs/biwa-lang-type-system.md` の列挙型を実装する。

@@ -1,5 +1,8 @@
 # Content API の実装方針
 
+> **注 (2026-11-19)**: TypeScript のターゲットは廃止した (issue #23)。コンパイラ・std・Web runtime から TypeScript の経路は取り除いてある。
+> 本文の TypeScript のターゲットに関する記述は、書いた当時の記録として残している。
+
 `docs/message-window-content.md` の Content API を、
 コンパイラ・std・エンジンの 3 層にわたって実装するための方針。
 

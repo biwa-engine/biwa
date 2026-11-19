@@ -4,9 +4,8 @@
  * Biwa から syscall の引数で渡された関数を番号 (handle) と引き換えに預かる。
  * 規定は `docs/host-function-values.md` にある。
  *
- * - wasm: Worker が持つ。関数 (wasm の関数のラッパー) は `postMessage` できず、
- *   UI の DOM があるメインスレッドには番号だけを送る。
- * - TypeScript: メインスレッドが持つ (`api/handler.ts`)。関数は普通の JS の関数である。
+ * Worker が持つ。関数 (wasm の関数のラッパー) は `postMessage` できず、
+ * UI の DOM があるメインスレッドには番号だけを送る。
  *
  * 表が関数を握っている間はその関数は GC されない。項目は持ち主の Element が
  * 消えるときに手放す (`UIObjects`)。

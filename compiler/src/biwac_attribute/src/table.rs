@@ -106,8 +106,8 @@ attribute_table!(
     // したがって付与対象は Native* 系のみが正当となる。
     //
     //  ```biwa
-    //  [[native(arch="typescript")]]
-    //  fn write(msg: String) {{ showMessage(msg); }}
+    //  [[native(arch="wasm")]]
+    //  fn int_to_float(val: Int) -> Float {{ local.get 0 f32.convert_i32_s }}
     //  ```
     Native, "native",
         AttrShape::List(&[("arch", Some(AttrValueKind::String))]),
@@ -147,8 +147,7 @@ attribute_table!(
     //
     // `[[lang="..."]]` が「コンパイラ自身が呼ぶ」ためのものであるのに対し、
     // こちらは「ホスト側が呼ぶ」ためのもの。値は export する名前の文字列で、
-    // 実際にどう export するか (wasm の `(export "...")`、TypeScript の
-    // 別名 export) はバックエンドの仕事である。付与対象はトップレベルの
+    // 実際にどう export するか (wasm の `(export "...")`) はバックエンドの仕事である。付与対象はトップレベルの
     // `fn` のみに絞ってある (メソッドや native fn まで広げる需要が出たら足す)。
     //
     //  ```biwa

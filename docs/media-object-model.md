@@ -1,5 +1,8 @@
 # canvas オブジェクトと遷移 (transition) の syscall
 
+> **注 (2026-11-19)**: TypeScript のターゲットは廃止した (issue #23)。コンパイラ・std・Web runtime から TypeScript の経路は取り除いてある。
+> 本文の TypeScript のターゲットに関する記述は、書いた当時の記録として残している。
+
 `docs/media-syscall-wasm.md` で挙げた 3 案の検討を受けて、
 実際に採る形を決める。前提の実行モデルは `docs/execution-model.md` にある。
 

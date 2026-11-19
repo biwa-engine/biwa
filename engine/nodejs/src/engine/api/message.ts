@@ -54,8 +54,8 @@ export function clearContent(uiId: number): void {
 /**
  * クリックが来るまで待つ。
  *
- * syscall `sys_wait` の実装。Promise を返すので kernel はこれを await し、
- * 解決するまで scene を再開しない (= VM は止まったまま)。
+ * syscall `sys_wait` の実装。Promise を返すので `vm/wasm/host.ts` はこれを await し、
+ * 解決するまで Worker を起こさない (= scene は止まったまま)。
  *
  * **進行中のものがあれば、クリックはまずそれを完了させる。**
  * 文字送りの途中なら残りを全部出し、sync 印の演出が走っていれば終端へ飛ばす。

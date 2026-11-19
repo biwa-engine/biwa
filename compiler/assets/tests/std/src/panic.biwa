@@ -7,13 +7,7 @@
 
 // 実行を打ち切る。
 //
-// wasm では `unreachable` に落ちる (trap)。
-// TypeScript では例外を投げる。
-[[native(arch="typescript")]]
-pub fn abort[T]() -> T {{
-  throw new Error("[biwa] aborted");
-}}
-
+// wasm の `unreachable` に落ちる (trap)。
 [[native(arch="wasm")]]
 pub fn abort[T]() -> T {{
   unreachable

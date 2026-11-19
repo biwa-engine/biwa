@@ -62,7 +62,7 @@ OS ごとのエンジン本体 (runtime) は Biwa の CI がビルドしてお�
    - 音や動画のシークのために `Range` に答える。根の外を指すパス (`..` など) は拒む。
 4. **監視する** — `.biwa` が変わったら建て直し、通ったら開いているページに読み直させる
    (`/__biwa_dev/events` に `reload`。Web runtime は `biwa-game.json` に `dev: true` があるときだけこれを聞く。
-   `engine/nodejs/src/game/runtime-entry.ts`)。`assets/` が変わったときも読み直させる。
+   `engine/nodejs/src/game/entry.ts`)。`assets/` が変わったときも読み直させる。
    書きかけのコードでビルドが失敗したときは、前のゲームのまま次の保存を待つ。
 
 #### エンジンを開発するとき
@@ -113,7 +113,7 @@ biwa build --platform web                   # → dist/web/
 3. **ゲームのデータを作る** — どれも `game.wasm` (2. の出力の写し)・`assets/` のコピー・`biwa-game.json`
    (名前・タイトル・版・`buildId` (wasm の内容から決まる値)・ツールチェインの名前)。
    - Web 版: ビルド済みの Web runtime を写した上に置き、それがそのまま `dist/web/` になる。Web runtime はゲームを
-     焼き込まず、ページの横の `biwa-game.json` と `game.wasm` を実行時に読む (`engine/nodejs/src/game/runtime-entry.ts`)。
+     焼き込まず、ページの横の `biwa-game.json` と `game.wasm` を実行時に読む (`engine/nodejs/src/game/entry.ts`)。
      `base` が `./` なので、出力はどこに置いても動く。
    - WebView 版: Web 版と同じものに検証ページを足す (`.biwa_build/game-data/webview/`)。
    - ネイティブ版: `game.wasm`・`assets/`・`biwa-game.json` だけ (`.biwa_build/game-data/native/`)。
@@ -249,7 +249,7 @@ repository はパッケージに 1 つしか持てず、hub 側にもそれを�
 
 コード生成のターゲットは `wasm` に固定している。生成物は `<package>.wasm` 1 つ (単相化で std ごと入る) で、
 どの runtime も同じものを走らせる (ブラウザ・WebView では Worker、ネイティブでは wasmtime)。
-TypeScript のターゲット (deprecated) は `biwa` からは使えない (コンパイラには残っている)。
+TypeScript のターゲットは廃止した (issue #23)。
 
 ## ディレクトリ
 

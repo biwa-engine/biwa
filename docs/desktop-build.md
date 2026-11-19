@@ -103,7 +103,7 @@ Web 版 (`dist/web/`) と WebView 版:
 
 1. ビルド済みの Web runtime (`<toolchain>/runtime/web/`。`engine/nodejs` を `npm run build:runtime` したもの) を
    写し、`game.wasm`・`assets/`・`biwa-game.json` を添える。Web runtime はゲームを焼き込まず、ページの横の
-   `biwa-game.json` と `game.wasm` を実行時に読む (`engine/nodejs/src/game/runtime-entry.ts`)。
+   `biwa-game.json` と `game.wasm` を実行時に読む (`engine/nodejs/src/game/entry.ts`)。
    - Web runtime の `base` は `./`、Vite が出すもの (JS・Worker) は `_biwa/` にある
      (`engine/nodejs/vite.config.ts` の `runtime` モード。既定の `assets/` はパッケージの `assets/` と重なるため)。
 2. WebView 版では、それに検証ページ (`__biwa_probe/`、ゲームの wasm の写し付き) を足してゲームのデータにする

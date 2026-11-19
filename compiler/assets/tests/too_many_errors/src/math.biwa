@@ -9,9 +9,11 @@ fn fact(n: Int) -> Int {
   }
 }
 
-[[native(arch="typescript")]]
+[[native(arch="wasm")]]
 fn native_sqrt(x: Int) -> Float {{
-  return Math.sqrt(x);
+  local.get 0
+  f32.convert_i32_s
+  f32.sqrt
 }}
 
 hoge impl Int {

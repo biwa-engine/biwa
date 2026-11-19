@@ -15,10 +15,10 @@ use crate::{BoolLiteral, Ident, IntegerLiteral, StringLiteral};
 /// 1 つの属性。
 ///
 ///  ```biwa
-///  [[native(arch="typescript")]]
-///  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ span
-///    ^^^^^^                      name
-///           ^^^^^^^^^^^^^^^^^^   body (AttrBody::List)
+///  [[native(arch="wasm")]]
+///  ^^^^^^^^^^^^^^^^^^^^^^^ span
+///    ^^^^^^                name
+///           ^^^^^^^^^^^^   body (AttrBody::List)
 ///  ```
 #[derive(Debug, Clone)]
 pub struct Attribute {
@@ -44,7 +44,7 @@ pub enum AttrBody {
 
     /// キー付き引数列を取る
     ///  ```biwa
-    ///  [[native(arch="typescript")]]
+    ///  [[native(arch="wasm")]]
     ///  ```
     List(Vec<AttrArg>),
 }

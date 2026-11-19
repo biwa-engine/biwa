@@ -434,11 +434,7 @@ impl<'a> BodyBuilder<'a> {
                 exit_bb
             }
 
-            // novel 文は lowering の時点で普通の呼び出し式になっている。
-            //
-            // それでも statement として残っているのは、
-            // どこで中断しうるかをコード生成が知る必要があるからである
-            // (`docs/execution-model.md` を参照)。MIR には中断は現れない。
+            // novel 文は lowering の時点で普通の呼び出し式になっている。MIR には中断は現れない。
             Stmt::NovelSyscall(syscall) => {
                 let (bb, _) = self.lower_operand(bb, &syscall.call);
                 bb

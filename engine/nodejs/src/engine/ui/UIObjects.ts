@@ -108,7 +108,7 @@ export interface SceneStartRequest {
  *
  * 他の誤り (知らない kind など) はログに出して続けるが、これは続けても
  * ゲームとして成り立たない誤りなので、ゲームを止める
- * (wasm では `vm/wasm/host.ts` が実行を失敗させる。TypeScript ではゲームコードまで投げる)。
+ * (`vm/wasm/host.ts` が実行を失敗させる)。
  */
 export class UiContractError extends Error {
   constructor(message: string) {
@@ -164,16 +164,15 @@ export class UIObjects {
   /**
    * SceneStartButton が押されたときに scene を始める者。
    *
-   * 関数を預かっている側 (wasm は Worker、TypeScript は `main.ts`) が scene を走らせるので、
-   * 走らせる側が `setSceneStarter` で差し込む。差し込まれるまでは何もしない。
+   * 関数を預かっている側 (Worker) が scene を走らせるので、
+   * 走らせる側 (`vm/wasm/host.ts`) が `setSceneStarter` で差し込む。差し込まれるまでは何もしない。
    */
   private startScene: (request: SceneStartRequest) => void = () => {};
-  private nextId = 1;
   /**
    * 要らなくなったハンドラの番号を、関数を預かっている側に返す。
    *
-   * 預かっている場所はターゲットで違う (wasm は Worker、TypeScript は `api/handler.ts`)
-   * ので、走らせる側が `setHandlerReleaser` で差し込む。差し込まれるまでは何もしない。
+   * 預かっているのは Worker なので、走らせる側 (`vm/wasm/host.ts`) が `setHandlerReleaser` で差し込む。
+   * 差し込まれるまでは何もしない。
    */
   private releaseHandlers: (handles: number[]) => void = () => {};
 
@@ -184,16 +183,6 @@ export class UIObjects {
   /** ハンドラの番号を手放す先を決める (`releaseHandlers` を参照)。 */
   setHandlerReleaser(release: (handles: number[]) => void): void {
     this.releaseHandlers = release;
-  }
-
-  /**
-   * 新しい ui_id を採る。
-   *
-   * TypeScript ターゲット用。wasm ターゲットでは Worker が自分で採番する
-   * (`CanvasObjects.allocId` と同じ理由)。
-   */
-  allocId(): number {
-    return this.nextId++;
   }
 
   /**

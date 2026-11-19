@@ -1,16 +1,17 @@
 //! 選択されていない arch の native を AST から落とす。
 //!
-//! std は同じ名前で arch 違いの native を並べる:
+//! 同じ名前で arch 違いの native を並べられる:
 //!
 //! ```biwa
-//! [[native(arch="typescript")]]
-//! fn write(msg: String) -> Syscall {{ ... }}
-//!
 //! [[native(arch="wasm")]]
+//! fn write(msg: String) {{ ... }}
+//!
+//! [[native(arch="<別の arch>")]]
 //! fn write(msg: String) {{ ... }}
 //! ```
 //!
-//! このまま名前解決に渡すと同名のシンボルが衝突する。
+//! いまのターゲットは wasm だけだが (TypeScript は issue #23 で廃止した)、
+//! 仕組みは残してある。このまま名前解決に渡すと同名のシンボルが衝突する。
 //! 本来は `[[feature = "..."]]` のような仕組みでシンボルの出し分けを表現すべきだが、
 //! それが入るまでの間、**選択されたターゲットのものだけを残して他は落とす**。
 //!

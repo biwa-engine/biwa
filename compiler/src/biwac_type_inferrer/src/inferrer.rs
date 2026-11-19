@@ -857,10 +857,7 @@ impl<'tctx, 'a> FnTyCtx<'tctx, 'a> {
         call_site_self_ty: Option<&Ty>,
         span: Span,
     ) -> TyResult<Ty> {
-        // scene も値にできる (`type Scene[S] = fn(Game[S]) -> Game[S]`)。
-        // wasm では scene は普通の関数である。TypeScript では generator function で
-        // 呼び方が違うので、TypeScript の出力の手前で driver が止める
-        // (`docs/ui-api-impl-status.md` §19 の R2)。
+        // scene も値にできる (`type Scene[S] = fn(Game[S]) -> Game[S]`)。scene は普通の関数である。
 
         // メソッドも値にできる。シグニチャの第一引数が `self` なので、
         // `Foo::bar` は `fn(Foo, A) -> B` になる。

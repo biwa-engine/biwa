@@ -4,8 +4,8 @@ import { isIntegerParam } from "./transition";
 /**
  * canvas オブジェクトの syscall の実装。
  *
- * どのターゲットから来てもここに合流する
- * (`vm/handlers.ts` と `vm/wasm/host.ts` の両方がこれを呼ぶ)。
+ * `vm/wasm/host.ts` がこれを呼ぶ。id は Worker が採番して渡す
+ * (メインスレッドと往復せずに id を返すため)。
  * パスはパッケージの `assets/` を基準とした相対パスである (`api/assets.ts`)。
  *
  * 中断しない syscall は失敗してもゲームを止めず、ログを出すに留める。
@@ -13,16 +13,6 @@ import { isIntegerParam } from "./transition";
  *
  * 規約と設計は `docs/media-object-model.md` にある。
  */
-
-/**
- * 新しいオブジェクト id を採る。
- *
- * TypeScript ターゲット用。wasm ターゲットでは Worker が自分で採番する
- * (メインスレッドと往復せずに id を返すため)。
- */
-export function allocObjectId(): number {
-  return engine().objects.allocId();
-}
 
 /**
  * オブジェクトを作る。

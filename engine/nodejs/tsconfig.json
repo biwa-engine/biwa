@@ -14,9 +14,8 @@
     "noEmit": true,
 
     /* Linting */
-    // NOTE: 未使用シンボルの検査は有効にしない。
-    // かつて `src/game/` にコンパイラが生成した TypeScript (deprecated のターゲット) が同居しており、
-    // 未使用の引数が普通に現れたため。
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },

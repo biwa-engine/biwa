@@ -20,7 +20,7 @@ struct PackageMetadata {
 pub struct Project {
     /// `biwa-package.json` があるディレクトリ。
     pub root: PathBuf,
-    /// パッケージ名。生成物 `<name>.ts` のファイル名でもある。
+    /// パッケージ名。生成物 `<name>.wasm` のファイル名でもある。
     pub name: String,
     /// パッケージの版 (`biwa-package.json` に書かれていれば)。
     pub version: Option<String>,

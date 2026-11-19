@@ -1,5 +1,8 @@
 # trait
 
+> **注 (2026-11-19)**: TypeScript のターゲットは廃止した (issue #23)。コンパイラ・std・Web runtime から TypeScript の経路は取り除いてある。
+> 本文の TypeScript のターゲットに関する記述は、書いた当時の記録として残している。
+
 `docs/biwa-lang-type-system.md` の「型の振る舞い trait」を実装するための方針。
 
 `biwac_hir` / `biwac_name_resolver` / 新設の `biwac_trait_solver` に置かれたメモとモックコードを

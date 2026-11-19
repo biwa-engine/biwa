@@ -10,27 +10,14 @@
   ゲームは焼き込まず、`src/game/entry.ts` がページの横の `biwa-game.json` と `game.wasm` を実行時に読む。
   `biwa-game.json` は `cli/src/build.rs` (`biwa build`) と `cli/src/serve.rs` (`biwa dev`) が書く。
 - 動作を見るときは `npm run watch:runtime` と `biwa dev --platform web --web-runtime <this>/dist-runtime`。
-- 生成物は wasm と TypeScript の 2 通りあったが、TypeScript (deprecated) は読み込む経路が無くなった。
-  エンジンの中の TypeScript 向けの部分 (kernel など) は残っているだけである。
-  どちらで来ても `src/game/entry.ts` の default export (`BiwaBackend`) から入り、
-  syscall の実装 (`src/engine/api/*`) は共有する。違うのは輸送路だけである。
-  - wasm: `src/engine/vm/wasm/`。Worker で走り、ブロッキング syscall は
-    `Atomics.wait` でそのスレッドを止める。
-    syscall を足すときは `wasm/contract.ts` の区分、`wasm/host.ts` の対応表、
-    `library/std` の `[[native(arch="wasm")]]` (import 宣言も) を対で変更する。
-    止まらない syscall は `wasm/bridge.ts` がまとめて 1 通で流す。
-    Worker はゲームの実行中にイベントループへ帰らないので、
-    流す契機はそこで明示している (`contract.ts` の `FLUSH_AFTER_CAST`)。
-  - TypeScript: scene が generator function として出力される。
-    `src/engine/vm/` の kernel が `next()` で駆動し、`yield` された syscall を
-    処理して結果を書き戻す。
-    syscall を足すときは `vm/syscall.ts` の番号、`vm/handlers.ts` の対応表、
-    `library/std` の `[[native(arch="typescript")]]` を対で変更する。
-    ただし **kernel を通るのは中断する syscall だけ**で、
-    中断しないものは std の native が `@biwa/engine/api/*` を直接呼ぶ。
-    また、コンパイラが `yield` を置くのは novel statement の展開先だけなので、
-    **任意の呼び出しを中断させることは今できない**
-    (`await_transitions` / `sleep` が wasm 専用なのはこのため)。
+- 生成物は wasm だけである (TypeScript のターゲットは issue #23 で廃止した。エンジンにも TypeScript 向けの経路は無い)。
+  `src/game/entry.ts` の default export (`BiwaGame`) から入り、`src/engine/vm/wasm/` が Worker で走らせる。
+  ブロッキング syscall は `Atomics.wait` でそのスレッドを止める。syscall の実装は `src/engine/api/*`。
+  syscall を足すときは `wasm/contract.ts` の区分、`wasm/host.ts` の対応表、
+  `library/std` の `[[native(arch="wasm")]]` (import 宣言も) を対で変更する。
+  止まらない syscall は `wasm/bridge.ts` がまとめて 1 通で流す。
+  Worker はゲームの実行中にイベントループへ帰らないので、
+  流す契機はそこで明示している (`contract.ts` の `FLUSH_AFTER_CAST`)。
 - Message Window に出るものは `src/components/TextBox.ts` が持つ。
   規約と設計は `docs/content-api.md`。
   - **エンジンは設定を持たない。** 速度・大きさ・色は `Game` の `Config` にあり、
@@ -61,9 +48,5 @@
   (デスクトップ版の WebView の事情。`docs/desktop-build.md` §4)。
 - `WebAssembly.Module.imports()` は JavaScriptCore (Safari・WebKitGTK) で投げることがある。
   それに頼る処理には必ず逃げ道を用意する (`wasm/worker.ts` の `declaredImports`)。
-- std の TypeScript 向けの native が書く `@biwa/engine/<path>` という論理パスは、TypeScript ターゲットとともに
-  使われなくなった (alias は外した)。
 - パッケージマネージャは npm。Node.js が要るのはエンジンの開発者と CI だけで、ゲームを作る人には要らない。
-- `tsconfig.json` では未使用シンボルの検査を有効にしない (TypeScript ターゲットの名残り)。
 - GSAP は採用しない (PixiJS Ticker と混在させると事故が起きやすい)。
-- wasm ターゲットが tier 1、TypeScript ターゲットが tier 2。判断が割れたら wasm を優先する。

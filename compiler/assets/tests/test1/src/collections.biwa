@@ -1,28 +1,12 @@
-[[native(arch="typescript")]]
-pub type Vec[T] = {{
-  Array<T>
-}};
-
 [[native(arch="wasm")]]
 pub type Vec[T] = {{
   externref
 }};
 
 impl[T] Vec[T] {
-  [[native(arch="typescript")]]
-  pub fn push(self, v: T) {{
-    self.push(v);
-    return;
-  }}
-
   [[native(arch="wasm")]]
   pub fn push(self, v: T) {{
     ;; TODO: エンジン側の Vec API に繋ぐ
-  }}
-
-  [[native(arch="typescript")]]
-  pub fn new() -> Self {{
-    return [];
   }}
 
   [[native(arch="wasm")]]
