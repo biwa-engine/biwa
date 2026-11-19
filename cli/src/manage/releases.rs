@@ -2,7 +2,7 @@
 //!
 //! release のタグとツールチェインの名前の対応:
 //!   - `v0.1.0`         → `0.1.0` (版。チャンネル stable)
-//!   - `nightly-<hash>` → `<hash>` (コミットの先頭 12 文字。チャンネル nightly)
+//!   - `nightly-<hash>` → `nightly-<hash>` (タグのまま。`<hash>` はコミットの先頭 12 文字。チャンネル nightly)
 //!
 //! release の資産 (`.github/workflows/release.yml` が上げる):
 //!   - `biwa-<name>-<host>.tar.gz` (Windows は `.zip`): `~/.biwa` にそのまま展開できる形
@@ -61,7 +61,7 @@ impl Release {
     /// この release のツールチェインの名前。ツールチェインの release でなければ `None`。
     pub fn toolchain_name(&self) -> Option<String> {
         if let Some(hash) = self.tag_name.strip_prefix(NIGHTLY_TAG_PREFIX) {
-            return (!hash.is_empty()).then(|| hash.to_string());
+            return (!hash.is_empty()).then(|| self.tag_name.clone());
         }
         self.version().map(|v| v.to_string())
     }
@@ -147,12 +147,11 @@ pub fn latest(releases: &[Release], channel: Channel) -> Option<&Release> {
 
 /// `biwa toolchain install <SPEC>` の SPEC に当たる release。
 ///
-/// SPEC: `stable` / `nightly` (それぞれの最新)、`0.1.0`・`v0.1.0` (版)、それ以外は nightly の名前 (ハッシュ)。
-/// 省略したら stable、stable がまだ無ければ nightly。
+/// SPEC: `stable` / `nightly` (それぞれの最新)、`0.1.0`・`v0.1.0` (版)、`nightly-<hash>`。
+/// 省略したら stable (最新の版)。版がまだ無ければエラーにする (nightly を黙って入れない)。
 pub fn find<'a>(releases: &'a [Release], spec: Option<&str>) -> Result<&'a Release> {
     let found = match spec {
-        None => latest(releases, Channel::Stable).or_else(|| latest(releases, Channel::Nightly)),
-        Some("stable") => latest(releases, Channel::Stable),
+        None | Some("stable") => latest(releases, Channel::Stable),
         Some("nightly") => latest(releases, Channel::Nightly),
         Some(name) => match name.parse::<Version>() {
             Ok(v) => releases.iter().find(|r| r.version() == Some(v)),
@@ -162,7 +161,9 @@ pub fn find<'a>(releases: &'a [Release], spec: Option<&str>) -> Result<&'a Relea
         },
     };
     found.with_context(|| match spec {
-        None => "no Biwa toolchain has been released yet".to_string(),
+        None | Some("stable") => "no versioned Biwa toolchain has been released yet \
+             (only nightlies are available; install one explicitly with `biwa toolchain install nightly`)"
+            .to_string(),
         Some(s) => format!("no released Biwa toolchain matches `{s}`"),
     })
 }
@@ -229,18 +230,24 @@ mod tests {
         assert_eq!(tag(Some("0.2.0")).as_deref(), Some("v0.2.0"));
         assert_eq!(tag(Some("v0.2.0")).as_deref(), Some("v0.2.0"));
         assert_eq!(
-            tag(Some("aaaaaaaaaaaa")).as_deref(),
+            tag(Some("nightly-aaaaaaaaaaaa")).as_deref(),
+            Some("nightly-aaaaaaaaaaaa")
+        );
+        assert_eq!(tag(Some("aaaaaaaaaaaa")), None);
+        assert_eq!(
+            rs[0].toolchain_name().as_deref(),
             Some("nightly-aaaaaaaaaaaa")
         );
         assert_eq!(tag(Some("0.3.0")), None);
         assert_eq!(tag(None).as_deref(), Some("v0.10.0"));
         assert_eq!(rs[4].toolchain_name(), None);
 
+        // 版が無ければ、省略や stable は nightly に流れずにエラーになる。
         let nightly_only = vec![release("nightly-aaaaaaaaaaaa", "2026-11-01T00:00:00Z")];
-        assert_eq!(
-            find(&nightly_only, None).unwrap().tag_name,
-            "nightly-aaaaaaaaaaaa"
-        );
+        for spec in [None, Some("stable")] {
+            let e = find(&nightly_only, spec).unwrap_err().to_string();
+            assert!(e.contains("no versioned Biwa toolchain"), "{e}");
+        }
     }
 
     #[test]

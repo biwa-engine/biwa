@@ -1,8 +1,8 @@
 # Biwa のツールチェイン (CLI + 全ターゲットの runtime) を組み立て、GitHub Release として公開する。
 #
 # 2 通りの起動のしかたがある:
-#   - 手で実行 (workflow_dispatch) → nightly。ツールチェインの名前はコミットの先頭 12 文字、
-#     タグは `nightly-<commit>` (prerelease)。
+#   - 手で実行 (workflow_dispatch) → nightly。ツールチェインの名前もタグも `nightly-<commit>`
+#     (コミットは先頭 12 文字。prerelease)。
 #   - タグ `v<major>.<minor>.<patch>` の push → 版。ツールチェインの名前は `<major>.<minor>.<patch>`。
 # `biwa toolchain install` / `biwa update` / `biwa self update` と install スクリプトは、この release を見る
 # (`cli/src/manage/releases.rs`)。方針は ~/memo/biwa-toolchain-install-update.md と docs/desktop-build.md。
@@ -46,8 +46,8 @@ jobs:
             prerelease=false
           else
             version=""
-            name="$commit"
-            tag="nightly-$commit"
+            name="nightly-$commit"
+            tag="$name"
             prerelease=true
           fi
           {
@@ -186,8 +186,8 @@ jobs:
             fi
           done
           (cd out && sha256sum * > SHA256SUMS)
-          # Linux の CLI が同じツールチェインを名乗るか確かめる。
-          ./stage/linux-x86_64/toolchains/$NAME/bin/biwa --version | tee /dev/stderr | grep -q "($COMMIT)"
+          # Linux の CLI が同じツールチェインを名乗るか確かめる (`0.1.0 (<commit>)` / `nightly-<commit>`)。
+          ./stage/linux-x86_64/toolchains/$NAME/bin/biwa --version | tee /dev/stderr | grep -qF "$COMMIT"
           ls -la out
           cat out/SHA256SUMS
 

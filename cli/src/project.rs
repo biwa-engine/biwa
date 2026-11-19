@@ -62,7 +62,7 @@ impl Project {
             "this package requires the Biwa toolchain {req} (`toolchain` in {}), but this CLI is `{this}`",
             biwac_base::METADATA_FILE_NAME
         );
-        if this.ends_with("-dirty") || this == "unknown" {
+        if this.ends_with("-dirty") || this.ends_with("-unknown") {
             eprintln!("warning: {message} (continuing because this CLI is a local build)");
             return Ok(());
         }

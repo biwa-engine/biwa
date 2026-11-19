@@ -257,7 +257,10 @@ mod tests {
 
     #[test]
     fn selects_by_requirement_and_default() {
-        let (_d, home) = home_with(&["0.1.0", "0.3.0", "0.2.0", "3f2a9c1b7d4e"], Some("0.2.0"));
+        let (_d, home) = home_with(
+            &["0.1.0", "0.3.0", "0.2.0", "nightly-3f2a9c1b7d4e"],
+            Some("0.2.0"),
+        );
         // 既定が満たせば既定。
         assert_eq!(home.select(None, Some(&req("0.1.0"))).unwrap(), "0.2.0");
         // 既定が満たさなければ、満たす最新。
@@ -265,10 +268,14 @@ mod tests {
         assert!(home.select(None, Some(&req("0.4.0"))).is_err());
         // ハッシュはそのもの。
         assert_eq!(
-            home.select(None, Some(&req("3f2a9c1b7d4e"))).unwrap(),
-            "3f2a9c1b7d4e"
+            home.select(None, Some(&req("nightly-3f2a9c1b7d4e")))
+                .unwrap(),
+            "nightly-3f2a9c1b7d4e"
         );
-        assert!(home.select(None, Some(&req("bbbbbbbbbbbb"))).is_err());
+        assert!(
+            home.select(None, Some(&req("nightly-bbbbbbbbbbbb")))
+                .is_err()
+        );
         // 指定が最優先。ただし要件は満たさなければならない。
         assert_eq!(
             home.select(Some("0.3.0"), Some(&req("0.1.0"))).unwrap(),

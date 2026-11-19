@@ -15,10 +15,11 @@ runtime を CLI と別に選ぶことはしない。
 | 種類    | 名前                          | release のタグ        | チャンネル |
 | ------- | ----------------------------- | --------------------- | ---------- |
 | 版      | `0.1.0`                       | `v0.1.0`              | stable     |
-| nightly | コミットの先頭 12 文字        | `nightly-<commit>`    | nightly    |
+| nightly | `nightly-<commit>`            | `nightly-<commit>`    | nightly    |
 
-2026-11 の時点では版はまだ無く (unversioned)、nightly だけで運用する。版が出ても nightly は残す。
-`biwa --version` は `0.1.0 (<commit>)` か `nightly (<commit>)` を出す。
+`<commit>` はコミットの先頭 12 文字。2026-11 の時点では版はまだ無く (unversioned)、nightly だけで運用する。
+版が出ても nightly は残す。`biwa --version` は `0.1.0 (<commit>)` か `nightly-<commit>` を出す。
+手元でビルドした CLI は `nightly-<commit>-dirty` (未コミットの変更があるとき) を名乗る。
 
 ## 置き場所
 
@@ -52,6 +53,7 @@ runtime を CLI と別に選ぶことはしない。
 3. 既定 (`biwa toolchain default`)
 
 1 で選んでも 2 の要件は外せない (満たさなければエラー)。
+`biwa --version` もランチャーから振り分ける (実際に使われるツールチェインの版が出る)。何も選べないときだけランチャー自身の版を出す。
 
 ## `biwa-package.json` の `toolchain`
 
@@ -60,13 +62,13 @@ runtime を CLI と別に選ぶことはしない。
 ```json
 "toolchain": "0.1.0"                 // 0.1.0 以上 (= { "min": "0.1.0" })
 "toolchain": { "min": "0.1.0" }
-"toolchain": "3f2a9c1b7d4e"          // nightly: そのものが要る
+"toolchain": "nightly-3f2a9c1b7d4e"  // nightly: そのものが要る
 ```
 
 - 版: 既定のツールチェインが満たせば既定、でなければインストール済みで満たす最新の版を使う。
-- nightly (ハッシュ): 新旧を比べられないので、同じ名前のものが無ければすぐにエラー。nightly は版を満たさない。
+- nightly: 新旧を比べられないので、同じ名前のものが無ければすぐにエラー。nightly は版を満たさない。
 - 満たすものがインストールされていなければエラー (自動では入れない)。
-- ツールチェインの CLI を直接起動したときも照合する。手元でビルドした CLI (`-dirty`・`unknown`) は警告に留める。
+- ツールチェインの CLI を直接起動したときも照合する。手元でビルドした CLI (`-dirty`・`-unknown`) は警告に留める。
 
 まだ無いもの: 上限 (`max`)、満たすものの自動インストール、`edition` への改称 (検討中)。
 
@@ -74,7 +76,7 @@ runtime を CLI と別に選ぶことはしない。
 
 ```sh
 biwa toolchain list                   # インストール済み (既定・この CLI・runtime だけのものに印)
-biwa toolchain install [SPEC]         # SPEC: stable / nightly / 0.1.0 / <commit>。省略で最新の版 (無ければ最新の nightly)
+biwa toolchain install [SPEC]         # SPEC: stable / nightly / 0.1.0 / nightly-<commit>。省略で最新の版 (版が無ければエラー)
 biwa toolchain install --archive FILE # 手元の biwa-<name>-<host>.{tar.gz,zip} から
 biwa toolchain default [NAME]         # 既定を見る・決める
 biwa toolchain remove NAME            # 既定は消せない
@@ -92,7 +94,7 @@ biwa self update                      # ランチャーだけを最新にする
 ## インストーラ
 
 ```sh
-# macOS / Linux
+# macOS / Linux (省略すると最新の版。版がまだ無いあいだは --toolchain nightly が要る)
 curl -sSf https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.sh | sh
 curl -sSf https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.sh | sh -s -- --toolchain nightly
 ```
@@ -100,6 +102,7 @@ curl -sSf https://raw.githubusercontent.com/biwa-engine/biwa/main/install/instal
 ```powershell
 # Windows (PowerShell)
 irm https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.ps1 | iex
+$env:BIWA_TOOLCHAIN_SPEC = "nightly"; irm https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.ps1 | iex
 ```
 
 どちらも、このホスト向けの CLI (`biwa-cli-<name>-<host>`) を落として `SHA256SUMS` で確かめ、その CLI に
@@ -110,7 +113,7 @@ curl / irm で取ったファイルには macOS の quarantine が付かない�
 
 ## 配布 (`.github/workflows/release.yml`)
 
-- 手で実行 (workflow_dispatch) → nightly。タグ `nightly-<commit>` の prerelease を作る。
+- 手で実行 (workflow_dispatch) → nightly。タグ `nightly-<commit>` の prerelease を作る (ツールチェインの名前もこれ)。
 - タグ `v<major>.<minor>.<patch>` の push → 版の release。CLI は環境変数 `BIWA_RELEASE_VERSION` で版を名乗る (`cli/build.rs`)。
 - 資産 (`<host>` は `windows-x86_64` / `macos-universal` / `linux-x86_64`):
   - `biwa-<name>-<host>.{tar.gz,zip}`: `<home>` にそのまま展開できる形 (`bin/biwa` と `toolchains/<name>/…`)

@@ -5,7 +5,7 @@
 //! CLI と runtime を必ず同じツールチェインのものにするためである。
 //!
 //! ツールチェインの名前は、版の release (環境変数 `BIWA_RELEASE_VERSION`、`0.1.0` か `v0.1.0`) なら版、
-//! それ以外 (nightly・手元のビルド) はコミットである。
+//! それ以外 (nightly・手元のビルド) は `nightly-<commit>` である (release のタグと同じ)。
 //!
 //! コミットの決め方 (先にあるものほど優先):
 //!   1. 環境変数 `BIWA_COMMIT` (そのまま使う)
@@ -58,11 +58,11 @@ fn main() {
             assert!(ok, "BIWA_RELEASE_VERSION must look like 0.1.0, got `{v}`");
             v
         }
-        None => commit.clone(),
+        None => format!("nightly-{commit}"),
     };
-    // `biwa --version`: `0.1.0 (<commit>)`、版の無いものは `nightly (<commit>)`。
-    let version = if name == commit {
-        format!("nightly ({commit})")
+    // `biwa --version`: `0.1.0 (<commit>)`、版の無いものは名前そのもの (`nightly-<commit>`)。
+    let version = if name.starts_with("nightly-") {
+        name.clone()
     } else {
         format!("{name} ({commit})")
     };

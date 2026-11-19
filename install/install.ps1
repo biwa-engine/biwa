@@ -2,7 +2,7 @@
 #
 #   irm https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.ps1 | iex
 #
-# 版を選ぶとき (stable / nightly / 0.1.0 / <commit>):
+# 版を選ぶとき (stable / nightly / 0.1.0 / nightly-<commit>。省略すると最新の版で、版がまだ無ければエラー):
 #   $env:BIWA_TOOLCHAIN_SPEC = "nightly"; irm https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.ps1 | iex
 #
 # やること:
@@ -12,7 +12,7 @@
 #   3. `%USERPROFILE%\.biwa\bin` を利用者の PATH に足す
 #
 # 環境変数:
-#   BIWA_TOOLCHAIN_SPEC  入れるもの (省略すると最新の版、まだ無ければ最新の nightly)
+#   BIWA_TOOLCHAIN_SPEC  入れるもの (省略すると最新の版。版がまだ無ければエラー)
 #   BIWA_HOME            入れる場所 (既定 %USERPROFILE%\.biwa)
 #   BIWA_NO_MODIFY_PATH  1 なら PATH を書き換えない
 #   BIWA_RELEASES_URL    release の一覧 (試験用)
@@ -39,7 +39,7 @@ Say "fetching the list of releases"
 $releases = @(Invoke-RestMethod -Uri "$($releasesUrl)?per_page=100" -Headers $headers) | Where-Object { -not $_.draft }
 
 function Get-ToolchainName($release) {
-  if ($release.tag_name -match '^nightly-(.+)$') { return $Matches[1] }
+  if ($release.tag_name -match '^nightly-.+$') { return $release.tag_name }
   if ($release.tag_name -match '^v(\d+\.\d+\.\d+)$') { return $Matches[1] }
   return $null
 }
@@ -49,11 +49,15 @@ $stable = @($releases | Where-Object { $_.tag_name -match '^v\d+\.\d+\.\d+$' } |
 $nightly = @($releases | Where-Object { $_.tag_name -like 'nightly-*' } | Sort-Object -Descending { $_.published_at })
 
 $release = switch -Regex ($spec) {
-  '^$' { if ($stable.Count -gt 0) { $stable[0] } elseif ($nightly.Count -gt 0) { $nightly[0] } else { $null }; break }
-  '^stable$' { if ($stable.Count -gt 0) { $stable[0] } else { $null }; break }
+  '^(stable)?$' {
+    if ($stable.Count -eq 0) {
+      throw "no versioned Biwa toolchain has been released yet (only nightlies are available; set `$env:BIWA_TOOLCHAIN_SPEC = 'nightly' to install one)"
+    }
+    $stable[0]; break
+  }
   '^nightly$' { if ($nightly.Count -gt 0) { $nightly[0] } else { $null }; break }
   '^v?\d+\.\d+\.\d+$' { $v = $spec.TrimStart('v'); $releases | Where-Object { $_.tag_name -eq "v$v" } | Select-Object -First 1; break }
-  default { $releases | Where-Object { $_.tag_name -eq "nightly-$spec" } | Select-Object -First 1 }
+  default { $releases | Where-Object { $_.tag_name -eq $spec } | Select-Object -First 1 }
 }
 if (-not $release) {
   $what = if ($spec) { $spec } else { "the newest release" }

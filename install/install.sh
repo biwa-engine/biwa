@@ -11,7 +11,7 @@
 #   3. `~/.biwa/bin` に PATH を通す (`~/.biwa/env` を書き、シェルの設定ファイルから読む)
 #
 # オプション:
-#   --toolchain <SPEC>  stable / nightly / 0.1.0 / <commit>。省略すると最新の版 (まだ無ければ最新の nightly)
+#   --toolchain <SPEC>  stable / nightly / 0.1.0 / nightly-<commit>。省略すると最新の版 (版がまだ無ければエラー)
 #   --no-modify-path    シェルの設定ファイルを書き換えない
 # 環境変数:
 #   BIWA_HOME           入れる場所 (既定 ~/.biwa)
@@ -93,12 +93,12 @@ pick() { # $1: タグに合う grep の正規表現。最初 (= 最新) の 1 �
 }
 stable_re='^v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$'
 case "$spec" in
-  "") url="$(pick "$stable_re" || pick '^nightly-' || true)" ;;
-  stable) url="$(pick "$stable_re" || true)" ;;
+  ""|stable) url="$(pick "$stable_re" || true)"
+     [ -n "$url" ] || die "no versioned Biwa toolchain has been released yet (only nightlies are available; install one explicitly with --toolchain nightly)" ;;
   nightly) url="$(pick '^nightly-' || true)" ;;
   [0-9]*.[0-9]*.[0-9]*) url="$(pick "^v${spec}\$" || true)" ;;
   v[0-9]*.[0-9]*.[0-9]*) url="$(pick "^${spec}\$" || true)" ;;
-  *) url="$(pick "^nightly-${spec}\$" || true)" ;;
+  *) url="$(pick "^${spec}\$" || true)" ;;
 esac
 [ -n "$url" ] || die "no released Biwa toolchain for $host matches '${spec:-the newest release}'"
 

@@ -2,7 +2,7 @@
 //!
 //! 名前は 2 通りある。
 //!   - 版: `0.1.0` (タグ `v0.1.0` の release)。新旧を比べられる。
-//!   - それ以外: コミットの先頭 12 文字 (nightly)、手で置いた `local` など。新旧は比べられない。
+//!   - それ以外: `nightly-<commit>` (コミットは先頭 12 文字)、手で置いた `local` など。新旧は比べられない。
 //!
 //! 版はまだ出ていない (2026-11 の時点では nightly だけ)。
 
@@ -92,7 +92,7 @@ pub fn validate(name: &str) -> Result<()> {
 /// ```json
 /// "toolchain": "0.1.0"              // 短い書き方 (= { "min": "0.1.0" })
 /// "toolchain": { "min": "0.1.0" }
-/// "toolchain": "3f2a9c1b7d4e"       // ハッシュ: そのものが要る
+/// "toolchain": "nightly-3f2a9c1b7d4e"       // ハッシュ: そのものが要る
 /// ```
 ///
 /// 将来 `max` (互換の上限) を足す予定 (`~/memo/biwa-toolchain-install-update.md`)。
@@ -169,7 +169,7 @@ mod tests {
             "01.1.0",
             "0.1.x",
             "",
-            "3f2a9c1b7d4e",
+            "nightly-3f2a9c1b7d4e",
             "v",
             "0.1.-1",
         ] {
@@ -186,14 +186,14 @@ mod tests {
         assert!(r.satisfied_by("1.0.0"));
         assert!(!r.satisfied_by("0.1.9"));
         // ハッシュの名前は版と比べられない。
-        assert!(!r.satisfied_by("3f2a9c1b7d4e"));
+        assert!(!r.satisfied_by("nightly-3f2a9c1b7d4e"));
     }
 
     #[test]
     fn hash_requirements_need_the_same_name() {
-        let r = req(r#""3f2a9c1b7d4e""#);
-        assert!(r.satisfied_by("3f2a9c1b7d4e"));
-        assert!(!r.satisfied_by("aaaaaaaaaaaa"));
+        let r = req(r#""nightly-3f2a9c1b7d4e""#);
+        assert!(r.satisfied_by("nightly-3f2a9c1b7d4e"));
+        assert!(!r.satisfied_by("nightly-aaaaaaaaaaaa"));
         assert!(!r.satisfied_by("0.1.0"));
     }
 

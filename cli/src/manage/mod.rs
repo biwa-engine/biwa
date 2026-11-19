@@ -36,8 +36,8 @@ pub enum ToolchainCommand {
 
     /// ツールチェインを入れる
     ///
-    /// SPEC: `stable` / `nightly` (それぞれの最新)、`0.1.0` (版)、コミットのハッシュ (nightly)。
-    /// 省略すると最新の版 (版がまだ無ければ最新の nightly)。
+    /// SPEC: `stable` / `nightly` (それぞれの最新)、`0.1.0` (版)、`nightly-<commit>`。
+    /// 省略すると最新の版 (版がまだ無ければエラー)。
     Install {
         #[arg(value_name = "SPEC", conflicts_with = "archive")]
         spec: Option<String>,
@@ -81,13 +81,20 @@ pub fn forward_if_launcher() -> Option<Result<i32>> {
     }
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let command = args.first().and_then(|a| a.to_str())?;
+    // `--version` は、実際に使われるツールチェインの版を出す (コンパイラはそちらなので)。
+    // 選べないとき (まだ何も入っていないなど) はランチャー自身の版を出す。
+    if matches!(command, "-V" | "--version") {
+        let (name, exe) = toolchain_to_run(&home, &args).ok()?;
+        return Some(run(&exe, &name, &args));
+    }
     if command.starts_with('-') || MANAGEMENT_COMMANDS.contains(&command) {
         return None;
     }
-    Some(forward(&home, &args))
+    Some(toolchain_to_run(&home, &args).and_then(|(name, exe)| run(&exe, &name, &args)))
 }
 
-fn forward(home: &Home, args: &[OsString]) -> Result<i32> {
+/// 振り分け先のツールチェインの名前と、その CLI。
+fn toolchain_to_run(home: &Home, args: &[OsString]) -> Result<(String, PathBuf)> {
     let explicit = option_value(args, "--toolchain", None).or_else(|| {
         std::env::var("BIWA_TOOLCHAIN")
             .ok()
@@ -106,9 +113,13 @@ fn forward(home: &Home, args: &[OsString]) -> Result<i32> {
             exe.display()
         );
     }
+    Ok((name, exe))
+}
 
-    let mut command = std::process::Command::new(&exe);
-    command.args(args).env("BIWA_TOOLCHAIN", &name);
+/// ツールチェインの CLI に引数を丸ごと渡して走らせる。
+fn run(exe: &std::path::Path, name: &str, args: &[OsString]) -> Result<i32> {
+    let mut command = std::process::Command::new(exe);
+    command.args(args).env("BIWA_TOOLCHAIN", name);
     #[cfg(unix)]
     {
         // シグナルや終了コードをそのまま伝えるため、プロセスを置き換える。

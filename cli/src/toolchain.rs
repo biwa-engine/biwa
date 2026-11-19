@@ -3,7 +3,7 @@
 //! ツールチェインは「この CLI (コンパイラ・std・エンジンの JS を含む) + 全ターゲットの runtime」のまとまりで、
 //! バージョンの単位である。コンパイラが出す wasm と runtime の間には約束 (syscall の番号など) があるので、
 //! runtime は CLI と同じツールチェインのものを使う。名前は版 (`0.1.0`) か、版の無いもの (nightly) は
-//! ビルドしたコミット ([`NAME`]、`build.rs` が焼き込む)。インストールと更新は `crate::manage`。
+//! `nightly-<commit>` ([`NAME`]、`build.rs` が焼き込む)。インストールと更新は `crate::manage`。
 //!
 //! runtime は 2 種類ある。
 //!   - ネイティブ (`engine/desktop-rust`): wasmtime を同梱した Rust 製。`--platform windows|macos|linux`
@@ -133,7 +133,7 @@ pub const WEB_RUNTIME_ID: &str = "web";
 /// この CLI のツールチェインの名前 (`build.rs`)。版の release なら版 (`0.1.0`)、それ以外はコミット。
 pub const NAME: &str = env!("BIWA_TOOLCHAIN_NAME");
 
-/// `biwa --version` に出す文字列: `0.1.0 (<commit>)`、版の無いものは `nightly (<commit>)` (`build.rs`)。
+/// `biwa --version` に出す文字列: `0.1.0 (<commit>)`、版の無いものは `nightly-<commit>` (`build.rs`)。
 pub const VERSION: &str = env!("BIWA_VERSION_STRING");
 
 /// Biwa の置き場所 (環境変数 `BIWA_HOME`、無ければ `~/.biwa`)。

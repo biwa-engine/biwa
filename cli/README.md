@@ -21,6 +21,9 @@ curl -sSf https://raw.githubusercontent.com/biwa-engine/biwa/main/install/instal
 irm https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.ps1 | iex       # Windows
 ```
 
+省略すると最新の版を入れる。版がまだ無いあいだはエラーになるので、nightly を明示する
+(`sh -s -- --toolchain nightly`、Windows は `$env:BIWA_TOOLCHAIN_SPEC = "nightly"`)。
+
 `~/.biwa/bin/biwa` は**ランチャー**で、`dev` / `build` などは選んだツールチェインの CLI
 (`~/.biwa/toolchains/<name>/bin/biwa`) に渡す。ツールチェインは `--toolchain`・`BIWA_TOOLCHAIN`・
 `biwa-package.json` の `toolchain` (最小要件)・既定の順に選ぶ。

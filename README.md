@@ -10,14 +10,17 @@ Games are written using the **Biwa language**, which is designed to combine simp
 
 ## インストール / Install
 
+まだ版 (v0.1.0 など) は出ていないので、nightly を入れます。
+No versioned release exists yet, so install a nightly.
+
 ```sh
 # macOS / Linux
-curl -sSf https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.sh | sh
+curl -sSf https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.sh | sh -s -- --toolchain nightly
 ```
 
 ```powershell
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.ps1 | iex
+$env:BIWA_TOOLCHAIN_SPEC = "nightly"; irm https://raw.githubusercontent.com/biwa-engine/biwa/main/install/install.ps1 | iex
 ```
 
 更新は `biwa update`、詳しくは [docs/toolchain.md](./docs/toolchain.md)。
