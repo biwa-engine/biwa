@@ -11,7 +11,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::Instant;
 
 use biwa_player_core::syscall::Syscall;
-use wasmtime::{Config, Engine, Func, Linker, Module, Result, Store, Val};
+use wasmtime::{AnyRef, Config, Engine, Func, Linker, Module, Result, Rooted, Store, Val};
 
 use crate::host::{self, HostState};
 use crate::{HostCommand, VmEvent, VmOptions, VmStats};
@@ -79,11 +79,7 @@ fn run_game(wasm: &[u8], options: &VmOptions, channels: Channels) -> Result<VmSt
     let start = loop {
         match channels.commands.recv() {
             Ok(HostCommand::StartScene(start)) => break start,
-            Ok(HostCommand::Release(handles)) => {
-                for h in handles {
-                    store.data_mut().handlers.remove(&h);
-                }
-            }
+            Ok(HostCommand::Release(handles)) => store.data_mut().release(handles),
             // エンジンが先に終わった。
             Err(_) => return Ok(finish(store, compile)),
         }
@@ -92,10 +88,11 @@ fn run_game(wasm: &[u8], options: &VmOptions, channels: Channels) -> Result<VmSt
     // 3. scene を始める。値 (`GameWindow` / `Game[S]`) は中身を見ずに受け渡す。
     let on_click = handler(&store, start.on_click, "on_click")?;
     let main_scene = handler(&store, start.main_scene, "main_scene")?;
+    let shared = retained_value(&mut store, start.shared, "window shared value")?;
     let window = invoke(
         &mut store,
         game_window_new,
-        &[Val::I32(start.canvas as i32), Val::I32(start.message_area as i32)],
+        &[Val::I32(start.canvas as i32), Val::I32(start.message_area as i32), Val::AnyRef(Some(shared))],
     )?;
     let game = invoke(&mut store, on_click, &window)?;
     store.data_mut().cast(Syscall::EnterScenePage { window: start.window });
@@ -125,6 +122,17 @@ fn handler(store: &Store<HostState>, handle: u32, what: &str) -> Result<Func> {
         .get(&handle)
         .copied()
         .ok_or_else(|| wasmtime::format_err!("the {what} handler (#{handle}) is not retained"))
+}
+
+/// 預かった値を引く。手放されていれば名前を添えて叱る。
+fn retained_value(store: &mut Store<HostState>, handle: u32, what: &str) -> Result<Rooted<AnyRef>> {
+    let value = store
+        .data()
+        .values
+        .get(&handle)
+        .cloned()
+        .ok_or_else(|| wasmtime::format_err!("the {what} (#{handle}) is not retained"))?;
+    Ok(value.to_rooted(&mut *store))
 }
 
 /// wasm の関数を呼び、戻り値を返す。

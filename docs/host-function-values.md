@@ -19,6 +19,7 @@ UI の改訂版の流れは `ui-api.md` と `ui-api-impl-status.md` §19 にあ�
 - 呼んでよいのは Biwa のコードが走っていないときだけ (再入しない)。
 - 表の項目は持ち主 (UI Element) が消えるときに手放す。
 - 型の安全は Biwa 側が保証する。ホストは型を知らない。
+- 関数でない**値** (struct) も同じ表に預けられる (「値を預ける」)。ホストは呼ばず、後で host export の引数として返すだけである。
 
 ## Biwa → ホスト
 
@@ -105,9 +106,10 @@ scene (generator function) を預けた場合、呼ぶ側が kernel で回す必
 SceneStartButton が押されると:
 
 1. メインスレッド (`UIObjects`) が、ボタンの `on_click` の番号・Window の `main_scene` の番号・
+   Window に預けた共有物 (`WindowShared`) の番号・
    Window の ScenePage の出力先 (Canvas / MessageArea。ScenePage の子孫に置かれていることを確かめる) の ui_id を揃え、
    wasm では Worker に `{ kind: "startScene", .. }` を送る (TypeScript では `main.ts` が受け取る)。
-2. Worker が `__biwa_std_game_window_new(canvas, message_area)` で `GameWindow` を作り、
+2. Worker が `__biwa_std_game_window_new(canvas, message_area, shared)` で `GameWindow` を作り、
    `game = on_click(window)` で `Game[S]` を作らせる。
 3. ScenePage を見せる (Worker 自身が流す cast `__biwa_enter_scene_page`。`on_click` の中の syscall の後に並ぶ)。
 4. `main_scene(game)` を呼ぶ。scene が終わると (今は) ゲームの実行が終わる。
@@ -144,8 +146,50 @@ SceneStartButton が押されると:
 それを設定する std の型付きの API、ホストの呼ぶ側を対で変更する。
 今の native は引数 1 つの関数だけを扱う。他の個数が要れば個数ごとに native を足す (import は `funcref` のままでよい)。
 
+## 値を預ける
+
+関数でない Biwa の値 (struct) を、ホストが中身を見ずに預かり、後で host export の引数として返す。
+ホストは値を呼びも読みもしない。
+
+### なぜ要るか
+
+`fn main()` で作ったものを scene (`Game`) まで運ぶ道が、これしか無い。
+
+- `fn main()` は UI を出して返る。scene はその後に、ホストが `on_click` と `main_scene` を呼んで始める。
+- クロージャは無い (`function-as-the-first-class-type.md`) ので、`on_click` が `main` の変数を捕まえることはできない。
+- そこで std の `Window::show()` が値を Window に預け、ホストが scene を始めるときに `GameWindow` に入れて返す。
+
+最初の使い道は、アプリケーションの寿命の共有物 `WindowShared` である。
+音のバスの木やプレイヤーの音量の設定のように、1 回のプレイ (`Game`) より長く、Window と同じだけ生きるものを入れる。
+
+### 渡し方と返し方
+
+- Biwa → ホスト: `sys_ui_set_value(ui_id, kind, v)`。wasm の import の型は `anyref`。
+  どの struct の参照も `anyref` の部分型なので、std の native は型名を書かずに済む (関数の `funcref` と同じ)。
+  値は struct (WasmGC の参照型) に限る。
+- 預ける表と番号の空間は関数と共有する。手放し方も同じ (持ち主の Element が消えるとき、置き換えたとき、設定できなかったとき)。
+  ただし種類の番号の空間 (`ValueKind`) はハンドラ (`HandlerKind`) と別である。
+- ホスト → Biwa: host export の引数として返す。export の引数の型は std の struct なので、
+  別の値を返すと wasm の境界で弾かれる (V8 は `TypeError`、wasmtime は型の不一致のエラー)。
+- wasm の Worker は表に JS の値として持つ。区分 `retain` の syscall は、型ではなく**引数の位置** (`contract.ts` の `RETAINED_ARG`)
+  で預けるものを決める。WasmGC の struct は JS からは `Map` などの externref と同じ「ただのオブジェクト」に見え、区別できないからである。
+- ネイティブ (wasmtime) は `OwnedRooted<AnyRef>` で握る (握っている間は回収されない)。
+
+### 値の種類
+
+番号は engine の `src/engine/api/ui.ts` の `ValueKind` が正。
+
+| kind | 名前           | 付けられる Element | 型                     | 返す先                                         |
+| ---- | -------------- | ------------------ | ---------------------- | ---------------------------------------------- |
+| 0    | `WindowShared` | `Window`           | std の `WindowShared`  | `__biwa_std_game_window_new` の 3 つめの引数   |
+
+- `WindowShared` は**必須**である。std の `Window::show()` が Page より先に必ず預ける。
+  エンジンは、これが無いまま Window に Page を積まれたらゲームを止める (`main_scene` と同じ)。
+  ゲームの作者が書くものではないので、無ければ std とエンジンの食い違いである。
+
 ## syscall
 
 | syscall              | 引数                                  | wasm の区分 | 説明                                     |
 | -------------------- | ------------------------------------- | ----------- | ---------------------------------------- |
 | `sys_ui_set_handler` | `ui_id: Uint, kind: Uint, f: funcref` | `retain`    | Element にハンドラを設定する。積んで返る |
+| `sys_ui_set_value`   | `ui_id: Uint, kind: Uint, v: anyref`  | `retain`    | Element に値を設定する。積んで返る       |

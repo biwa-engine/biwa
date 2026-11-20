@@ -6,7 +6,7 @@
 //! 区分は JS 版より少ない。止まるか (`call`) 止まらないか (`cast`) だけで、
 //! wasm の値を触るだけのもの (JS 版の `local`) はこのスレッドで済ませて返す。
 //! JS 版の `alloc` (id をこちらで採番して止まらずに返す) と
-//! `retain` (関数を表に預けて番号だけ送る) は形を変えずに残している。
+//! `retain` (関数・値を表に預けて番号だけ送る) は形を変えずに残している。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
 use biwa_player_core::syscall::Syscall;
-use wasmtime::{AnyRef, Caller, ExternRef, Func, Linker, Result, Rooted};
+use wasmtime::{AnyRef, Caller, ExternRef, Func, Linker, OwnedRooted, Result, Rooted};
 
 use crate::values::{self, HostMap, HostVec};
 use crate::{VmEvent, VmStats, reply_channel};
@@ -36,6 +36,10 @@ pub(crate) struct HostState {
     next_id: u32,
     /// 預かった関数 (JS 版の `retain`)。ホストが後で呼ぶ。
     pub(crate) handlers: HashMap<u32, Func>,
+    /// 預かった値 (JS 版の `retain`)。ホストが後で host export の引数として返す。
+    /// GC の対象なので [`OwnedRooted`] で握る (握っている間は回収されない)。
+    pub(crate) values: HashMap<u32, OwnedRooted<AnyRef>>,
+    /// 関数と値で共有する番号の連番。0 は「無し」。
     next_handle: u32,
     pub(crate) stats: VmStats,
     /// 最後にホスト関数から wasm に戻った時刻。
@@ -50,6 +54,7 @@ impl HostState {
             batch: Vec::new(),
             next_id: 1,
             handlers: HashMap::new(),
+            values: HashMap::new(),
             next_handle: 1,
             stats: VmStats::default(),
             last_return: Instant::now(),
@@ -99,11 +104,30 @@ impl HostState {
         id
     }
 
-    fn retain(&mut self, func: Func) -> u32 {
+    fn next_handle(&mut self) -> u32 {
         let handle = self.next_handle;
         self.next_handle += 1;
+        handle
+    }
+
+    fn retain(&mut self, func: Func) -> u32 {
+        let handle = self.next_handle();
         self.handlers.insert(handle, func);
         handle
+    }
+
+    fn retain_value(&mut self, value: OwnedRooted<AnyRef>) -> u32 {
+        let handle = self.next_handle();
+        self.values.insert(handle, value);
+        handle
+    }
+
+    /// 預けたものを手放す。関数か値かは問わない (番号の空間は共有)。知らない番号は無視する。
+    pub(crate) fn release(&mut self, handles: impl IntoIterator<Item = u32>) {
+        for h in handles {
+            self.handlers.remove(&h);
+            self.values.remove(&h);
+        }
     }
 
     /// ホスト関数に入った。前に wasm へ戻ってからの時間を数える。
@@ -472,6 +496,20 @@ fn define_ui(linker: &mut Linker<HostState>) -> Result<()> {
                 let state = c.data_mut();
                 let handle = state.retain(func);
                 state.cast(Syscall::UiSetHandler { id: id as u32, kind, handle });
+                Ok(())
+            })
+        },
+    )?;
+    linker.func_wrap(
+        ENGINE,
+        "sys_ui_set_value",
+        |mut caller: Caller<'_, HostState>, id: i32, kind: i32, value: Option<Rooted<AnyRef>>| -> Result<()> {
+            traced(&mut caller, |c| {
+                let value = value.ok_or_else(|| wasmtime::format_err!("sys_ui_set_value got a null value"))?;
+                let value = value.to_owned_rooted(&mut *c)?;
+                let state = c.data_mut();
+                let handle = state.retain_value(value);
+                state.cast(Syscall::UiSetValue { id: id as u32, kind, handle });
                 Ok(())
             })
         },

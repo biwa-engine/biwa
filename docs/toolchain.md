@@ -131,6 +131,11 @@ curl / irm で取ったファイルには macOS の quarantine が付かない�
 **約束を変えたら 3 か所の `ABI_VERSION` を一緒に上げる** (std の `[[native(arch="wasm")]]` の import 宣言を変えたときも)。
 いまは 1 つの版だけを受け付ける。runtime だけを独立に直して出したくなったら、受け付ける範囲を持たせる。
 
+| 版 | 変えたこと |
+| -- | ---------- |
+| 1  | 最初の版 |
+| 2  | `sys_ui_set_value` (値を預ける) を足し、`__biwa_std_game_window_new` に 3 つめの引数 (`WindowShared`) を足した (`host-function-values.md`) |
+
 ## まだやらないこと
 
 コード署名 (Windows の Authenticode、macOS の Developer ID と公証)、パッケージマネージャ (Homebrew・winget・scoop)、

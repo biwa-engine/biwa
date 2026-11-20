@@ -195,6 +195,31 @@ export function isKnownHandlerKind(kind: number): boolean {
   return HANDLER_TARGETS.has(kind);
 }
 
+/**
+ * 値 (Biwa から預かり、ホストが中身を見ずに後で返す struct) の種類。
+ *
+ * `sys_ui_set_value` で Element に設定する。ハンドラ (`HandlerKind`) とは別の番号の空間である
+ * (ホストが呼ぶ関数と、ホストが返すだけの値は役目が違う)。預かる表と番号の空間は共有する。
+ */
+export const ValueKind = {
+  /**
+   * Window のアプリケーションの寿命の共有物 (std の `WindowShared`)。
+   * scene を始めるときに `__biwa_std_game_window_new` の 3 つめの引数として返す。
+   * Window 以外には付けられない。
+   */
+  WindowShared: 0,
+} as const;
+
+/** 値の種類 → それを付けられる Element の kind。 */
+const VALUE_TARGETS = new Map<number, number>([
+  [ValueKind.WindowShared, ElementKind.Window],
+]);
+
+/** その種類の値を付けられる Element の kind。知らない種類なら `null`。 */
+export function valueTarget(kind: number): number | null {
+  return VALUE_TARGETS.get(kind) ?? null;
+}
+
 /** その種類のハンドラを付けられる Element の kind。知らない種類なら `null`。 */
 export function handlerTarget(kind: number): number | null {
   return HANDLER_TARGETS.get(kind) ?? null;
@@ -277,4 +302,13 @@ export function pushUiChild(parent: number, child: number): void {
  */
 export function setUiHandler(id: number, kind: number, handle: number): void {
   engine().ui.setHandler(id, kind, handle);
+}
+
+/**
+ * Element に値を設定する。`handle` は預けた値の番号である (Worker の表)。
+ *
+ * 同じ Element・同じ種類に設定し直すと置き換わり、古い値は手放される。
+ */
+export function setUiValue(id: number, kind: number, handle: number): void {
+  engine().ui.setValue(id, kind, handle);
 }

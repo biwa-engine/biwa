@@ -15,9 +15,10 @@ import {
   ENGINE_SYSCALLS,
   ENTER_SCENE_PAGE,
   FLUSH_AFTER_CAST,
+  RETAINED_ARG,
   RUNTIME_NAMESPACE,
 } from "./contract";
-import { HandlerTable } from "../handlerTable";
+import { RetainedTable } from "../retainedTable";
 import type { SceneStartRequest } from "../../ui/UIObjects";
 
 /** メインスレッドから来る起動指示。 */
@@ -33,17 +34,17 @@ export interface StartMessage {
  * scene を始めてほしいという知らせ。
  *
  * SceneStartButton が押されたときにメインスレッドが送る。中身は `UIObjects` の `SceneStartRequest`
- * (預けた関数の番号と、ScenePage の出力先の ui_id)。
+ * (預けた関数・値の番号と、ScenePage の出力先の ui_id)。
  */
 export interface StartSceneMessage extends SceneStartRequest {
   kind: "startScene";
 }
 
 /**
- * ハンドラを手放してよいという知らせ。
+ * 預けたもの (ハンドラ・値) を手放してよいという知らせ。
  *
  * 持ち主の Element が消えたときにメインスレッドが送る (`UIObjects` の `destroy`)。
- * Worker はその番号の関数を表から外す (`docs/host-function-values.md`)。
+ * Worker はその番号のものを表から外す (`docs/host-function-values.md`)。
  */
 export interface ReleaseMessage {
   kind: "release";
@@ -101,7 +102,7 @@ scope.addEventListener("message", (event) => {
     case "release":
       // 呼び出し中 (scene の実行中) はイベントループに帰らないので、ここに来るのは
       // Worker が Biwa のコードを実行していないときだけである。
-      handlers.release(message.handles);
+      retained.release(message.handles);
       return;
   }
 });
@@ -176,13 +177,15 @@ async function run(
   const request = await waitForScene();
   const onClick = handlerOf(request.onClick, "on_click");
   const mainScene = handlerOf(request.mainScene, "main_scene");
+  const shared = valueOf(request.shared, "window shared value");
 
   // 3. scene を始める。`Game` も `GameWindow` も JS からは組み立てられないので、
   //    出力先の束 `GameWindow` は std の host export に作らせ、ボタンの `on_click` に `Game[S]` を作らせる。
+  //    `GameWindow` には、Window に預けてあった共有物 (`WindowShared`) もそのまま返す。
   //    ScenePage を見せてから、その `Game[S]` で Window の `main_scene` を始める。
   //    値はすべて中身を見ずに受け渡す (`S` はホストに見えない)。
   const game = onClick(
-    gameWindowNew(request.canvasId, request.messageAreaId),
+    gameWindowNew(request.canvasId, request.messageAreaId, shared),
   );
   channel.cast(ENTER_SCENE_PAGE, [request.windowId]);
   mainScene(game);
@@ -193,11 +196,19 @@ function handlerOf(
   handle: number,
   what: string,
 ): (...args: unknown[]) => unknown {
-  const f = handlers.get(handle);
+  const f = retained.handler(handle);
   if (f === undefined) {
     throw new Error(`[biwa] the ${what} handler (#${handle}) is not retained`);
   }
   return f;
+}
+
+/** 預かった値を引く。手放されていれば名前を添えて叱る。 */
+function valueOf(handle: number, what: string): unknown {
+  if (!retained.has(handle)) {
+    throw new Error(`[biwa] the ${what} (#${handle}) is not retained`);
+  }
+  return retained.value(handle);
 }
 
 /** 固定名の export を取り出す。無ければ名前を添えて叱る。 */
@@ -383,14 +394,14 @@ const LOCAL_SYSCALLS: Record<string, (...args: never[]) => unknown> = {
 let nextObjectId = 1;
 
 /**
- * Biwa から預かった関数 (ハンドラ) の表 (`contract.ts` の `retain`)。
+ * Biwa から預かった関数 (ハンドラ) と値の表 (`contract.ts` の `retain`)。
  *
- * 関数はスレッドを越えられないので、ここに置いてメインスレッドには番号だけを送る。
+ * どちらもスレッドを越えられないので、ここに置いてメインスレッドには番号だけを送る。
  * ホストが関数を呼ぶ (ホスト → Biwa) のもこの Worker の中からで、
  * 呼んでよいのは Worker が Biwa のコードを実行していないときだけである
  * (`docs/host-function-values.md`)。今呼ぶのは SceneStartButton による scene の開始だけである (`run`)。
  */
-const handlers = new HandlerTable();
+const retained = new RetainedTable();
 
 /**
  * `biwa:engine` の import 1 つを、その区分に応じた関数にする。
@@ -432,13 +443,15 @@ function syscall(
   }
 
   if (kind === "retain") {
-    // 関数は表に預けて番号に替える。
-    return ((...args: unknown[]): void => {
-      const sent = args.map((arg) =>
-        typeof arg === "function"
-          ? handlers.retain(arg as (...a: unknown[]) => unknown)
-          : arg,
+    // 決まった位置の引数 (関数か値) を表に預けて番号に替える。
+    const at = RETAINED_ARG[name];
+    if (at === undefined) {
+      throw new Error(
+        `[biwa] syscall \`${name}\` is declared retain but has no retained argument`,
       );
+    }
+    return ((...args: unknown[]): void => {
+      const sent = args.map((arg, i) => (i === at ? retained.retain(arg) : arg));
       channel.cast(name, sent);
     }) as WebAssembly.ImportValue;
   }

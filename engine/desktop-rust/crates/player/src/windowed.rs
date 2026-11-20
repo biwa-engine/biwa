@@ -230,7 +230,7 @@ impl Player {
 
     /// 手放してよくなった関数の番号を vm に伝える (Element が消えたとき)。
     fn release_handlers(&mut self) {
-        let released = self.engine.take_released_handlers();
+        let released = self.engine.take_released();
         if !released.is_empty()
             && let Some(vm) = &self.vm
         {

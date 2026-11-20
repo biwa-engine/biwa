@@ -90,6 +90,8 @@ pub enum Syscall {
     UiPushChild { parent: UiId, child: UiId },
     /// Element にハンドラを預けた。`handle` は vm の表の番号 (関数そのものは vm に残る)。
     UiSetHandler { id: UiId, kind: i32, handle: u32 },
+    /// Element に値を預けた。`handle` は vm の表の番号 (値そのものは vm に残る)。
+    UiSetValue { id: UiId, kind: i32, handle: u32 },
 
     /// scene を始めるので ScenePage を見せる (vm 自身が流す。std の import ではない)。
     EnterScenePage { window: UiId },
@@ -128,6 +130,7 @@ impl Syscall {
             Self::UiSetPropertyWithString { .. } => "sys_ui_set_property_with_string",
             Self::UiPushChild { .. } => "sys_ui_push_child",
             Self::UiSetHandler { .. } => "sys_ui_set_handler",
+            Self::UiSetValue { .. } => "sys_ui_set_value",
             Self::EnterScenePage { .. } => "__biwa_enter_scene_page",
         }
     }
@@ -135,8 +138,8 @@ impl Syscall {
 
 /// scene を始めるのに要るもの。エンジン (UI) が揃え、vm がそれで scene を始める。
 ///
-/// vm は `on_click(GameWindow::new(canvas, message_area))` で `Game[S]` を作り、
-/// ScenePage を見せてから `main_scene(game)` を呼ぶ。関数は番号で指す。
+/// vm は `on_click(GameWindow::new(canvas, message_area, shared))` で `Game[S]` を作り、
+/// ScenePage を見せてから `main_scene(game)` を呼ぶ。関数と値は番号で指す。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SceneStart {
     pub window: UiId,
@@ -144,6 +147,8 @@ pub struct SceneStart {
     pub on_click: u32,
     /// Window の `main_scene` (`fn(Game[S]) -> Game[S]`) の番号。
     pub main_scene: u32,
+    /// Window に預けた共有物 (std の `WindowShared`) の番号。そのまま `GameWindow` に返す。
+    pub shared: u32,
     pub canvas: UiId,
     pub message_area: UiId,
 }

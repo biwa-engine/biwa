@@ -12,7 +12,7 @@
  */
 
 /** この runtime が走らせられる版。コンパイラの `ABI_VERSION` を上げたら合わせる。 */
-export const ABI_VERSION = 1;
+export const ABI_VERSION = 2;
 
 const ABI_SECTION = "biwa.abi";
 

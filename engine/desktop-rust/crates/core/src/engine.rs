@@ -177,6 +177,7 @@ impl Engine {
             }
             Syscall::UiPushChild { parent, child } => self.ui.push_child(parent, child)?,
             Syscall::UiSetHandler { id, kind, handle } => self.ui.set_handler(id, kind, handle)?,
+            Syscall::UiSetValue { id, kind, handle } => self.ui.set_value(id, kind, handle)?,
             Syscall::EnterScenePage { window } => self.scene = Some(self.ui.enter_scene_page(window)?),
 
             Syscall::Wait | Syscall::AwaitTransitions | Syscall::Sleep { .. } => {
@@ -281,9 +282,9 @@ impl Engine {
         std::mem::take(&mut self.image_requests)
     }
 
-    /// 手放してよくなった関数の番号 (vm に伝える)。
-    pub fn take_released_handlers(&mut self) -> Vec<u32> {
-        self.ui.take_released_handlers()
+    /// 手放してよくなった関数・値の番号 (vm に伝える)。
+    pub fn take_released(&mut self) -> Vec<u32> {
+        self.ui.take_released()
     }
 
     /// 画像が読めた。
@@ -790,6 +791,7 @@ mod tests {
             Syscall::UiCreate { id: 6, kind: 12 },
             Syscall::UiSetHandler { id: 1, kind: 0, handle: 10 },
             Syscall::UiSetHandler { id: 6, kind: 1, handle: 11 },
+            Syscall::UiSetValue { id: 1, kind: 0, handle: 12 },
             Syscall::UiPushChild { parent: 5, child: 6 },
             Syscall::UiPushChild { parent: 1, child: 5 },
         ];
