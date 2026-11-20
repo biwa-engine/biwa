@@ -1,43 +1,8 @@
 import { Assets, Sprite, Texture } from "pixi.js";
 import { resolveAssetUrl } from "../api/assets";
-import {
-  Curve,
-  PARAM_COUNT,
-  Param,
-  curveAt,
-  isKnownKind,
-  isKnownParam,
-  isPeriodic,
-  waveAt,
-} from "../api/transition";
+import { Param, isKnownKind, isKnownParam } from "../api/transition";
+import { Automation } from "../automation/Automation";
 import type { CanvasSurface, CanvasSurfaces } from "./CanvasSurfaces";
-
-/**
- * 遷移の 1 区間。
- *
- * `add_transition` 1 回がこれ 1 つになる。`start_transitions` まで
- * オブジェクトの `pending` に積まれ、発火して初めて `startAt` が決まる。
- */
-interface Segment {
-  owner: CanvasObject;
-  param: number;
-  kind: number;
-  /** 一度限りの遷移では目標値、周期系では振幅。 */
-  value: number;
-  /** `start_transitions` からの遅れ [ms]。 */
-  after: number;
-  /** 一度限りの遷移では遷移時間、周期系では周期 [ms]。 */
-  duration: number;
-  /** エンジン時計の上での開始時刻。発火時に決まる。 */
-  startAt: number;
-  /** 活性になった瞬間に捉えた基準値。 */
-  baseline: number;
-}
-
-/** 1 回の `start_transitions` で発火した区間のまとまり。 */
-interface Batch {
-  segments: Segment[];
-}
 
 /**
  * canvas に置かれたオブジェクト 1 つ。
@@ -56,16 +21,6 @@ class CanvasObject {
   natural: { w: number; h: number } | null = null;
   /** 負の `w` / `h` (= 指定しない) を決め終えたか (`resolveAutoSize`)。 */
   autoSizeResolved = false;
-  /** param ごとの落ち着いた値。周期系の偏差は含まない。 */
-  readonly value = new Float64Array(PARAM_COUNT);
-  /** param ごとの、活性な周期系が乗せている偏差。区間が終われば消える。 */
-  readonly deviation = new Float64Array(PARAM_COUNT);
-  /** param ごとの、走っている区間列。 */
-  readonly active: Segment[][] = [];
-  /** param ごとの、次の `start_transitions` を待つ区間列。 */
-  readonly pending: Segment[][] = [];
-  /** `active[param]` の中で今活性な区間の位置。-1 はまだどれも始まっていない。 */
-  readonly cursor = new Int32Array(PARAM_COUNT).fill(-1);
   /** 削除予定時刻。null なら予定なし。 */
   deleteAt: number | null = null;
   alive = true;
@@ -74,15 +29,11 @@ class CanvasObject {
     this.id = id;
     this.sprite = sprite;
     this.surface = surface;
-    for (let param = 0; param < PARAM_COUNT; param++) {
-      this.active.push([]);
-      this.pending.push([]);
-    }
   }
 
-  /** 画面に出る値。落ち着いた値に周期系の偏差を足したもの。 */
-  at(param: number): number {
-    return this.value[param] + this.deviation[param];
+  /** パラメータの表 (`Automation`) での持ち主の鍵。 */
+  get key(): string {
+    return `obj:${this.id}`;
   }
 }
 
@@ -124,12 +75,10 @@ export class CanvasObjects {
   timeScale = 1;
 
   /**
-   * 完了していない sync 印のバッチ。
-   *
-   * テキストの進行と結びついた演出だけがここに入る。
-   * 独立に走らせるバッチは誰も待たないので記録しない。
+   * パラメータ (x / y / w / h / alpha / theta) の値と遷移。sync 印の束もここが持つ。
+   * 音のパラメータと同じ仕組みである (`automation/Automation.ts`)。
    */
-  private syncBatches: Batch[] = [];
+  private readonly params = new Automation();
   private waiters: Array<() => void> = [];
   private timers: Timer[] = [];
 
@@ -175,12 +124,8 @@ export class CanvasObjects {
     sprite.visible = false;
 
     const object = new CanvasObject(id, sprite, surface);
-    object.value[Param.X] = x;
-    object.value[Param.Y] = y;
-    object.value[Param.W] = w;
-    object.value[Param.H] = h;
-    object.value[Param.Alpha] = alpha;
-    object.value[Param.Theta] = theta;
+    const initial = [x, y, w, h, alpha, theta];
+    initial.forEach((value, param) => this.params.define(object.key, param, value));
 
     this.objects.set(id, object);
     surface.layer(layer).addChild(sprite);
@@ -243,16 +188,7 @@ export class CanvasObjects {
       return;
     }
 
-    object.pending[param].push({
-      owner: object,
-      param,
-      kind,
-      value,
-      after: Math.max(after, 0),
-      duration: Math.max(duration, 0),
-      startAt: 0,
-      baseline: 0,
-    });
+    this.params.push(object.key, param, kind, value, after, duration);
   }
 
   /**
@@ -263,35 +199,17 @@ export class CanvasObjects {
    * 背景のパンの最中にキャラクターが跳ねただけでパンが死ぬのを避けるためである。
    */
   start(sync: boolean): void {
-    const segments: Segment[] = [];
+    this.params.start(sync, this.now);
+  }
 
-    for (const object of this.objects.values()) {
-      for (let param = 0; param < PARAM_COUNT; param++) {
-        const staged = object.pending[param];
-        if (staged.length === 0) continue;
-
-        staged.sort((a, b) => a.after - b.after);
-        for (const segment of staged) {
-          segment.startAt = this.now + segment.after;
-          segments.push(segment);
-        }
-
-        object.active[param] = staged;
-        object.pending[param] = [];
-        object.cursor[param] = -1;
-        // 前の周期系が乗せていた偏差は、置き換えた時点で消える。
-        object.deviation[param] = 0;
-      }
-    }
-
-    if (sync && segments.length > 0) {
-      this.syncBatches.push({ segments });
-    }
+  /** 完了していない sync 印の演出があるか。 */
+  hasSync(): boolean {
+    return this.params.hasSync();
   }
 
   /** sync 印の演出がすべて終わるまで待つ。 */
   awaitSync(): Promise<void> {
-    if (this.syncBatches.length === 0) {
+    if (!this.params.hasSync()) {
       return Promise.resolve();
     }
     return new Promise<void>((resolve) => {
@@ -319,27 +237,7 @@ export class CanvasObjects {
    * 代わりに対象のバッチの区間を過去へずらす。
    */
   skipSync(): boolean {
-    let skipped = false;
-
-    for (const batch of this.syncBatches) {
-      let endsAt = -Infinity;
-      for (const segment of batch.segments) {
-        if (!segment.owner.alive || isPeriodic(segment.kind)) continue;
-        endsAt = Math.max(endsAt, endOf(segment));
-      }
-
-      const delta = endsAt - this.now;
-      if (!Number.isFinite(delta) || delta <= 0) continue;
-
-      // 周期系も一緒にずらす。末尾に置かれた `None` がその過程で発火して、
-      // ゆらぎもバッチの意図どおりに終わる。
-      for (const segment of batch.segments) {
-        segment.startAt -= delta;
-      }
-      skipped = true;
-    }
-
-    return skipped;
+    return this.params.skipSync(this.now);
   }
 
   // --- Ticker から毎フレーム呼ばれる -----------------------------------
@@ -352,6 +250,7 @@ export class CanvasObjects {
       // 出力先の Canvas Element ごと消えた (描画先が捨てられた) もの。
       if (object.sprite.destroyed) {
         object.alive = false;
+        this.params.remove(object.key);
         this.objects.delete(object.id);
         continue;
       }
@@ -359,75 +258,18 @@ export class CanvasObjects {
         this.destroy(object);
         continue;
       }
-      this.advance(object, now);
-      this.project(object);
     }
+    this.params.update(now);
+    for (const object of this.objects.values()) this.project(object);
 
     this.collect(now);
   }
 
   // --- 内部 -------------------------------------------------------------
 
-  /** 各パラメータの活性な区間を進める。 */
-  private advance(object: CanvasObject, now: number): void {
-    for (let param = 0; param < PARAM_COUNT; param++) {
-      const track = object.active[param];
-      if (track.length === 0) continue;
-
-      let cursor = object.cursor[param];
-      if (cursor < 0) {
-        if (track[0].startAt > now) continue;
-        cursor = 0;
-        this.activate(object, track[0]);
-      }
-
-      // 次の区間が始まったら、前の区間はその時点で終わる。
-      // 引き継ぐ値が正しくなるよう、終わる瞬間の値を先に確定させる。
-      while (cursor + 1 < track.length && track[cursor + 1].startAt <= now) {
-        this.evaluate(object, track[cursor], track[cursor + 1].startAt);
-        cursor += 1;
-        this.activate(object, track[cursor]);
-      }
-
-      object.cursor[param] = cursor;
-      this.evaluate(object, track[cursor], now);
-    }
-  }
-
-  /** 区間が活性になった瞬間に基準値を捉える。 */
-  private activate(object: CanvasObject, segment: Segment): void {
-    segment.baseline = object.value[segment.param];
-    object.deviation[segment.param] = 0;
-  }
-
-  private evaluate(object: CanvasObject, segment: Segment, at: number): void {
-    const param = segment.param;
-
-    if (segment.kind === Curve.None) {
-      // 基準値 (= 区間に入った時点の落ち着いた値) で固定して終わる。
-      object.value[param] = segment.baseline;
-      object.deviation[param] = 0;
-      return;
-    }
-
-    if (isPeriodic(segment.kind)) {
-      // 周期系は落ち着いた値を動かさず、偏差だけを乗せる。
-      // だから区間が終われば値は基準値に戻る。
-      object.value[param] = segment.baseline;
-      const period = segment.duration > 0 ? segment.duration : 1;
-      const phase = ((((at - segment.startAt) / period) % 1) + 1) % 1;
-      object.deviation[param] = segment.value * waveAt(segment.kind, phase);
-      return;
-    }
-
-    object.deviation[param] = 0;
-    const progress =
-      segment.duration > 0
-        ? clamp((at - segment.startAt) / segment.duration, 0, 1)
-        : 1;
-    object.value[param] =
-      segment.baseline +
-      (segment.value - segment.baseline) * curveAt(segment.kind, progress);
+  /** 画面に出る値。落ち着いた値に周期系の偏差を足したもの。 */
+  private at(object: CanvasObject, param: number): number {
+    return this.params.get(object.key, param) ?? 0;
   }
 
   /**
@@ -450,14 +292,14 @@ export class CanvasObjects {
     const unitY = height / 100;
     const sprite = object.sprite;
     // 描画先 (`CanvasSurface`) の原点が Canvas Element の中央にある。
-    sprite.x = object.at(Param.X) * unitX;
+    sprite.x = this.at(object, Param.X) * unitX;
     // biwa の y は上が正。Pixi は下が正なので反転する。
-    sprite.y = -object.at(Param.Y) * unitY;
-    sprite.width = Math.max(object.at(Param.W), 0) * unitX;
-    sprite.height = Math.max(object.at(Param.H), 0) * unitY;
-    sprite.alpha = clamp(object.at(Param.Alpha), 0, 255) / 255;
+    sprite.y = -this.at(object, Param.Y) * unitY;
+    sprite.width = Math.max(this.at(object, Param.W), 0) * unitX;
+    sprite.height = Math.max(this.at(object, Param.H), 0) * unitY;
+    sprite.alpha = clamp(this.at(object, Param.Alpha), 0, 255) / 255;
     // y を反転した分、回転の向きも反転させる (正 = 反時計回り)。
-    sprite.rotation = (-object.at(Param.Theta) * Math.PI) / 180;
+    sprite.rotation = (-this.at(object, Param.Theta) * Math.PI) / 180;
   }
 
   /**
@@ -480,25 +322,26 @@ export class CanvasObjects {
     if (natural === null || natural.w <= 0 || natural.h <= 0) return;
     object.autoSizeResolved = true;
 
-    const w = object.value[Param.W];
-    const h = object.value[Param.H];
+    const w = this.at(object, Param.W);
+    const h = this.at(object, Param.H);
     const toUnitX = (px: number): number => (px / width) * 100;
     const toUnitY = (px: number): number => (px / height) * 100;
 
     if (w < 0 && h < 0) {
-      object.value[Param.W] = toUnitX(natural.w);
-      object.value[Param.H] = toUnitY(natural.h);
+      this.params.setSettled(object.key, Param.W, toUnitX(natural.w));
+      this.params.setSettled(object.key, Param.H, toUnitY(natural.h));
     } else if (w < 0) {
       const hPx = (h / 100) * height;
-      object.value[Param.W] = toUnitX(natural.w * (hPx / natural.h));
+      this.params.setSettled(object.key, Param.W, toUnitX(natural.w * (hPx / natural.h)));
     } else if (h < 0) {
       const wPx = (w / 100) * width;
-      object.value[Param.H] = toUnitY(natural.h * (wPx / natural.w));
+      this.params.setSettled(object.key, Param.H, toUnitY(natural.h * (wPx / natural.w)));
     }
   }
 
   private destroy(object: CanvasObject): void {
     object.alive = false;
+    this.params.remove(object.key);
     object.sprite.removeFromParent();
     object.sprite.destroy();
     this.objects.delete(object.id);
@@ -506,15 +349,10 @@ export class CanvasObjects {
 
   /** 終わった sync バッチと sleep を回収する。 */
   private collect(now: number): void {
-    if (this.syncBatches.length > 0) {
-      this.syncBatches = this.syncBatches.filter(
-        (batch) => !isBatchDone(batch, now),
-      );
-      if (this.syncBatches.length === 0 && this.waiters.length > 0) {
-        const waiters = this.waiters;
-        this.waiters = [];
-        for (const resolve of waiters) resolve();
-      }
+    if (!this.params.hasSync() && this.waiters.length > 0) {
+      const waiters = this.waiters;
+      this.waiters = [];
+      for (const resolve of waiters) resolve();
     }
 
     if (this.timers.length > 0) {
@@ -525,26 +363,6 @@ export class CanvasObjects {
       }
     }
   }
-}
-
-/**
- * 区間が終わる時刻。
- *
- * 周期系は終わらないので `-Infinity` を返す (完了の判定に数えない)。
- * これがあるので、ゆらぎの混じった sync バッチでも待ちが固まらない。
- */
-function endOf(segment: Segment): number {
-  if (isPeriodic(segment.kind)) return -Infinity;
-  if (segment.kind === Curve.None) return segment.startAt;
-  return segment.startAt + segment.duration;
-}
-
-function isBatchDone(batch: Batch, now: number): boolean {
-  for (const segment of batch.segments) {
-    if (!segment.owner.alive || isPeriodic(segment.kind)) continue;
-    if (now < endOf(segment)) return false;
-  }
-  return true;
 }
 
 function clamp(value: number, min: number, max: number): number {
