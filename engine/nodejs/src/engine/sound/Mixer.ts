@@ -264,7 +264,8 @@ export class Mixer {
   }
 
   addStart(id: number, after: number, offset: number, repeat: number): void {
-    this.object(id);
+    // 終わった (解放した) SoundObject への操作は黙って無視する (鳴り終わった SE を止めるのはよくあること)。
+    if (!this.objects.has(id)) return;
     this.pending.push({
       kind: "start",
       object: id,
@@ -275,12 +276,14 @@ export class Mixer {
   }
 
   addStop(id: number, after: number): void {
-    this.object(id);
+    // 終わった (解放した) SoundObject への操作は黙って無視する (鳴り終わった SE を止めるのはよくあること)。
+    if (!this.objects.has(id)) return;
     this.pending.push({ kind: "stop", object: id, after: Math.max(after, 0) });
   }
 
   addTransition(id: number, param: number, kind: number, value: number, after: number, duration: number): void {
-    this.object(id);
+    // 終わった (解放した) SoundObject への操作は黙って無視する (鳴り終わった SE を止めるのはよくあること)。
+    if (!this.objects.has(id)) return;
     if (param === ObjectParam.Rate) throw new Error("the sound object param `rate` (3) is reserved");
     if (param !== ObjectParam.Volume && param !== ObjectParam.X && param !== ObjectParam.Y) {
       throw new Error(`unknown sound object param: ${param}`);
@@ -436,12 +439,6 @@ export class Mixer {
     const b = this.buses.get(id);
     if (b === undefined) throw new Error(`no such sound bus: ${id}`);
     return b;
-  }
-
-  private object(id: number): SoundObject {
-    const o = this.objects.get(id);
-    if (o === undefined) throw new Error(`no such sound object: ${id}`);
-    return o;
   }
 
   private checkKind(kind: number): void {

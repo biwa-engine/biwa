@@ -105,6 +105,8 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   // 持っているので、その実体は JS 側にしか無い。
   /** 文字列の連結。 */
   sys_string_concat: "local",
+  /** 文字列の比較 (中身で)。 */
+  sys_string_eq: "local",
   /** 数値から文字列を作る。`String` の実体はホスト側にしか無い。 */
   sys_int_to_string: "local",
   sys_float_to_string: "local",

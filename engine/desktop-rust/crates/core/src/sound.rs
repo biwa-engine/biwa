@@ -464,9 +464,10 @@ impl Mixer {
         Ok(())
     }
 
+    /// 終わった (解放した) SoundObject への操作は黙って無視する。鳴り終わった SE を止めるのはよくあることなので。
     pub fn add_start(&mut self, id: u32, after: i32, offset: i32, repeat: i32) -> Result<(), String> {
         if !self.objects.contains_key(&id) {
-            return Err(format!("no such sound object: {id}"));
+            return Ok(());
         }
         self.pending.push(Pending::Start {
             object: id,
@@ -479,7 +480,7 @@ impl Mixer {
 
     pub fn add_stop(&mut self, id: u32, after: i32) -> Result<(), String> {
         if !self.objects.contains_key(&id) {
-            return Err(format!("no such sound object: {id}"));
+            return Ok(());
         }
         self.pending.push(Pending::Stop { object: id, after: f64::from(after.max(0)) });
         Ok(())
@@ -487,7 +488,7 @@ impl Mixer {
 
     pub fn add_transition(&mut self, id: u32, param: i32, kind: i32, value: f32, after: i32, duration: i32) -> Result<(), String> {
         if !self.objects.contains_key(&id) {
-            return Err(format!("no such sound object: {id}"));
+            return Ok(());
         }
         let param = match u8::try_from(param) {
             Ok(p @ (object_param::VOLUME | object_param::X | object_param::Y)) => p,

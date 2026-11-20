@@ -331,6 +331,8 @@ function runtimeImports(
 /** Worker 内で完結する syscall の実装。 */
 const LOCAL_SYSCALLS: Record<string, (...args: never[]) => unknown> = {
   sys_string_concat: (a: string, b: string): string => a + b,
+  /** 文字列が中身で等しいか (`Bool` は i32)。 */
+  sys_string_eq: (a: string, b: string): number => (a === b ? 1 : 0),
 
   sys_int_to_string: (value: number): string => String(value),
 

@@ -483,6 +483,15 @@ fn define_values(linker: &mut Linker<HostState>) -> Result<()> {
 
     linker.func_wrap(
         ENGINE,
+        "sys_string_eq",
+        |mut caller: Caller<'_, HostState>, a: Ext, b: Ext| -> Result<i32> {
+            traced(&mut caller, |caller| {
+                Ok(i32::from(values::string_of(&*caller, a)? == values::string_of(&*caller, b)?))
+            })
+        },
+    )?;
+    linker.func_wrap(
+        ENGINE,
         "sys_string_concat",
         |mut caller: Caller<'_, HostState>, a: Ext, b: Ext| -> Result<Ext> {
             traced(&mut caller, |caller| {
