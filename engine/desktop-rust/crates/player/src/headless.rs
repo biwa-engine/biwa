@@ -3,6 +3,8 @@
 //! クリック待ちのたびに Message Window の文字をログに出し、自動でクリックして進める。
 //! sleep はエンジン時計をその分だけ進めて終わらせる (実時間は待たない)。演出待ちは演出を飛ばして終わらせる。
 //! 画像は読まない (読み込みの依頼は捨てる)。UI は描かないので、最初の SceneStartButton を押したことにして scene を始める。
+//! 音は出さない (出力が無い状態)。音のファイルも読まず、長さ 0 の音として扱う (有限の音はすぐ終わり、
+//! 無限の音は鳴り続ける)。音の論理状態 (バスの木・遷移・sync) はそのまま動く。
 
 use std::time::{Duration, Instant};
 
@@ -35,6 +37,10 @@ pub fn run(options: &Options, wasm: Vec<u8>) -> Result<(), String> {
                     }
                 }
                 engine.take_image_requests();
+                for request in engine.take_sound_requests() {
+                    engine.sound_loaded(request.sound, None);
+                }
+                engine.take_audio_commands();
                 let released = engine.take_released();
                 if !released.is_empty() {
                     vm.send(HostCommand::Release(released));

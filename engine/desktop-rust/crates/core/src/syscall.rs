@@ -93,6 +93,38 @@ pub enum Syscall {
     /// Element に値を預けた。`handle` は vm の表の番号 (値そのものは vm に残る)。
     UiSetValue { id: UiId, kind: i32, handle: u32 },
 
+    // --- 音 (`docs/sound.md`)。id は vm が SoundObject / Bus / Effect の空間ごとに採番済み。 ---
+    /// バスを作る。
+    SoundBusCreate { bus: u32 },
+    /// バスの effect の列の末尾に effect を挿す (繋ぐ前だけ)。
+    SoundBusAddEffect { bus: u32, effect: u32, kind: i32, cfg1: i32, cfg2: i32 },
+    SoundBusAttach { bus: u32, parent: u32 },
+    /// 根のバスを出力に繋ぐ。
+    SoundOutputAttach { bus: u32 },
+    SoundBusAddStopAll { bus: u32, after: i32 },
+    SoundBusDelete { bus: u32, after: i32 },
+    SoundBusAddTransition { bus: u32, param: i32, kind: i32, value: f32, after: i32, duration: i32 },
+    SoundBusSetParam { bus: u32, param: i32, value: f32 },
+    SoundEffectAddTransition { effect: u32, param: i32, kind: i32, value: f32, after: i32, duration: i32 },
+    SoundEffectSetParam { effect: u32, param: i32, value: f32 },
+    /// SoundObject を作る。まだ鳴らない。`loop_end_ms` = 0 はファイルの終わり。
+    SoundCreate {
+        id: u32,
+        path: String,
+        bus: u32,
+        volume_db: f32,
+        x: f32,
+        y: f32,
+        loop_start_ms: i32,
+        loop_end_ms: i32,
+        normalize: i32,
+    },
+    /// 開始を積む。`repeat` = 0 は無限。
+    SoundAddStart { id: u32, after: i32, offset_ms: i32, repeat: i32 },
+    SoundAddStop { id: u32, after: i32 },
+    SoundAddTransition { id: u32, param: i32, kind: i32, value: f32, after: i32, duration: i32 },
+    SoundPreload { path: String },
+
     /// scene を始めるので ScenePage を見せる (vm 自身が流す。std の import ではない)。
     EnterScenePage { window: UiId },
 }
@@ -131,6 +163,21 @@ impl Syscall {
             Self::UiPushChild { .. } => "sys_ui_push_child",
             Self::UiSetHandler { .. } => "sys_ui_set_handler",
             Self::UiSetValue { .. } => "sys_ui_set_value",
+            Self::SoundBusCreate { .. } => "sys_sound_bus_create",
+            Self::SoundBusAddEffect { .. } => "sys_sound_bus_add_effect",
+            Self::SoundBusAttach { .. } => "sys_sound_bus_attach",
+            Self::SoundOutputAttach { .. } => "sys_sound_output_attach",
+            Self::SoundBusAddStopAll { .. } => "sys_sound_bus_add_stop_all",
+            Self::SoundBusDelete { .. } => "sys_sound_bus_delete",
+            Self::SoundBusAddTransition { .. } => "sys_sound_bus_add_transition",
+            Self::SoundBusSetParam { .. } => "sys_sound_bus_set_param",
+            Self::SoundEffectAddTransition { .. } => "sys_sound_effect_add_transition",
+            Self::SoundEffectSetParam { .. } => "sys_sound_effect_set_param",
+            Self::SoundCreate { .. } => "sys_sound_create",
+            Self::SoundAddStart { .. } => "sys_sound_add_start",
+            Self::SoundAddStop { .. } => "sys_sound_add_stop",
+            Self::SoundAddTransition { .. } => "sys_sound_add_transition",
+            Self::SoundPreload { .. } => "sys_sound_preload",
             Self::EnterScenePage { .. } => "__biwa_enter_scene_page",
         }
     }

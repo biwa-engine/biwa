@@ -20,6 +20,7 @@ pub mod draw;
 pub mod engine;
 pub mod geometry;
 pub mod image;
+pub mod sound;
 pub mod layout;
 pub mod syscall;
 pub mod text;
