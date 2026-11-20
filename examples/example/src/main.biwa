@@ -87,7 +87,7 @@ fn main() {
         margin_bottom(vh(10.0)).
         into();
     let link_to_scene: MyUi = SceneStartButton::new(fn (window) {
-            Game::new(window, "test1", MyGameState {}, Config::new(DeveloperConfig::default()))
+            Game::new(window, "test1", MyGameState {})
         }).
         width(vw(30.0)).
         height(vh(8.0)).
@@ -173,7 +173,10 @@ fn main() {
         Vec::of(scene_page_body),
     );
   
+    // 設定 (文字の速さ・大きさ・色など) は Window に与える。省くと `Config::default()`。
+    // Window の寿命のものなので、`Game` は `WindowHandle` 経由でこれを共有する。
     Window::new(scenario, scene_page, Vec::new()).
+        config(Config::new(DeveloperConfig::default())).
         push(main_page).
         push(config_page).
         show();

@@ -11,8 +11,6 @@ import std::string::String;
 import std::collections::Vec;
 import std::game::Game;
 import std::game::ui::WindowHandle;
-import std::game::config::Config;
-import std::game::config::DeveloperConfig;
 import std::game::image::Image;
 import std::game::color::Color;
 import std::game::color::Alpha;
@@ -62,7 +60,7 @@ fn main() {
 }
 
 fn new_game(window: WindowHandle) -> CheckGame {
-  Game::new(window, "canvascheck", CheckState {}, Config::new(DeveloperConfig::default()))
+  Game::new(window, "canvascheck", CheckState {})
 }
 
 scene opening(g: CheckGame) -> CheckGame {{

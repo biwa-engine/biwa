@@ -8,8 +8,6 @@ import std::string::String;
 import std::collections::Vec;
 import std::game::Game;
 import std::game::ui::WindowHandle;
-import std::game::config::Config;
-import std::game::config::DeveloperConfig;
 import std::convert::Into;
 import std::game::ui::UiElement;
 import std::game::ui::Window;
@@ -95,7 +93,7 @@ fn main() {
 }
 
 fn new_game(window: WindowHandle) -> BenchGame {
-  Game::new(window, "gcchurn", BenchState {}, Config::new(DeveloperConfig::default()))
+  Game::new(window, "gcchurn", BenchState {})
 }
 
 scene opening(g: BenchGame) -> BenchGame {{

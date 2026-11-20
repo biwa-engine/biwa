@@ -1740,4 +1740,8 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
 - `WindowHandle` は型引数を持たない。ゲームの状態 `S` やプレイごとのものは `Game` に置く。
 - `Game[S]` はプレイの間これを持ち続け、Window への副作用の経路にする (struct は参照で、書き換えは共有される)。
 - ABI 2 (`docs/toolchain.md`)。
+- 設定 (`Config`) も `WindowHandle` に移した。プレイヤーが変える `UserConfig` はプレイをまたいで続くので、Window の寿命のものである。
+  - `Window::config(Config)` で与える (省くと `Config::default()`)。`Game::new(window, name, states)` は設定を取らない。
+  - std は `game.window.config()` を読んで絶対値に直す。返るのは Window が持つものそのものなので、書き換えは Window の側にも効く。
+- struct が参照として共有されること (mutable な参照の共有) を `docs/biwa-lang-type-system.md` に明文化した。
 

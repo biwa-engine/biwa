@@ -331,7 +331,7 @@ click    → resolve する
 
 ### 設定
 
-`Config` は `Game` が持つ (決めたこと 3) ので、エンジンは設定を知らない。
+`Config` は Biwa 側 (`Window` に与え、`WindowHandle` が持つ。決めたこと 3 の後の変更を参照) にあるので、エンジンは設定を知らない。
 渡ってくる速度・サイズ・色はすべて解決済みの絶対値である。
 
 `UserConfig` を実行時に変えるのは Biwa 側の値の書き換えになる。
@@ -412,6 +412,11 @@ click    → resolve する (クリアはしない。std が次に呼ぶ)
 `>>` を書かずに scene が終わった場合も、積み残しを出してから終わる。
 
 ### 3. `Config` は `Game` が持つ
+
+> **後に変えた** (2026-11-20): 設定はプレイをまたいで続くものなので、`Window::config(..)` で与え、
+> std の `WindowHandle` (Window の寿命のものの束) が持つ。`Game` は `game.window.config()` で読む。
+> `Game::new(window, name, states)` は設定を取らない (`ui-api-impl-status.md` §20)。
+> 「std が絶対値に直してから syscall に渡し、エンジンは設定を持たない」は変わらない。以下は当時の決定の記録である。
 
 ```biwa
 [[lang="game"]]

@@ -83,6 +83,8 @@ fn app() -> Window {
     エンジンのUIとstdに `ScenePage` を新設。以下2つをプロパティにもつ。もう文字列のidでElementが相互に参照し合う必要はない(syscall レベルでは ui_id で設定する)
     - `.canvas: Canvas`
     - `.message_area: MessageArea`
+  - `.config: Config`: ゲームの設定 (文字の速さ・大きさ・色など)。省くと `Config::default()`。
+    プレイをまたいで続くので `Game` ではなく Window に与え、`WindowHandle` に入れて `Game` と共有する。
 - `SceneStartButton` Element を新設。基本的なプロパティは`Button`と同じだが、
   - `on_click: fn(WindowHandle) -> Game[S]`: 押されたときに Engine は Biwa Language 側のこのハンドラ関数をよびだす。
     `WindowHandle` (Window の寿命のものの束。出力先もここにある) は `Window::show()` が作って Engine に預けてあるので、
@@ -98,6 +100,7 @@ fn main() -> Window[S] {
 
     // fn(Game[S]) -> Game[S]
     main_scene=(scenario)
+    config=(Config::default())
     scene_page=(
       <ScenePage
         canvas=(<Canvas />)
@@ -111,7 +114,7 @@ fn main() -> Window[S] {
         <SceneStartButton
           text=("NEW GAME")
           // fn(WindowHandle) -> Game[S]
-          on_click=(fn(window) { Game::new(window, "test game", MyGameStates::new(), Condig::default()) })
+          on_click=(fn(window) { Game::new(window, "test game", MyGameStates::new()) })
         />
         <Link text="LOAD" on_click_link="load" />
         <Link text="CONFIG" on_click_link="config" />
