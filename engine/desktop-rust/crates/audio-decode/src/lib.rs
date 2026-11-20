@@ -188,6 +188,25 @@ mod tests {
         assert_eq!(decoded.samples[0], decoded.samples[1]);
     }
 
+    /// MPEG-1 Layer III、128 kbps、44.1 kHz、ステレオの無音のフレームを `n` 個並べる。
+    /// side info と main data がすべて 0 のフレームは、正しい無音のフレームとしてデコードされる。
+    fn silent_mp3(n: usize) -> Vec<u8> {
+        // 1 フレームは 144 * 128000 / 44100 = 417 バイト (padding なし)。
+        let mut frame = vec![0u8; 417];
+        frame[..4].copy_from_slice(&[0xFF, 0xFB, 0x90, 0x04]);
+        frame.repeat(n)
+    }
+
+    #[test]
+    fn mp3_is_decoded() {
+        let path = temp("silence.mp3", &silent_mp3(40));
+        let decoded = decode_file(&path).unwrap();
+        assert_eq!(decoded.sample_rate, 44100);
+        // 1 フレームは 1152 サンプル。先頭の遅延の扱いで数フレーム減ることはある。
+        assert!(decoded.frames() >= 1152 * 30 && decoded.frames() <= 1152 * 40, "{}", decoded.frames());
+        assert!(decoded.samples.iter().all(|s| s.abs() < 1e-6));
+    }
+
     #[test]
     fn loader_reports_missing_and_unsupported_files() {
         let dir = temp("stereo.wav", &wav(2, 44100, &[0; 8820])).parent().unwrap().to_path_buf();

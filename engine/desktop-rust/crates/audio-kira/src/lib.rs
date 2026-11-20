@@ -39,7 +39,7 @@ enum EffectControl {
 /// バスの kira の実体。根は main track で、ハンドルを持たない。
 enum Track {
     Main,
-    Sub(TrackHandle),
+    Sub(Box<TrackHandle>),
 }
 
 /// 音を鳴らす側。
@@ -104,7 +104,7 @@ impl AudioOutput {
                 };
                 match handle {
                     Ok(handle) => {
-                        self.tracks.insert(bus, Track::Sub(handle));
+                        self.tracks.insert(bus, Track::Sub(Box::new(handle)));
                         self.parents.insert(bus, parent);
                     }
                     Err(e) => eprintln!("[biwa] failed to create sound bus {bus}: {e}"),
