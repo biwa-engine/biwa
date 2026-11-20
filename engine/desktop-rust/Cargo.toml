@@ -15,6 +15,8 @@ members = [
   "crates/layout",
   "crates/render",
   "crates/platform",
+  "crates/audio-decode",
+  "crates/audio-kira",
 ]
 
 [workspace.package]
@@ -30,6 +32,8 @@ biwa-player-image = { path = "crates/image" }
 biwa-player-layout = { path = "crates/layout" }
 biwa-player-render = { path = "crates/render" }
 biwa-player-platform = { path = "crates/platform" }
+biwa-player-audio-decode = { path = "crates/audio-decode" }
+biwa-player-audio-kira = { path = "crates/audio-kira" }
 
 # 外部 crate。どれを誰が使うかは各 crate の Cargo.toml を見ること。
 wasmtime = "50"
@@ -46,6 +50,11 @@ raw-window-handle = "0.6"
 objc2 = "0.5"
 objc2-foundation = { version = "0.2", features = ["NSGeometry"] }
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+# 音の出力。kira の既定の feature は symphonia (デコードは audio-decode が自前で持つ) と
+# cpal の realtime-dbus (libdbus を引き込む) を含むので外す。
+kira = { version = "0.12", default-features = false, features = ["cpal"] }
+# 音のデコード。段 1 の形式 (Tier 1: MP3 / WAV (PCM) / Ogg Vorbis) だけを有効にする。
+symphonia = { version = "0.6", default-features = false, features = ["mp3", "pcm", "wav", "ogg", "vorbis"] }
 # ゲームの画像に使う形式だけを有効にする (アニメーションの GIF / WebP は後で)。
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 

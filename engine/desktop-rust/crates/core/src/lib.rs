@@ -13,12 +13,14 @@
 //! - [`text`]: 文字の整形とラスタライズのインターフェース
 //! - [`draw`]: 描画の指示
 
+pub mod automation;
 pub mod canvas;
 pub mod content;
 pub mod draw;
 pub mod engine;
 pub mod geometry;
 pub mod image;
+pub mod sound;
 pub mod layout;
 pub mod syscall;
 pub mod text;

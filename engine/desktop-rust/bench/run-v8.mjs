@@ -32,6 +32,7 @@ let memory = null;
 let nextId = 1;
 let nextHandle = 1;
 const handlers = new Map();
+const nextSound = { bus: 1, effect: 1, object: 1 };
 const ui = { onClick: null, mainScene: null, windowHandle: null };
 const decoder = new TextDecoder();
 
@@ -47,6 +48,7 @@ const engine = {
   sys_await_transitions: () => {},
   sys_sleep: () => {},
   sys_string_concat: (a, b) => { stats.stringsCreated += 1; return a + b; },
+  sys_string_eq: (a, b) => (a === b ? 1 : 0),
   sys_int_to_string: (v) => { stats.stringsCreated += 1; return String(v); },
   sys_float_to_string: (v) => { stats.stringsCreated += 1; return String(Number(v.toPrecision(9))); },
   sys_vec_new: () => [],
@@ -69,6 +71,22 @@ const engine = {
   sys_ui_set_value: (id, kind, v) => {
     if (kind === 0) ui.windowHandle ??= v;
   },
+  // 音は鳴らさない。id を空間ごとに振るだけ。
+  sys_sound_bus_create: () => nextSound.bus++,
+  sys_sound_bus_add_effect: () => nextSound.effect++,
+  sys_sound_bus_attach: () => {},
+  sys_sound_output_attach: () => {},
+  sys_sound_bus_add_stop_all: () => {},
+  sys_sound_bus_delete: () => {},
+  sys_sound_bus_add_transition: () => {},
+  sys_sound_bus_set_param: () => {},
+  sys_sound_effect_add_transition: () => {},
+  sys_sound_effect_set_param: () => {},
+  sys_sound_create: () => nextSound.object++,
+  sys_sound_add_start: () => {},
+  sys_sound_add_stop: () => {},
+  sys_sound_add_transition: () => {},
+  sys_sound_preload: () => {},
 };
 
 const tracedEngine = Object.fromEntries(Object.entries(engine).map(([k, f]) => [k, traced(f)]));

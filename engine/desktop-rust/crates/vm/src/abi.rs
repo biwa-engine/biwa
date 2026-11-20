@@ -9,7 +9,7 @@
 
 /// この runtime が走らせられる版。コンパイラの `ABI_VERSION` を上げたら合わせる
 /// (`engine/nodejs/src/engine/vm/wasm/abi.ts` も)。
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 const ABI_SECTION: &str = "biwa.abi";
 

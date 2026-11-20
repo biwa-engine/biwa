@@ -34,6 +34,10 @@ pub(crate) struct HostState {
     batch: Vec<Syscall>,
     /// UI Element と canvas オブジェクトの id の連番 (JS 版の `alloc`)。
     next_id: u32,
+    /// 音の id の連番。SoundObject・Bus・Effect で空間を分ける (`docs/sound.md`)。
+    next_sound: u32,
+    next_bus: u32,
+    next_effect: u32,
     /// 預かった関数 (JS 版の `retain`)。ホストが後で呼ぶ。
     pub(crate) handlers: HashMap<u32, Func>,
     /// 預かった値 (JS 版の `retain`)。ホストが後で host export の引数として返す。
@@ -53,6 +57,9 @@ impl HostState {
             notify,
             batch: Vec::new(),
             next_id: 1,
+            next_sound: 1,
+            next_bus: 1,
+            next_effect: 1,
             handlers: HashMap::new(),
             values: HashMap::new(),
             next_handle: 1,
@@ -101,6 +108,12 @@ impl HostState {
     fn alloc_id(&mut self) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
+        id
+    }
+
+    fn alloc_in(counter: &mut u32) -> u32 {
+        let id = *counter;
+        *counter += 1;
         id
     }
 
@@ -172,6 +185,149 @@ pub(crate) fn define(linker: &mut Linker<HostState>) -> Result<()> {
     define_canvas(linker)?;
     define_values(linker)?;
     define_ui(linker)?;
+    define_sound(linker)?;
+    Ok(())
+}
+
+/// 音 (`docs/sound.md`)。止まる syscall は無い。id は空間ごとにこちらで採番して返す (`alloc`)。
+fn define_sound(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(ENGINE, "sys_sound_bus_create", |mut caller: Caller<'_, HostState>| -> i32 {
+        traced(&mut caller, |c| {
+            let state = c.data_mut();
+            let bus = HostState::alloc_in(&mut state.next_bus);
+            state.cast(Syscall::SoundBusCreate { bus });
+            bus as i32
+        })
+    })?;
+    linker.func_wrap(
+        ENGINE,
+        "sys_sound_bus_add_effect",
+        |mut caller: Caller<'_, HostState>, bus: i32, kind: i32, cfg1: i32, cfg2: i32| -> i32 {
+            traced(&mut caller, |c| {
+                let state = c.data_mut();
+                let effect = HostState::alloc_in(&mut state.next_effect);
+                state.cast(Syscall::SoundBusAddEffect { bus: bus as u32, effect, kind, cfg1, cfg2 });
+                effect as i32
+            })
+        },
+    )?;
+    linker.func_wrap(ENGINE, "sys_sound_bus_attach", |mut caller: Caller<'_, HostState>, bus: i32, parent: i32| {
+        traced(&mut caller, |c| c.data_mut().cast(Syscall::SoundBusAttach { bus: bus as u32, parent: parent as u32 }));
+    })?;
+    linker.func_wrap(ENGINE, "sys_sound_output_attach", |mut caller: Caller<'_, HostState>, bus: i32| {
+        traced(&mut caller, |c| c.data_mut().cast(Syscall::SoundOutputAttach { bus: bus as u32 }));
+    })?;
+    linker.func_wrap(ENGINE, "sys_sound_bus_add_stop_all", |mut caller: Caller<'_, HostState>, bus: i32, after: i32| {
+        traced(&mut caller, |c| c.data_mut().cast(Syscall::SoundBusAddStopAll { bus: bus as u32, after }));
+    })?;
+    linker.func_wrap(ENGINE, "sys_sound_bus_delete", |mut caller: Caller<'_, HostState>, bus: i32, after: i32| {
+        traced(&mut caller, |c| c.data_mut().cast(Syscall::SoundBusDelete { bus: bus as u32, after }));
+    })?;
+    linker.func_wrap(
+        ENGINE,
+        "sys_sound_bus_add_transition",
+        |mut caller: Caller<'_, HostState>, bus: i32, param: i32, kind: i32, value: f32, after: i32, duration: i32| {
+            traced(&mut caller, |c| {
+                c.data_mut().cast(Syscall::SoundBusAddTransition { bus: bus as u32, param, kind, value, after, duration })
+            });
+        },
+    )?;
+    linker.func_wrap(
+        ENGINE,
+        "sys_sound_bus_set_param",
+        |mut caller: Caller<'_, HostState>, bus: i32, param: i32, value: f32| {
+            traced(&mut caller, |c| c.data_mut().cast(Syscall::SoundBusSetParam { bus: bus as u32, param, value }));
+        },
+    )?;
+    linker.func_wrap(
+        ENGINE,
+        "sys_sound_effect_add_transition",
+        |mut caller: Caller<'_, HostState>, effect: i32, param: i32, kind: i32, value: f32, after: i32, duration: i32| {
+            traced(&mut caller, |c| {
+                c.data_mut().cast(Syscall::SoundEffectAddTransition {
+                    effect: effect as u32,
+                    param,
+                    kind,
+                    value,
+                    after,
+                    duration,
+                })
+            });
+        },
+    )?;
+    linker.func_wrap(
+        ENGINE,
+        "sys_sound_effect_set_param",
+        |mut caller: Caller<'_, HostState>, effect: i32, param: i32, value: f32| {
+            traced(&mut caller, |c| {
+                c.data_mut().cast(Syscall::SoundEffectSetParam { effect: effect as u32, param, value })
+            });
+        },
+    )?;
+    linker.func_wrap(
+        ENGINE,
+        "sys_sound_create",
+        |mut caller: Caller<'_, HostState>,
+         path: Option<Rooted<ExternRef>>,
+         bus: i32,
+         volume_db: f32,
+         x: f32,
+         y: f32,
+         loop_start_ms: i32,
+         loop_end_ms: i32,
+         normalize: i32|
+         -> Result<i32> {
+            traced(&mut caller, |caller| {
+                let path = values::string_of(&*caller, path)?;
+                let state = caller.data_mut();
+                let id = HostState::alloc_in(&mut state.next_sound);
+                state.cast(Syscall::SoundCreate {
+                    id,
+                    path,
+                    bus: bus as u32,
+                    volume_db,
+                    x,
+                    y,
+                    loop_start_ms,
+                    loop_end_ms,
+                    normalize,
+                });
+                Ok(id as i32)
+            })
+        },
+    )?;
+    linker.func_wrap(
+        ENGINE,
+        "sys_sound_add_start",
+        |mut caller: Caller<'_, HostState>, id: i32, after: i32, offset_ms: i32, repeat: i32| {
+            traced(&mut caller, |c| {
+                c.data_mut().cast(Syscall::SoundAddStart { id: id as u32, after, offset_ms, repeat })
+            });
+        },
+    )?;
+    linker.func_wrap(ENGINE, "sys_sound_add_stop", |mut caller: Caller<'_, HostState>, id: i32, after: i32| {
+        traced(&mut caller, |c| c.data_mut().cast(Syscall::SoundAddStop { id: id as u32, after }));
+    })?;
+    linker.func_wrap(
+        ENGINE,
+        "sys_sound_add_transition",
+        |mut caller: Caller<'_, HostState>, id: i32, param: i32, kind: i32, value: f32, after: i32, duration: i32| {
+            traced(&mut caller, |c| {
+                c.data_mut().cast(Syscall::SoundAddTransition { id: id as u32, param, kind, value, after, duration })
+            });
+        },
+    )?;
+    linker.func_wrap(
+        ENGINE,
+        "sys_sound_preload",
+        |mut caller: Caller<'_, HostState>, path: Option<Rooted<ExternRef>>| -> Result<()> {
+            traced(&mut caller, |caller| {
+                let path = values::string_of(&*caller, path)?;
+                caller.data_mut().cast(Syscall::SoundPreload { path });
+                Ok(())
+            })
+        },
+    )?;
     Ok(())
 }
 
@@ -325,6 +481,15 @@ fn define_values(linker: &mut Linker<HostState>) -> Result<()> {
     type Ext = Option<Rooted<ExternRef>>;
     type Any = Option<Rooted<AnyRef>>;
 
+    linker.func_wrap(
+        ENGINE,
+        "sys_string_eq",
+        |mut caller: Caller<'_, HostState>, a: Ext, b: Ext| -> Result<i32> {
+            traced(&mut caller, |caller| {
+                Ok(i32::from(values::string_of(&*caller, a)? == values::string_of(&*caller, b)?))
+            })
+        },
+    )?;
     linker.func_wrap(
         ENGINE,
         "sys_string_concat",

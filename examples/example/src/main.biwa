@@ -6,6 +6,9 @@ import std::game::Game;
 import std::game::config::Config;
 import std::game::config::DeveloperConfig;
 import std::game::Character;
+import std::game::sound::Sound;
+import std::game::sound::Volume;
+import std::game::sound::Position;
 import std::game::image::Image;
 import std::game::color::Color;
 import std::game::color::Alpha;
@@ -197,6 +200,10 @@ scene scenario(g: MyGame) -> MyGame {{
     // 今はstdの低レベルAPIを直で叩いているがいずれ抽象化される予定
     #let bg = Image::new("background-countryside.jpg").
         show_in_canvas(g.canvas(), 0, cx(0.0), cy(0.0), Cw::Auto, ch(100.0), Alpha::opaque())
+    // BGM と環境音。BGM は 1 秒かけて大きくなり、環境音 (風) は 2 秒かけて入ってくる。
+    // 音の素材は `tools/make_sounds.py` で合成したもの (CC0)。
+    #g.change_bgm(Sound::new("sounds/bgm/morning.wav").with_volume(Volume::db(-4.0)), ms(1000))
+    #g.play_ambient(Sound::new("sounds/ambient/wind.wav").with_volume(Volume::db(-14.0)), ms(2000))
     // 本文開始
     Hello, Biwa World!
     こんにちは、Biwaの世界。
@@ -210,7 +217,8 @@ scene scenario(g: MyGame) -> MyGame {{
     >>
     まあ、そんな説明はともかく。
     とりあえず、デモとして(フリーの拾い絵ですが)美少女が動く様子を見てもらいましょう。 >>
-    // 琵琶が右から現れる
+    // 琵琶が右から現れる (足音は右寄りから聞こえる)
+    #g.play_se(Sound::new("sounds/se/steps.wav").with_position(Position::at(0.6, 0.0)))
     #biwa.
         appear(1, cx(55.0), cy(0.0), Cw::Auto, ch(80.0), Alpha::transparent()).
         and().
@@ -220,6 +228,8 @@ scene scenario(g: MyGame) -> MyGame {{
     $gray("琵琶が右から入ってきます。")
     $gray("この演出はテキストと同期しているので、途中でクリックすると")
     $gray("まず演出が終わり、もう一度クリックすると先に進みます。") >>
+    // ボイス。鳴っている間は BGM が下がる (ダッキング)。`>>` で止まる。
+    #biwa.voice("sounds/voice/biwa_001.wav")
     こんにちは。
     私は$red(bold("言葉 琵琶"))(ことのは びわ)。
     $big(slow(slow("ゆっくり大きく")))話すこともできます。 >>
@@ -253,6 +263,10 @@ scene scenario(g: MyGame) -> MyGame {{
 
     // コメントです
     #biwa.smile() // ここもコメント
+    #biwa.voice("sounds/voice/biwa_002.wav")
+    // チャイムが鳴り終わるまで待つ (クリックで飛ばせる)。BGM は 3 秒かけて夕方の曲へ替わる。
+    #g.play_se_and_wait(Sound::new("sounds/se/chime.wav"))
+    #g.change_bgm(Sound::new("sounds/bgm/evening.wav").with_volume(Volume::db(-4.0)), ms(3000))
     Biwa Engine はまだ開発の途上ですが、今のところこんな感じに動作します。
     シナリオ記述言語からほとんどすべてを制御でき、自由度の高さとそれなりに良さそうな開発体験になりそうだと思っていただけたでしょうか。
     今後の開発でさらなるパワーアップがされていくことでしょう。 >>
@@ -268,6 +282,8 @@ scene scenario(g: MyGame) -> MyGame {{
         animate()
     #biwa.disappear(ms(1200))
     #bg.delete(ms(1500))
+    #g.stop_bgm(ms(1500))
+    #g.sound().buses().ambient().stop_all(ms(1500))
     おしまい。 >>
 
     #endscene g

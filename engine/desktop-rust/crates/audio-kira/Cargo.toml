@@ -1,0 +1,11 @@
+[package]
+name = "biwa-player-audio-kira"
+description = "Plays the Biwa sound mixer's output with kira: buses as tracks, our own voices, pan law, pass filter and duck stage."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# kira (と cpal) はここだけが使う。外に出すのは core の型 (AudioCommand / DecodedSound) だけである。
+[dependencies]
+biwa-player-core.workspace = true
+kira.workspace = true
