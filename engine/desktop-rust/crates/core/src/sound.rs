@@ -31,6 +31,26 @@ pub struct SoundRequest {
     pub path: String,
 }
 
+/// デコードした音。ステレオに揃えた PCM (左右を交互に並べた f32)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecodedSound {
+    pub sample_rate: u32,
+    /// `[L, R, L, R, ...]`。
+    pub samples: Vec<f32>,
+}
+
+impl DecodedSound {
+    /// フレーム (左右の組) の数。
+    pub fn frames(&self) -> usize {
+        self.samples.len() / 2
+    }
+
+    /// 長さ [ms]。
+    pub fn length_ms(&self) -> f64 {
+        if self.sample_rate == 0 { 0.0 } else { self.frames() as f64 * 1000.0 / f64::from(self.sample_rate) }
+    }
+}
+
 /// effect の種類 (`sys_sound_bus_add_effect` の kind)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectKind {

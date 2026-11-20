@@ -44,11 +44,13 @@ jobs:
 
       # fontconfig はフォントを探すのに使う (リンクする)。
       # CJK のフォントは文字の整形のテストが使う (配布物には要らない)。
+      # ALSA (libasound) は音の出力 (kira → cpal) がリンクする。実行時には libasound.so.2 が要る
+      # (デスクトップの Linux には必ずある。docs/desktop-build.md)。
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libfontconfig1-dev fonts-noto-cjk
+          sudo apt-get install -y build-essential pkg-config libfontconfig1-dev fonts-noto-cjk libasound2-dev
 
       - uses: dtolnay/rust-toolchain@stable
         with:

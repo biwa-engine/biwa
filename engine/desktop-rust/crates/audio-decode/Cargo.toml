@@ -1,0 +1,11 @@
+[package]
+name = "biwa-player-audio-decode"
+description = "Decodes the sound assets of the Biwa native player (MP3 / WAV / Ogg Vorbis) to stereo PCM with symphonia."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# symphonia (MPL-2.0) はここだけが使う。外に出すのは core の型だけである。
+[dependencies]
+biwa-player-core.workspace = true
+symphonia.workspace = true

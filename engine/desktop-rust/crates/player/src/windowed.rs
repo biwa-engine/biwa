@@ -4,6 +4,8 @@
 //! - `platform` のイベントループから来るイベントを、エンジン (`core`) への操作に直す
 //! - `vm` からの知らせ (syscall) をエンジンに当て、止まる syscall の返事を保留する
 //! - エンジンの画像の読み込みの依頼を `image` に渡し、読めた画像をエンジン (大きさ) と `render` (テクスチャ) に渡す
+//! - エンジンの音の読み込みの依頼を `audio-decode` に渡し、読めた音をエンジン (長さ) と `audio-kira` (PCM) に渡す。
+//!   エンジンのミキサーの論理状態の変化 (`AudioCommand`) は `audio-kira` に当てる
 //! - 描き直しが要るときだけ、エンジンの描画の指示を `render` で描く (文字は `text`)
 //!
 //! ゲームは決まった大きさ (論理ピクセル。既定は 1280x720) の画面として組み、ウィンドウに収まるよう
@@ -18,6 +20,8 @@ use std::time::{Duration, Instant};
 use biwa_player_core::engine::{CallStatus, Click, Engine};
 use biwa_player_core::geometry::{Rect, Viewport};
 use biwa_player_core::image::{DecodedImage, ImageHandle};
+use biwa_player_audio_decode::SoundLoader;
+use biwa_player_audio_kira::AudioOutput;
 use biwa_player_image::ImageLoader;
 use biwa_player_layout::TaffyLayouter;
 use biwa_player_platform::{App, Event, Flow, Waker, Window, WindowOptions, WindowSize};
@@ -81,6 +85,9 @@ struct Player {
     dev: Option<Receiver<DevCommand>>,
     vm: Option<Vm>,
     images: Option<ImageLoader>,
+    sounds: Option<SoundLoader>,
+    /// 音を鳴らす側。ゲームをやり直すたびに作り直す (出力も閉じ直す)。
+    audio: AudioOutput,
     /// 読めたが、描画の準備 (ウィンドウ) の前に届いた画像。
     unuploaded: Vec<(ImageHandle, DecodedImage)>,
     engine: Engine,
@@ -114,6 +121,8 @@ impl Player {
             dev,
             vm: None,
             images: None,
+            sounds: None,
+            audio: AudioOutput::new(),
             unuploaded: Vec::new(),
             engine: Engine::new(),
             text: TextSystem::new(),
@@ -134,6 +143,8 @@ impl Player {
         // 前の vm と画像の読み込みは、チャネルが閉じれば終わる (vm は次のホスト呼び出しで trap する)。
         self.vm = None;
         self.images = None;
+        self.sounds = None;
+        self.audio = AudioOutput::new();
         self.pending = None;
         self.unuploaded.clear();
         self.last_tick = None;
@@ -147,6 +158,12 @@ impl Player {
             let waker = self.waker.clone();
             ImageLoader::new(dir, move || waker.wake())
                 .map_err(|e| eprintln!("[biwa] failed to start the image loader: {e}"))
+                .ok()
+        });
+        self.sounds = self.game.assets.clone().and_then(|dir| {
+            let waker = self.waker.clone();
+            SoundLoader::new(dir, move || waker.wake())
+                .map_err(|e| eprintln!("[biwa] failed to start the sound loader: {e}"))
                 .ok()
         });
         let waker = self.waker.clone();
@@ -205,6 +222,8 @@ impl Player {
                         }
                     }
                     self.request_images();
+                    self.request_sounds();
+                    self.flush_audio();
                     self.release_handlers();
                 }
                 VmEvent::Call(call, reply) => {
@@ -248,6 +267,47 @@ impl Player {
         }
     }
 
+    /// エンジンの音の読み込みの依頼を、読む者に渡す。読む者がいなければ (アセットが無い) 長さ 0 の音にする。
+    fn request_sounds(&mut self) {
+        for request in self.engine.take_sound_requests() {
+            match &self.sounds {
+                Some(sounds) => sounds.request(request),
+                None => self.engine.sound_loaded(request.sound, None),
+            }
+        }
+    }
+
+    /// 読めた音を、鳴らす側 (PCM) とエンジン (長さ) に渡す。
+    fn drain_sounds(&mut self) {
+        let mut any = false;
+        while let Some((sound, result)) = self.sounds.as_ref().and_then(SoundLoader::try_recv) {
+            any = true;
+            match result {
+                Ok(decoded) => {
+                    let length = decoded.length_ms();
+                    self.audio.load(sound, decoded);
+                    self.engine.sound_loaded(sound, Some(length));
+                }
+                Err(e) => {
+                    eprintln!("[biwa] {e}");
+                    self.engine.sound_loaded(sound, None);
+                }
+            }
+        }
+        if any {
+            self.flush_audio();
+            self.request_redraw();
+        }
+    }
+
+    /// エンジンのミキサーの論理状態の変化を、鳴らす側に当てる。
+    fn flush_audio(&mut self) {
+        let commands = self.engine.take_audio_commands();
+        if !commands.is_empty() {
+            self.audio.apply(commands);
+        }
+    }
+
     /// 読めた画像を、エンジン (大きさ) と描画 (テクスチャ) に渡す。
     fn drain_images(&mut self) {
         while let Some((image, result)) = self.images.as_ref().and_then(ImageLoader::try_recv) {
@@ -283,6 +343,7 @@ impl Player {
             let step = (now - last).min(MAX_FRAME_STEP);
             self.engine.update(step.as_secs_f32() * 1000.0);
         }
+        self.flush_audio();
         self.last_tick = self.engine.is_animating().then_some(now);
         self.settle_call();
 
@@ -308,6 +369,8 @@ impl Player {
 
     /// クリックや「進む」のあと。止まっている syscall を進め、描き直す。
     fn after_input(&mut self) {
+        // クリックで畳んだ音 (止めた・すぐ始めた) を鳴らす側に伝える。
+        self.flush_audio();
         self.settle_call();
         self.last_tick = None;
         self.request_redraw();
@@ -340,6 +403,7 @@ impl App for Player {
         self.size = Some(size);
         self.window = Some(window);
         self.drain_images();
+        self.drain_sounds();
         let flow = self.drain_vm();
         // 最初のフレームは描き直しの知らせを待たずに描く。Windows は隠したまま作ったウィンドウをここで見せる
         // (隠れているウィンドウには描き直しの知らせが来ないことがある)。
@@ -388,6 +452,7 @@ impl App for Player {
                     return Flow::Exit;
                 }
                 self.drain_images();
+                self.drain_sounds();
                 return self.drain_vm();
             }
             // F5。開発モードのときだけ読み直す。

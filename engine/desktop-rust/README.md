@@ -23,6 +23,8 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
  ├ vm         wasmtime
  ├ text       parley + swash            (core::text のトレイトを実装する)
  ├ image      image                     (画像の読み込みとデコード。裏のスレッドで)
+ ├ audio-decode symphonia               (音の読み込みとデコード。裏のスレッドで)
+ ├ audio-kira kira (+ cpal)              (core::sound の指示で音を鳴らす)
  ├ layout     taffy                     (UI のレイアウト。core::layout のトレイトを実装する)
  ├ render     wgpu + etagere            (core::draw の描画リストを描く)
  └ platform   winit (+ objc2 / windows-sys) (ウィンドウ・入力・イベントループ・縦横比の固定)
@@ -30,10 +32,12 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
 
 | crate      | 中身                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `core`     | ゲームからの依頼 (`syscall`)、それを受けて状態を変え描画の指示を組み立てるエンジン (`engine`)、Message Window の中身と文字送り (`content`)、canvas オブジェクトと遷移 (`canvas` / `transition`)、画像の番号と読み込みの依頼 (`image`)、UI のレイアウトのインターフェース (`layout`)、UI Element の木 (`ui`。Page の切り替え・Link・SceneStartButton・文字の書式の継承)、文字の整形とラスタライズのインターフェース (`text`)、描画の指示 (`draw`) |
+| `core`     | ゲームからの依頼 (`syscall`)、それを受けて状態を変え描画の指示を組み立てるエンジン (`engine`)、Message Window の中身と文字送り (`content`)、時間で動かせるパラメータ (`automation`。canvas と音で共通)、canvas オブジェクトと遷移 (`canvas` / `transition`)、音のミキサーの論理状態 (`sound`。バスの木・effect・SoundObject・ダッキング。鳴らす側への指示 `AudioCommand` を出す)、画像の番号と読み込みの依頼 (`image`)、UI のレイアウトのインターフェース (`layout`)、UI Element の木 (`ui`。Page の切り替え・Link・SceneStartButton・文字の書式の継承)、文字の整形とラスタライズのインターフェース (`text`)、描画の指示 (`draw`) |
 | `vm`       | game.wasm を専用の OS スレッドで動かす。import (`biwa:engine` / `biwa:runtime`) を実装し、エンジンに用がある syscall を `core::syscall::Syscall` にして送る                                                                                                                                                                                                                                                                                      |
 | `text`     | 断片の列を 1 つの段落として parley で整形し、グリフを swash でラスタライズする。禁則処理 (`kinsoku.rs`)                                                                                                                                                                                                                                                                                                                                          |
 | `image`    | 画像のアセットを裏のスレッドで読んでデコードし、`core::image::DecodedImage` で返す                                                                                                                                                                                                                                                                                                                                                               |
+| `audio-decode` | 音のアセット (MP3 / WAV / Ogg Vorbis) を裏のスレッドで読み、ステレオの PCM (`core::sound::DecodedSound`) にする |
+| `audio-kira` | `core::sound::AudioCommand` を kira で鳴らす。根のバスを出力に繋いだときに出力を開き (根の effect は main track)、子のバスは sub track。SoundObject (ループ・回数・音量・パン則)、pass filter、duck の音量の段は自前で、compressor は kira のもの。出力を開けなければ警告して黙る |
 | `layout`   | `core` が作ったレイアウト用の木を taffy (block / flex / grid) で計算する。CSS への写し方は TypeScript 版の DOM と同じ                                                                                                                                                                                                                                                                                                                            |
 | `render`   | 描画の指示を wgpu で描く。塗りの矩形・グリフ・画像を「中心・大きさ・回転を持つインスタンスの矩形」として 1 本のパイプラインで描く。グリフはアルファだけのアトラス (etagere) に、画像は 1 枚ずつテクスチャに載せ、テクスチャが替わるところで描画の呼び出しを区切る。切り取りは scissor                                                                                                                                                            |
 | `platform` | winit のイベントループを、自前のイベント (大きさの変化・クリック (位置つき)・進む・描き直し・見えるようになった・起こされた・閉じる) にして渡す。全画面の切り替え (F11・Alt+Enter・macOS は Cmd+Ctrl+F) とウィンドウの縦横比の固定 (macOS・Windows) もここ                                                                                                                                                                                                                                                                                                                      |
@@ -47,6 +51,8 @@ player (bin) ── つなぐだけ。外部 crate に依存しない
 | `vm`       | wasmtime                                                               |
 | `text`     | parley, swash (と、ICU の警告を黙らせるための icu_provider の feature) |
 | `image`    | image                                                                  |
+| `audio-decode` | symphonia (MPL-2.0。mp3 / pcm / wav / ogg / vorbis の feature だけ)     |
+| `audio-kira` | kira (feature は cpal だけ。Linux では ALSA にリンクする)                |
 | `layout`   | taffy                                                                  |
 | `render`   | wgpu, etagere, bytemuck, pollster, raw-window-handle                   |
 | `platform` | winit, raw-window-handle, objc2 / objc2-foundation (macOS), windows-sys (Windows) |
@@ -164,7 +170,11 @@ test1 の scene の背景・立ち絵の出入り・揺れながらの移動・�
   次の区間が前の区間の値を引き継ぐ、周期系は偏差だけを乗せる、sync 印の束をクリックで終端まで飛ばす
   (時計ではなく区間の開始時刻をずらす)、大きさを指定しない w / h を画像の元の大きさから 1 度だけ決める。
 - 区間は番号で持つ表に置き、走っている列と sync の束は番号で指す (TypeScript 版は同じオブジェクトを両方から参照していた)。
-  どこからも指されなくなった区間は毎フレーム捨てる。
+  どこからも指されなくなった区間は毎フレーム捨てる。この仕組みは `core::automation` にあり、音のパラメータも同じものを使う。
+- 音は論理状態 (`core::sound::Mixer`) が正で、鳴らす側 (`audio-kira`) はその写しである。開始・停止・終了・ダッキングは
+  エンジン時計で決め、変化を `AudioCommand` として出す。音のファイルは画像と同じく番号を振って読み込みを依頼し
+  (`Engine::take_sound_requests`)、読めたら長さをエンジンに、PCM を `audio-kira` に渡す。読めない音は長さ 0。
+  headless は音を読まず、すべて長さ 0 の音として扱う。
 - 演出待ち (`sys_await_transitions`) は sync の束が終わるまで返事を保留する。クリック待ちの途中のクリックは、
   文字送りと sync の演出を両方畳む (短絡させない)。
 - 画像はエンジンが番号を振って読み込みを依頼するだけで (`Engine::take_image_requests`)、

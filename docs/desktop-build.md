@@ -222,7 +222,8 @@ runtime だけの workflow (`runtime-native.yml` / `runtime-webview.yml`) も pu
 ネイティブ版:
 
 - GPU のドライバ (Windows: DX12 か Vulkan、macOS: Metal、Linux: Vulkan か OpenGL ES)。
-- Linux: `libfontconfig1`、X11 なら `libxkbcommon-x11-0` (デスクトップ環境なら普通は入っている)。
+- Linux: `libfontconfig1`、`libasound2` (音の出力。ALSA。PipeWire / PulseAudio もこれを通る)、X11 なら `libxkbcommon-x11-0` (デスクトップ環境なら普通は入っている)。
+  `libasound.so.2` が無い環境 (最小構成の Docker など) では起動できない。出力デバイスが無いだけなら、警告して音を出さずに動く。
 - macOS: 13 以降 (Info.plist の下限。ネイティブ版は WebKit に依らないので、もっと下げられる見込み)。
 
 WebView 版:
@@ -237,7 +238,7 @@ WebView 版:
 ネイティブ版は CI (`.github/workflows/runtime-native.yml`) が 3 OS でビルドする。手元でビルドするときは:
 
 - 共通: Rust。`engine/desktop-rust` で `cargo build --release -p biwa-runtime`。
-- Linux: `sudo apt install build-essential pkg-config libfontconfig1-dev`
+- Linux: `sudo apt install build-essential pkg-config libfontconfig1-dev libasound2-dev`
 - macOS: Xcode Command Line Tools。universal にするなら 2 つのターゲットでビルドして `lipo -create`。
 
 WebView 版は CI (`.github/workflows/runtime-webview.yml`) が 3 OS でビルドする。手元でビルドするときは:
