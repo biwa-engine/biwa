@@ -134,7 +134,7 @@ curl / irm で取ったファイルには macOS の quarantine が付かない�
 | 版 | 変えたこと |
 | -- | ---------- |
 | 1  | 最初の版 |
-| 2  | `sys_ui_set_value` (値を預ける) を足し、`__biwa_std_game_window_new` に 3 つめの引数 (`WindowShared`) を足した (`host-function-values.md`) |
+| 2  | `sys_ui_set_value` (値を預ける) を足した。scene を始めるとき、Window に預けた `WindowHandle` をそのまま `on_click` に渡し、std の host export `__biwa_std_game_window_new` は使わなくなった (`host-function-values.md`) |
 
 ## まだやらないこと
 

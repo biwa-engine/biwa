@@ -141,8 +141,8 @@ mod handler {
 
 /// 値の種類 (`api/ui.ts` の `ValueKind`)。ハンドラとは別の番号の空間。
 mod value {
-    /// Window のアプリケーションの寿命の共有物 (std の `WindowShared`)。
-    pub const WINDOW_SHARED: i32 = 0;
+    /// Window の寿命のものの束 (std の `WindowHandle`)。scene を始めるときに `on_click` に渡す。
+    pub const WINDOW_HANDLE: i32 = 0;
 }
 
 /// UI の大きさ。
@@ -435,7 +435,7 @@ impl UiTree {
     /// 値を設定する。規則はハンドラ ([`Self::set_handler`]) と同じ。
     pub fn set_value(&mut self, id: UiId, kind: i32, handle: u32) -> Result<(), UiError> {
         let target = match kind {
-            value::WINDOW_SHARED => ElementKind::Window,
+            value::WINDOW_HANDLE => ElementKind::Window,
             _ => {
                 self.released.push(handle);
                 return Err(UiError(format!("unknown ui value kind: {kind}")));
@@ -547,13 +547,14 @@ impl UiTree {
             .handlers
             .get(&handler::WINDOW_MAIN_SCENE)
             .ok_or_else(|| UiError(format!("Window {window} has no main_scene")))?;
-        let shared = *win
+        let window_handle = *win
             .values
-            .get(&value::WINDOW_SHARED)
-            .ok_or_else(|| UiError(format!("Window {window} has no shared value")))?;
+            .get(&value::WINDOW_HANDLE)
+            .ok_or_else(|| UiError(format!("Window {window} has no WindowHandle")))?;
         let page = win.scene_page.ok_or_else(|| UiError(format!("Window {window} has no ScenePage")))?;
-        let (canvas, message_area) = self.scene_outputs_checked(page)?;
-        Ok(SceneStart { window, on_click, main_scene, shared, canvas, message_area })
+        // 出力先の ui_id は std の `WindowHandle` が持っている。ここでは確かめるだけで返さない。
+        self.check_scene_outputs(page)?;
+        Ok(SceneStart { window, on_click, main_scene, window_handle })
     }
 
     /// Window の ScenePage の出力先。
@@ -728,7 +729,7 @@ impl UiTree {
             )));
         }
         // ScenePage の部分木はこの時点で組み上がっているので、出力先が揃っていることをここで確かめる。
-        self.scene_outputs_checked(page)?;
+        self.check_scene_outputs(page)?;
         let previous = self.node(window)?.scene_page;
         if previous == Some(page) {
             return Ok(());
@@ -765,19 +766,20 @@ impl UiTree {
         Ok(())
     }
 
-    /// ScenePage の出力先。どちらも設定されていて、ScenePage の子孫に置かれていなければならない。
-    fn scene_outputs_checked(&self, page: UiId) -> Result<(UiId, UiId), UiError> {
+    /// ScenePage の出力先を確かめる。どちらも設定されていて、ScenePage の子孫に置かれていなければならない。
+    fn check_scene_outputs(&self, page: UiId) -> Result<(), UiError> {
         let node = self.node(page)?;
-        let output = |id: Option<UiId>, what: &str| -> Result<UiId, UiError> {
+        let output = |id: Option<UiId>, what: &str| -> Result<(), UiError> {
             let id = id.ok_or_else(|| UiError(format!("ui element {page} (ScenePage) must have its \"{what}\" set")))?;
             if !self.is_descendant_of(id, page) {
                 return Err(UiError(format!(
                     "the \"{what}\" of ui element {page} (ScenePage) is ui element {id}, which must be placed inside the ScenePage"
                 )));
             }
-            Ok(id)
+            Ok(())
         };
-        Ok((output(node.scene_canvas, "canvas")?, output(node.scene_message_area, "message_area")?))
+        output(node.scene_canvas, "canvas")?;
+        output(node.scene_message_area, "message_area")
     }
 
     /// Window がノベルゲームとして scene を始められることを確かめる (Page を積む前に要る)。
@@ -790,9 +792,9 @@ impl UiTree {
         if !node.handlers.contains_key(&handler::WINDOW_MAIN_SCENE) {
             missing.push("`main_scene`");
         }
-        // 共有物は std の `Window::show()` が必ず預ける。ゲームの作者が書き忘れるものではない。
-        if !node.values.contains_key(&value::WINDOW_SHARED) {
-            missing.push("the shared value (std's `WindowShared`)");
+        // `WindowHandle` は std の `Window::show()` が必ず預ける。ゲームの作者が書き忘れるものではない。
+        if !node.values.contains_key(&value::WINDOW_HANDLE) {
+            missing.push("std's `WindowHandle`");
         }
         if missing.is_empty() {
             Ok(())
@@ -896,7 +898,7 @@ mod tests {
         t.set_property(2, property::SCENE_PAGE_MESSAGE_AREA, [5, 0, 0, 0], [0, 0], 0.0).unwrap();
         t.set_property(1, property::WINDOW_SCENE_PAGE, [2, 0, 0, 0], [0, 0], 0.0).unwrap();
         t.set_handler(1, handler::WINDOW_MAIN_SCENE, 10).unwrap();
-        t.set_value(1, value::WINDOW_SHARED, 12).unwrap();
+        t.set_value(1, value::WINDOW_HANDLE, 12).unwrap();
         set_str(&mut t, 6, property::PAGE_ID, "main");
         set_str(&mut t, 8, property::PAGE_ID, "second");
         set_str(&mut t, 9, property::ON_CLICK_LINK, "main");
@@ -915,7 +917,7 @@ mod tests {
     #[test]
     fn finds_scene_start() {
         let start = sample().first_scene_start().unwrap();
-        assert_eq!(start, SceneStart { window: 1, on_click: 11, main_scene: 10, shared: 12, canvas: 4, message_area: 5 });
+        assert_eq!(start, SceneStart { window: 1, on_click: 11, main_scene: 10, window_handle: 12 });
     }
 
     #[test]

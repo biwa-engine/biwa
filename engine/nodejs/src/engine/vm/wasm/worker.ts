@@ -72,12 +72,6 @@ const scope = globalThis as unknown as WorkerScope;
  */
 const ENTRYPOINT = "__biwa_entrypoint";
 
-/**
- * std が `GameWindow` を組み立てる入口として host export している名前。
- * (`[[host_export="__biwa_std_game_window_new"]]`、`library/std/src/game/ui.biwa`)
- */
-const GAME_WINDOW_NEW = "__biwa_std_game_window_new";
-
 const decoder = new TextDecoder();
 
 /** 届いた scene 開始の知らせ。まだ誰も待っていなければここに置いておく。 */
@@ -162,7 +156,6 @@ async function run(
 
   // 足りないものがあれば、何かを始める前に名前で叱る。
   const entrypoint = exported(instance, ENTRYPOINT);
-  const gameWindowNew = exported(instance, GAME_WINDOW_NEW);
 
   channel.report({ kind: "ready" });
 
@@ -177,16 +170,12 @@ async function run(
   const request = await waitForScene();
   const onClick = handlerOf(request.onClick, "on_click");
   const mainScene = handlerOf(request.mainScene, "main_scene");
-  const shared = valueOf(request.shared, "window shared value");
+  const windowHandle = valueOf(request.windowHandle, "WindowHandle");
 
-  // 3. scene を始める。`Game` も `GameWindow` も JS からは組み立てられないので、
-  //    出力先の束 `GameWindow` は std の host export に作らせ、ボタンの `on_click` に `Game[S]` を作らせる。
-  //    `GameWindow` には、Window に預けてあった共有物 (`WindowShared`) もそのまま返す。
-  //    ScenePage を見せてから、その `Game[S]` で Window の `main_scene` を始める。
-  //    値はすべて中身を見ずに受け渡す (`S` はホストに見えない)。
-  const game = onClick(
-    gameWindowNew(request.canvasId, request.messageAreaId, shared),
-  );
+  // 3. scene を始める。Window に預けてあった `WindowHandle` をそのままボタンの `on_click` に渡して
+  //    `Game[S]` を作らせ、ScenePage を見せてから、その `Game[S]` で Window の `main_scene` を始める。
+  //    値はすべて中身を見ずに受け渡す (`WindowHandle` の中身も `S` もホストに見えない)。
+  const game = onClick(windowHandle);
   channel.cast(ENTER_SCENE_PAGE, [request.windowId]);
   mainScene(game);
 }

@@ -141,8 +141,8 @@ biwa.change_visual(smile);
 biwa.disappear(ms(1200));
 ```
 
-`Character::new` は `Game` を受け取る。**暫定**で、今は描画の出力先の束
-(`GameWindow`) だけを保持する (`appear` はその Canvas に出す)。
+`Character::new` は `Game` を受け取る。**暫定**で、今は Window の寿命のものの束
+(`WindowHandle`) だけを保持する (`appear` はその Canvas に出す)。
 `Game` の状態を共有・更新する形は std の API を安定させるときに決める。
 
 立ち絵は `Option[CanvasObject]` で持つ。

@@ -800,7 +800,7 @@ mod tests {
         }
         e.frame(Viewport::new(100.0, 100.0, 1.0), &mut Mono, &mut ButtonOnRight);
         let Click::StartScene(start) = e.click_at(75.0, 50.0).unwrap() else { panic!("the button was not hit") };
-        assert_eq!((start.on_click, start.main_scene, start.message_area), (11, 10, 4));
+        assert_eq!((start.on_click, start.main_scene, start.window_handle), (11, 10, 12));
 
         // ボタンの外のクリックは「進む」(クリック待ちを終わらせる)。
         assert_eq!(e.begin_call(&Syscall::Wait), CallStatus::Pending);

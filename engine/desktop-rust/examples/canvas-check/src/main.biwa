@@ -10,7 +10,7 @@
 import std::string::String;
 import std::collections::Vec;
 import std::game::Game;
-import std::game::ui::GameWindow;
+import std::game::ui::WindowHandle;
 import std::game::config::Config;
 import std::game::config::DeveloperConfig;
 import std::game::image::Image;
@@ -61,7 +61,7 @@ fn main() {
   Window::new(opening, scene_page, Vec::of(Page::new("main", Vec::of(start)))).show();
 }
 
-fn new_game(window: GameWindow) -> CheckGame {
+fn new_game(window: WindowHandle) -> CheckGame {
   Game::new(window, "canvascheck", CheckState {}, Config::new(DeveloperConfig::default()))
 }
 

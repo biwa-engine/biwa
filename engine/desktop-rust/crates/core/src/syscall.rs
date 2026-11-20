@@ -138,17 +138,16 @@ impl Syscall {
 
 /// scene を始めるのに要るもの。エンジン (UI) が揃え、vm がそれで scene を始める。
 ///
-/// vm は `on_click(GameWindow::new(canvas, message_area, shared))` で `Game[S]` を作り、
+/// vm は `on_click(window_handle)` で `Game[S]` を作り、
 /// ScenePage を見せてから `main_scene(game)` を呼ぶ。関数と値は番号で指す。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SceneStart {
     pub window: UiId,
-    /// SceneStartButton の `on_click` (`fn(GameWindow) -> Game[S]`) の番号。
+    /// SceneStartButton の `on_click` (`fn(WindowHandle) -> Game[S]`) の番号。
     pub on_click: u32,
     /// Window の `main_scene` (`fn(Game[S]) -> Game[S]`) の番号。
     pub main_scene: u32,
-    /// Window に預けた共有物 (std の `WindowShared`) の番号。そのまま `GameWindow` に返す。
-    pub shared: u32,
-    pub canvas: UiId,
-    pub message_area: UiId,
+    /// Window に預けた std の `WindowHandle` の番号。そのまま `on_click` に渡す。
+    /// 出力先 (Canvas / MessageArea) もこの中にあり、エンジンからは返さない。
+    pub window_handle: u32,
 }

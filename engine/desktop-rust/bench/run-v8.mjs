@@ -32,7 +32,7 @@ let memory = null;
 let nextId = 1;
 let nextHandle = 1;
 const handlers = new Map();
-const ui = { onClick: null, mainScene: null, canvas: null, messageArea: null };
+const ui = { onClick: null, mainScene: null, windowHandle: null };
 const decoder = new TextDecoder();
 
 const engine = {
@@ -57,10 +57,7 @@ const engine = {
   sys_map_insert: (map, k, v) => { map.set(k, v); },
   sys_map_get: (map, k) => map.get(k) ?? null,
   sys_ui_create: () => nextId++,
-  sys_ui_set_property: (id, kind, u1) => {
-    if (kind === 16) ui.canvas = u1;
-    if (kind === 17) ui.messageArea = u1;
-  },
+  sys_ui_set_property: () => {},
   sys_ui_set_property_with_string: () => {},
   sys_ui_push_child: () => {},
   sys_ui_set_handler: (id, kind, f) => {
@@ -68,6 +65,9 @@ const engine = {
     handlers.set(handle, f);
     if (kind === 0) ui.mainScene ??= f;
     if (kind === 1) ui.onClick ??= f;
+  },
+  sys_ui_set_value: (id, kind, v) => {
+    if (kind === 0) ui.windowHandle ??= v;
   },
 };
 
@@ -97,8 +97,7 @@ const run = (f, ...args) => {
 
 const started = performance.now();
 run(exports.__biwa_entrypoint);
-const window = run(exports.__biwa_std_game_window_new, ui.canvas, ui.messageArea);
-const game = run(ui.onClick, window);
+const game = run(ui.onClick, ui.windowHandle);
 run(ui.mainScene, game);
 const total = performance.now() - started;
 

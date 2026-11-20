@@ -318,7 +318,7 @@ lang_item_table!(
     // ジェネリック引数はゲームの状態 `S` の 1 つ (`main_scene: Scene[S]` と揃える)。
     // 今はコンパイラが使っていない (`fn main()` は `Window` を返さず、中で `show()` する) が、
     // UI 記述の構文 (Phase2) が root の型として使う見込みで残している。
-    // std の `GameWindow` (出力先の束) とは別物である。
+    // std の `WindowHandle` (Window の寿命のものの束) とは別物である。
     UiWindow, "ui_window", LangItemKind::Ty, LangItemGenericRequirement::Exact(1);
 
     // 文字列リテラルの型。

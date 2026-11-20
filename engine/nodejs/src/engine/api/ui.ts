@@ -181,7 +181,7 @@ export const HandlerKind = {
    * Window 以外には付けられない。
    */
   WindowMainScene: 0,
-  /** SceneStartButton の `on_click` (R6)。`fn(GameWindow) -> Game[S]`。 */
+  /** SceneStartButton の `on_click` (R6)。`fn(WindowHandle) -> Game[S]`。 */
   SceneStartButtonOnClick: 1,
 } as const;
 
@@ -203,16 +203,16 @@ export function isKnownHandlerKind(kind: number): boolean {
  */
 export const ValueKind = {
   /**
-   * Window のアプリケーションの寿命の共有物 (std の `WindowShared`)。
-   * scene を始めるときに `__biwa_std_game_window_new` の 3 つめの引数として返す。
+   * Window の寿命のものの束 (std の `WindowHandle`)。
+   * scene を始めるときに、そのまま `SceneStartButton` の `on_click` に渡す。
    * Window 以外には付けられない。
    */
-  WindowShared: 0,
+  WindowHandle: 0,
 } as const;
 
 /** 値の種類 → それを付けられる Element の kind。 */
 const VALUE_TARGETS = new Map<number, number>([
-  [ValueKind.WindowShared, ElementKind.Window],
+  [ValueKind.WindowHandle, ElementKind.Window],
 ]);
 
 /** その種類の値を付けられる Element の kind。知らない種類なら `null`。 */

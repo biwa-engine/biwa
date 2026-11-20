@@ -30,9 +30,9 @@ biwa dev --platform web --web-runtime <this>/dist-runtime   # 別の端末で、
    Window は scene を映すページ (`ScenePage`) と scene 本体 (`main_scene` のハンドラ) を
    Page より先に持っていなければならず、欠けていればゲームを止める (`UiContractError`)
 2. SceneStartButton が押されるのを待つ (`UIObjects.setSceneStarter`)
-3. Window の ScenePage の出力先 (Canvas / MessageArea) の ui_id で `__biwa_std_game_window_new` を呼び、
-   ボタンの `on_click(window)` で `Game[S]` を作らせ、ScenePage を見せてから
-   Window の `main_scene(game)` を始める。関数は預けた番号で指す (`docs/host-function-values.md`)
+3. Window に預けてあった std の `WindowHandle` (Window の寿命のものの束。出力先もこの中にある) を
+   中身を見ずにボタンの `on_click(window)` に渡して `Game[S]` を作らせ、ScenePage を見せてから
+   Window の `main_scene(game)` を始める。関数と値は預けた番号で指す (`docs/host-function-values.md`)
    (2 回目以降の開始は未定義。いまは最初の 1 回だけ)
 
 エンジンが知っているのは以下だけで、パッケージ名や生成されたシンボル名は知らない。
