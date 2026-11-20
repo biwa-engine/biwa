@@ -152,6 +152,20 @@ biwa.disappear(ms(1200));
 `change_visual` は、std が覚えている遷移の目標値の位置に新しい画像を出してから
 古いものを消す。走っている遷移の途中で呼ぶと、その遷移の行き先に飛ぶ。
 
+## 音 (`std::game::sound`)
+
+仕様と API の一覧は `sound.md`。
+
+```biwa
+g = g.change_bgm(Sound::new("sounds/bgm/morning.mp3").with_volume(Volume::db(-4.0)), ms(1000));
+g.play_se(Sound::new("sounds/se/chime.wav").with_position(Position::at(0.6, 0.0)));
+biwa.voice("sounds/voice/biwa_001.ogg");   // Character ごとのボイスのバスで鳴る
+g = g.stop_bgm(ms(3000));
+```
+
+既定のバスの木 (`SoundBuses::standard()`) とプレイヤーの音量 (`Volumes`) は Window の寿命のもので、
+`WindowHandle` が `Game` に運ぶ。キャラのボイスのバスと今の BGM は `Game` の寿命のもの。
+
 ## Option
 
 enum である。native の実装は無い。
@@ -294,6 +308,15 @@ AliasOther::new("a", "b", BiwaCharacterProps {}, img, img)
 呼び出し位置に型引数を書く構文 (`Vec[Image]::new()`) はまだ無いので、
 エイリアスを経由しない `Vec::new()` の `self_ty` は型引数が空のままである。
 その場合は単一化に混ぜず、従来どおり引数と文脈から推論する。
+
+### 式の書き方の制限 (音の std を書いていて気付いたもの)
+
+- 単項の `!` は無い。`if x { } else { .. }` と書く。
+- `if` は文の末尾 (ブロックの値) には書けるが、関数の引数の位置には書けない。小さな関数に分ける
+  (`fn flag(b: Bool) -> Uint { if b { 1 } else { 0 } }`)。
+- `return` は無い。
+- `else` のブロックの中で、ブロックを腕に持つ `match` の後に文を続けると構文エラーになることがある。
+  `match` を別の関数に分ければ通る。
 
 ### `if` / `while` の条件式に構造体リテラルは置けない
 
