@@ -3,7 +3,7 @@
 //! 1. compile して instantiate する (足りない import は名前付きのエラーになる)
 //! 2. エントリポイント (`fn main()`) を呼ぶ。UI がここで作られる
 //! 3. scene の開始の指示を待つ
-//! 4. `on_click(GameWindow::new(canvas, message_area))` で `Game[S]` を作り、
+//! 4. Window に預けてあった `WindowHandle` で `on_click(window_handle)` を呼んで `Game[S]` を作り、
 //!    ScenePage を見せてから `main_scene(game)` を呼ぶ
 
 use std::sync::Arc;
@@ -11,15 +11,13 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::Instant;
 
 use biwa_player_core::syscall::Syscall;
-use wasmtime::{Config, Engine, Func, Linker, Module, Result, Store, Val};
+use wasmtime::{AnyRef, Config, Engine, Func, Linker, Module, Result, Rooted, Store, Val};
 
 use crate::host::{self, HostState};
 use crate::{HostCommand, VmEvent, VmOptions, VmStats};
 
 /// コンパイラがエントリポイント (`fn main()`) に付ける固定の名前。
 const ENTRYPOINT: &str = "__biwa_entrypoint";
-/// std が `GameWindow` を組み立てる入口として host export している名前。
-const GAME_WINDOW_NEW: &str = "__biwa_std_game_window_new";
 
 pub(crate) struct Channels {
     events: Sender<VmEvent>,
@@ -68,7 +66,6 @@ fn run_game(wasm: &[u8], options: &VmOptions, channels: Channels) -> Result<VmSt
 
     // 足りないものがあれば、何かを始める前に名前で叱る。
     let entrypoint = export(&instance, &mut store, ENTRYPOINT)?;
-    let game_window_new = export(&instance, &mut store, GAME_WINDOW_NEW)?;
 
     // 1. UI を出す。UI の syscall は止まらないので、ここで流し切っておく。
     invoke(&mut store, entrypoint, &[])?;
@@ -79,25 +76,17 @@ fn run_game(wasm: &[u8], options: &VmOptions, channels: Channels) -> Result<VmSt
     let start = loop {
         match channels.commands.recv() {
             Ok(HostCommand::StartScene(start)) => break start,
-            Ok(HostCommand::Release(handles)) => {
-                for h in handles {
-                    store.data_mut().handlers.remove(&h);
-                }
-            }
+            Ok(HostCommand::Release(handles)) => store.data_mut().release(handles),
             // エンジンが先に終わった。
             Err(_) => return Ok(finish(store, compile)),
         }
     };
 
-    // 3. scene を始める。値 (`GameWindow` / `Game[S]`) は中身を見ずに受け渡す。
+    // 3. scene を始める。値 (`WindowHandle` / `Game[S]`) は中身を見ずに受け渡す。
     let on_click = handler(&store, start.on_click, "on_click")?;
     let main_scene = handler(&store, start.main_scene, "main_scene")?;
-    let window = invoke(
-        &mut store,
-        game_window_new,
-        &[Val::I32(start.canvas as i32), Val::I32(start.message_area as i32)],
-    )?;
-    let game = invoke(&mut store, on_click, &window)?;
+    let window_handle = retained_value(&mut store, start.window_handle, "WindowHandle")?;
+    let game = invoke(&mut store, on_click, &[Val::AnyRef(Some(window_handle))])?;
     store.data_mut().cast(Syscall::EnterScenePage { window: start.window });
     invoke(&mut store, main_scene, &game)?;
     store.data_mut().flush();
@@ -125,6 +114,17 @@ fn handler(store: &Store<HostState>, handle: u32, what: &str) -> Result<Func> {
         .get(&handle)
         .copied()
         .ok_or_else(|| wasmtime::format_err!("the {what} handler (#{handle}) is not retained"))
+}
+
+/// 預かった値を引く。手放されていれば名前を添えて叱る。
+fn retained_value(store: &mut Store<HostState>, handle: u32, what: &str) -> Result<Rooted<AnyRef>> {
+    let value = store
+        .data()
+        .values
+        .get(&handle)
+        .cloned()
+        .ok_or_else(|| wasmtime::format_err!("the {what} (#{handle}) is not retained"))?;
+    Ok(value.to_rooted(&mut *store))
 }
 
 /// wasm の関数を呼び、戻り値を返す。

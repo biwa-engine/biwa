@@ -22,6 +22,7 @@ import {
   createUiElement,
   pushUiChild,
   setUiHandler,
+  setUiValue,
   setUiProperty,
   setUiPropertyString,
 } from "../../api/ui";
@@ -147,6 +148,9 @@ function createHandlers(): Record<string, SyscallHandler> {
     // `handle` は Worker が関数を預かって振った番号 (`contract.ts` の `retain`)。
     sys_ui_set_handler: (id: number, kind: number, handle: number) =>
       setUiHandler(id, kind, handle),
+    // `handle` は Worker が値を預かって振った番号 (同じく `retain`)。
+    sys_ui_set_value: (id: number, kind: number, handle: number) =>
+      setUiValue(id, kind, handle),
 
     // Worker 自身が流す cast (`contract.ts`)。scene を始めるときに ScenePage を見せる。
     [ENTER_SCENE_PAGE]: (windowId: number) => engine().ui.enterScenePage(windowId),
@@ -186,14 +190,14 @@ export function runWasm(url: string): Promise<void> {
 
   return new Promise<void>((resolve, reject) => {
     const finish = (done: () => void): void => {
-      engine().ui.setHandlerReleaser(() => {});
+      engine().ui.setRetainedReleaser(() => {});
       engine().ui.setSceneStarter(() => {});
       worker.terminate();
       done();
     };
 
-    // Element が消えたら、預けた関数を Worker に手放させる。
-    engine().ui.setHandlerReleaser((handles) => {
+    // Element が消えたら、預けた関数と値を Worker に手放させる。
+    engine().ui.setRetainedReleaser((handles) => {
       const release: ReleaseMessage = { kind: "release", handles };
       worker.postMessage(release);
     });

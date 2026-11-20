@@ -62,9 +62,8 @@ fn app() -> Window {
     //
     // すべての Element には id: String を設定でき、
     // Page 側からcanvas, message_area を id で設定する。
-    // on_new_game() は引数に GameWindow を受け取る。
-    // GameWindow は GameWindow::new() で この2つの ui_id (u32) をそれぞれ Option で受け取っている。
-    // (fn GameWindow::new() はホストにexport済み( [[host_export="<function name>"]] 的なホストに露出させるattributeを作ったほうが良い ))
+    // on_new_game() は引数に WindowHandle を受け取る (当初は GameWindow という名前で、ホストが ui_id から組み立てていた)。
+    // WindowHandle は Window::show() が作ってホストに預けたもので、この2つの出力先を持つ。
     // 以降そのidを介して Canvas API や Content API の出力先が決定される。
     <Page page_id="scene" canvas=("canvas") message_area=("message_area") >
       <Canvas id=("canvas") />
@@ -84,9 +83,12 @@ fn app() -> Window {
     エンジンのUIとstdに `ScenePage` を新設。以下2つをプロパティにもつ。もう文字列のidでElementが相互に参照し合う必要はない(syscall レベルでは ui_id で設定する)
     - `.canvas: Canvas`
     - `.message_area: MessageArea`
+  - `.config: Config`: ゲームの設定 (文字の速さ・大きさ・色など)。省くと `Config::default()`。
+    プレイをまたいで続くので `Game` ではなく Window に与え、`WindowHandle` に入れて `Game` と共有する。
 - `SceneStartButton` Element を新設。基本的なプロパティは`Button`と同じだが、
-  - `on_click: fn(GameWindow) -> Game[S]`: 押されたときに Engine は Biwa Language 側のこのハンドラ関数をよびだす。
-    `GameWindow` の生成はすでに `[[host_export]]` で達成済みなので、 Engine はそれを渡すだけ。
+  - `on_click: fn(WindowHandle) -> Game[S]`: 押されたときに Engine は Biwa Language 側のこのハンドラ関数をよびだす。
+    `WindowHandle` (Window の寿命のものの束。出力先もここにある) は `Window::show()` が作って Engine に預けてあるので、
+    Engine はそれを中身を見ずに渡すだけ (`docs/host-function-values.md`)。
     Engine はシーンページに遷移し `Window` 全体に指定された `main_scene` に返ってきた `Game[S]` を渡してシーン本体の処理に入る。
 
 ```biwa
@@ -98,6 +100,7 @@ fn main() -> Window[S] {
 
     // fn(Game[S]) -> Game[S]
     main_scene=(scenario)
+    config=(Config::default())
     scene_page=(
       <ScenePage
         canvas=(<Canvas />)
@@ -110,8 +113,8 @@ fn main() -> Window[S] {
       <Vertical margin_left=(vw(60)) >
         <SceneStartButton
           text=("NEW GAME")
-          // fn(GameWindow) -> Game[S]
-          on_click=(fn(window) { Game::new(window, "test game", MyGameStates::new(), Condig::default()) })
+          // fn(WindowHandle) -> Game[S]
+          on_click=(fn(window) { Game::new(window, "test game", MyGameStates::new()) })
         />
         <Link text="LOAD" on_click_link="load" />
         <Link text="CONFIG" on_click_link="config" />
@@ -129,7 +132,7 @@ fn main() -> Window[S] {
                 None => d.timestamp.to_string(),
               })
 
-              // fn(GameWindow) -> Game[S]
+              // fn(WindowHandle) -> Game[S]
               on_click=(fn(window) { Game::load(window, d) })
               background_image=(d.last_snapshot)
             />

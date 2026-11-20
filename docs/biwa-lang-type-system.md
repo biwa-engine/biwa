@@ -40,6 +40,42 @@ struct Foo {
 }
 ```
 
+##### 値と参照 (共有と書き換え)
+
+struct の値は**参照**である。代入・引数・戻り値・フィールドへの格納・フィールドからの取り出しは、
+値をコピーせず、同じ struct を指す。
+
+Biwa には mutability を書き分ける仕組み (`mut` / `&mut`) が無く、どの参照からでもフィールドに代入できる
+(`a.x = v`)。したがって、**参照を共有することは mutable な参照を共有すること**であり、
+書き換えは同じ struct を指すすべての場所から見える。所有権も無いので、共有の扱いは書き手に任される。
+
+```biwa
+struct Inner { x: Int }
+struct Outer { inner: Inner, n: Int }
+
+fn set_x(i: Inner, v: Int) { i.x = v; }
+
+let a = Inner { x = 1 };
+let b = a;
+b.x = 2;          // a.x も 2 (同じ struct)
+set_x(a, 3);      // a.x は 3 (引数の先での書き換えも見える)
+
+let o = Outer { inner = a, n = 0 };
+let i = o.inner;
+i.x = 4;          // o.inner.x も a.x も 4
+let n = o.n;
+n = 5;            // o.n は 0 のまま (プリミティブはコピー)
+```
+
+- プリミティブ型 (`Int` / `Uint` / `Float` / `Bool`) は値で、コピーされる。
+- `String` は書き換える手段が無いので、共有かコピーかは区別できない。
+- `Vec` / `Map` などの std のコレクションも参照で、`push` などの書き換えは共有される。
+- 共有したくないときは、新しく作る (`Inner { x = a.x }`)。複製のための仕組み (`Clone` のような trait) はまだ無い。
+- 逆に、共有を保ちたいもの (例: std の `WindowHandle`。Window の寿命のものを `Game` と共有する) を
+  フィールドを写して作り直すと、別の struct になって共有が切れる。
+
+wasm ターゲットでは struct は WasmGC の struct で、フィールドへの代入は `struct.set` になる。
+
 ##### 列挙型 (enum)
 
 内部表現はターゲットによるが、

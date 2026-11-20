@@ -35,7 +35,7 @@ pub fn run(options: &Options, wasm: Vec<u8>) -> Result<(), String> {
                     }
                 }
                 engine.take_image_requests();
-                let released = engine.take_released_handlers();
+                let released = engine.take_released();
                 if !released.is_empty() {
                     vm.send(HostCommand::Release(released));
                 }

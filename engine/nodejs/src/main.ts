@@ -53,7 +53,7 @@ document.title = `${game.packageName} — Biwa`;
 // エンジンは UI を何も置かない。`fn main()` が Window を表示して初めて画面に何かが出る。
 //
 // 流れ: `fn main()` で Window を表示 → SceneStartButton が押されるのを待つ →
-// Window の ScenePage の出力先で `GameWindow` を作り、ボタンの `on_click(window)` で `Game[S]` を作る →
+// Window に預けてあった `WindowHandle` をボタンの `on_click(window)` に渡して `Game[S]` を作る →
 // ScenePage を見せる → Window の `main_scene(game)`。
 // 生成物は Worker で走り、ブロッキング syscall は Worker のスレッドを止める (`engine/vm/wasm/`)。
 // buildId を付けるのは、再ビルドで同じ URL のまま中身が変わるためである。

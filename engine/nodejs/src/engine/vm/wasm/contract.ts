@@ -54,12 +54,12 @@ export type SyscallKind =
    */
   | "alloc"
   /**
-   * `cast` と同じく積んで返るが、関数の引数は Worker のハンドラの表に預け、
+   * `cast` と同じく積んで返るが、決まった位置の引数 (`RETAINED_ARG`) を Worker の表に預け、
    * その番号 (handle) に替えてから投げる。
    *
-   * 関数 (wasm の関数のラッパー) は `postMessage` できないので、
-   * メインスレッドには番号しか届かない。関数は Worker に残り、
-   * ホストが後で Worker の中から呼ぶ (`docs/host-function-values.md`)。
+   * 預けるのは関数 (ハンドラ) か値 (WasmGC の struct)。どちらも `postMessage` できないので、
+   * メインスレッドには番号しか届かない。本体は Worker に残り、ホストが後で Worker の中から
+   * 呼ぶ (関数) か、host export の引数として返す (値) (`docs/host-function-values.md`)。
    */
   | "retain"
   /**
@@ -132,6 +132,19 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   sys_ui_push_child: "cast",
   /** Element にハンドラ (ホストが後で呼ぶ関数) を設定する。 */
   sys_ui_set_handler: "retain",
+  /** Element に値 (ホストが中身を見ずに預かり、後で返す struct) を設定する。 */
+  sys_ui_set_value: "retain",
+};
+
+/**
+ * `retain` の syscall で、Worker の表に預ける引数の位置 (0 始まり)。
+ *
+ * 型で見分けず位置で決めるのは、WasmGC の struct が JS からは `Map` などの externref と
+ * 同じ「ただのオブジェクト」に見え、区別できないからである。
+ */
+export const RETAINED_ARG: Record<string, number> = {
+  sys_ui_set_handler: 2,
+  sys_ui_set_value: 2,
 };
 
 /**

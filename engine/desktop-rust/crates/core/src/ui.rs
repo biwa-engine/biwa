@@ -5,7 +5,7 @@
 //! - `Window` は作った時点で画面に出る (ルートに付く)。他の Element は push_child されるまでどこにも繋がらない。
 //! - 親が子をいくつ持てるか: Window / Page / ScenePage / Layers / Horizontal / Vertical / HorizontalGrid は多数、
 //!   Box は 1 つ (積むと前の子は消える)、Link / SceneStartButton / Image / Canvas / MessageArea は持てない (積んだ子は消える)。
-//!   消えた Element に預けてあった関数は手放す ([`UiTree::take_released_handlers`])。
+//!   消えた Element に預けてあった関数・値は手放す ([`UiTree::take_released`])。
 //! - Window の Page は、最初に積まれたものが見える。Link を押すと `on_click_link` の page_id の Page に替わる。
 //!   ScenePage は Link では遷移できず、scene が始まるときに見える ([`UiTree::enter_scene_page`])。
 //! - Window は Page を積む前に ScenePage と `main_scene` を持っていなければならない。
@@ -139,6 +139,12 @@ mod handler {
     pub const SCENE_START_BUTTON_ON_CLICK: i32 = 1;
 }
 
+/// 値の種類 (`api/ui.ts` の `ValueKind`)。ハンドラとは別の番号の空間。
+mod value {
+    /// Window の寿命のものの束 (std の `WindowHandle`)。scene を始めるときに `on_click` に渡す。
+    pub const WINDOW_HANDLE: i32 = 0;
+}
+
 /// UI の大きさ。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UiSize {
@@ -193,6 +199,8 @@ struct Node {
     parent: Option<UiId>,
     children: Vec<UiId>,
     handlers: HashMap<i32, u32>,
+    /// 預けた値。値の種類 → vm の表の番号。
+    values: HashMap<i32, u32>,
     style: BoxStyle,
     background: Option<Background>,
     /// `Image` Element の画像。
@@ -301,6 +309,7 @@ impl UiTree {
                 parent: None,
                 children: Vec::new(),
                 handlers: HashMap::new(),
+                values: HashMap::new(),
                 style,
                 background: None,
                 image: None,
@@ -423,6 +432,29 @@ impl UiTree {
         Ok(())
     }
 
+    /// 値を設定する。規則はハンドラ ([`Self::set_handler`]) と同じ。
+    pub fn set_value(&mut self, id: UiId, kind: i32, handle: u32) -> Result<(), UiError> {
+        let target = match kind {
+            value::WINDOW_HANDLE => ElementKind::Window,
+            _ => {
+                self.released.push(handle);
+                return Err(UiError(format!("unknown ui value kind: {kind}")));
+            }
+        };
+        let Some(node) = self.nodes.get_mut(&id) else {
+            self.released.push(handle);
+            return Err(UiError(format!("unknown ui element {id}")));
+        };
+        if node.kind != target {
+            self.released.push(handle);
+            return Err(UiError(format!("ui value kind {kind} cannot be set on ui element {id}")));
+        }
+        if let Some(previous) = node.values.insert(kind, handle) {
+            self.released.push(previous);
+        }
+        Ok(())
+    }
+
     /// 子を親に積む (`docs/ui-api.md` の push_child の規則)。
     pub fn push_child(&mut self, parent: UiId, child: UiId) -> Result<(), UiError> {
         let parent_kind = self.node(parent)?.kind;
@@ -515,9 +547,14 @@ impl UiTree {
             .handlers
             .get(&handler::WINDOW_MAIN_SCENE)
             .ok_or_else(|| UiError(format!("Window {window} has no main_scene")))?;
+        let window_handle = *win
+            .values
+            .get(&value::WINDOW_HANDLE)
+            .ok_or_else(|| UiError(format!("Window {window} has no WindowHandle")))?;
         let page = win.scene_page.ok_or_else(|| UiError(format!("Window {window} has no ScenePage")))?;
-        let (canvas, message_area) = self.scene_outputs_checked(page)?;
-        Ok(SceneStart { window, on_click, main_scene, canvas, message_area })
+        // 出力先の ui_id は std の `WindowHandle` が持っている。ここでは確かめるだけで返さない。
+        self.check_scene_outputs(page)?;
+        Ok(SceneStart { window, on_click, main_scene, window_handle })
     }
 
     /// Window の ScenePage の出力先。
@@ -527,8 +564,8 @@ impl UiTree {
         Some(SceneOutputs { page, canvas: node.scene_canvas, message_area: node.scene_message_area })
     }
 
-    /// 手放してよくなった関数の番号を取り出す。
-    pub fn take_released_handlers(&mut self) -> Vec<u32> {
+    /// 手放してよくなった関数・値の番号を取り出す。
+    pub fn take_released(&mut self) -> Vec<u32> {
         std::mem::take(&mut self.released)
     }
 
@@ -664,6 +701,7 @@ impl UiTree {
             self.names.remove(&name);
         }
         self.released.extend(node.handlers.into_values());
+        self.released.extend(node.values.into_values());
         self.windows.retain(|w| *w != id);
         self.destroyed.push(id);
     }
@@ -691,7 +729,7 @@ impl UiTree {
             )));
         }
         // ScenePage の部分木はこの時点で組み上がっているので、出力先が揃っていることをここで確かめる。
-        self.scene_outputs_checked(page)?;
+        self.check_scene_outputs(page)?;
         let previous = self.node(window)?.scene_page;
         if previous == Some(page) {
             return Ok(());
@@ -728,19 +766,20 @@ impl UiTree {
         Ok(())
     }
 
-    /// ScenePage の出力先。どちらも設定されていて、ScenePage の子孫に置かれていなければならない。
-    fn scene_outputs_checked(&self, page: UiId) -> Result<(UiId, UiId), UiError> {
+    /// ScenePage の出力先を確かめる。どちらも設定されていて、ScenePage の子孫に置かれていなければならない。
+    fn check_scene_outputs(&self, page: UiId) -> Result<(), UiError> {
         let node = self.node(page)?;
-        let output = |id: Option<UiId>, what: &str| -> Result<UiId, UiError> {
+        let output = |id: Option<UiId>, what: &str| -> Result<(), UiError> {
             let id = id.ok_or_else(|| UiError(format!("ui element {page} (ScenePage) must have its \"{what}\" set")))?;
             if !self.is_descendant_of(id, page) {
                 return Err(UiError(format!(
                     "the \"{what}\" of ui element {page} (ScenePage) is ui element {id}, which must be placed inside the ScenePage"
                 )));
             }
-            Ok(id)
+            Ok(())
         };
-        Ok((output(node.scene_canvas, "canvas")?, output(node.scene_message_area, "message_area")?))
+        output(node.scene_canvas, "canvas")?;
+        output(node.scene_message_area, "message_area")
     }
 
     /// Window がノベルゲームとして scene を始められることを確かめる (Page を積む前に要る)。
@@ -752,6 +791,10 @@ impl UiTree {
         }
         if !node.handlers.contains_key(&handler::WINDOW_MAIN_SCENE) {
             missing.push("`main_scene`");
+        }
+        // `WindowHandle` は std の `Window::show()` が必ず預ける。ゲームの作者が書き忘れるものではない。
+        if !node.values.contains_key(&value::WINDOW_HANDLE) {
+            missing.push("std's `WindowHandle`");
         }
         if missing.is_empty() {
             Ok(())
@@ -855,6 +898,7 @@ mod tests {
         t.set_property(2, property::SCENE_PAGE_MESSAGE_AREA, [5, 0, 0, 0], [0, 0], 0.0).unwrap();
         t.set_property(1, property::WINDOW_SCENE_PAGE, [2, 0, 0, 0], [0, 0], 0.0).unwrap();
         t.set_handler(1, handler::WINDOW_MAIN_SCENE, 10).unwrap();
+        t.set_value(1, value::WINDOW_HANDLE, 12).unwrap();
         set_str(&mut t, 6, property::PAGE_ID, "main");
         set_str(&mut t, 8, property::PAGE_ID, "second");
         set_str(&mut t, 9, property::ON_CLICK_LINK, "main");
@@ -873,7 +917,7 @@ mod tests {
     #[test]
     fn finds_scene_start() {
         let start = sample().first_scene_start().unwrap();
-        assert_eq!(start, SceneStart { window: 1, on_click: 11, main_scene: 10, canvas: 4, message_area: 5 });
+        assert_eq!(start, SceneStart { window: 1, on_click: 11, main_scene: 10, window_handle: 12 });
     }
 
     #[test]
@@ -923,7 +967,7 @@ mod tests {
         t.push_child(30, 31).unwrap();
         t.push_child(30, 32).unwrap();
         assert_eq!(t.nodes[&30].children, vec![32]);
-        assert_eq!(t.take_released_handlers(), vec![40]);
+        assert_eq!(t.take_released(), vec![40]);
         assert_eq!(t.take_destroyed(), vec![31]);
     }
 

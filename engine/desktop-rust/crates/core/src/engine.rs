@@ -177,6 +177,7 @@ impl Engine {
             }
             Syscall::UiPushChild { parent, child } => self.ui.push_child(parent, child)?,
             Syscall::UiSetHandler { id, kind, handle } => self.ui.set_handler(id, kind, handle)?,
+            Syscall::UiSetValue { id, kind, handle } => self.ui.set_value(id, kind, handle)?,
             Syscall::EnterScenePage { window } => self.scene = Some(self.ui.enter_scene_page(window)?),
 
             Syscall::Wait | Syscall::AwaitTransitions | Syscall::Sleep { .. } => {
@@ -281,9 +282,9 @@ impl Engine {
         std::mem::take(&mut self.image_requests)
     }
 
-    /// 手放してよくなった関数の番号 (vm に伝える)。
-    pub fn take_released_handlers(&mut self) -> Vec<u32> {
-        self.ui.take_released_handlers()
+    /// 手放してよくなった関数・値の番号 (vm に伝える)。
+    pub fn take_released(&mut self) -> Vec<u32> {
+        self.ui.take_released()
     }
 
     /// 画像が読めた。
@@ -790,6 +791,7 @@ mod tests {
             Syscall::UiCreate { id: 6, kind: 12 },
             Syscall::UiSetHandler { id: 1, kind: 0, handle: 10 },
             Syscall::UiSetHandler { id: 6, kind: 1, handle: 11 },
+            Syscall::UiSetValue { id: 1, kind: 0, handle: 12 },
             Syscall::UiPushChild { parent: 5, child: 6 },
             Syscall::UiPushChild { parent: 1, child: 5 },
         ];
@@ -798,7 +800,7 @@ mod tests {
         }
         e.frame(Viewport::new(100.0, 100.0, 1.0), &mut Mono, &mut ButtonOnRight);
         let Click::StartScene(start) = e.click_at(75.0, 50.0).unwrap() else { panic!("the button was not hit") };
-        assert_eq!((start.on_click, start.main_scene, start.message_area), (11, 10, 4));
+        assert_eq!((start.on_click, start.main_scene, start.window_handle), (11, 10, 12));
 
         // ボタンの外のクリックは「進む」(クリック待ちを終わらせる)。
         assert_eq!(e.begin_call(&Syscall::Wait), CallStatus::Pending);

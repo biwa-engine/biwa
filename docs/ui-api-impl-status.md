@@ -1725,3 +1725,23 @@ scratchpad の試作パッケージ (`El[T]`・`Bx[T]`・`Btn[T]`・`Win[T]` で
 - std の `Vec` の `iter` / `map` など、関数を受け取るコレクションの API。
 - `Window.on_event` / `Button` (Phase3): scene の実行中にホストが Biwa の関数を呼ぶ規定 (R3 の再入) が要る。
 - TypeScript バックエンドの追従。
+
+## 20. `GameWindow` を `WindowHandle` にした (2026-11-20)
+
+音の仕様 (issue #26、memo の D28〜D31) の前段。`Game` まで Window (= アプリケーション全体) の寿命のものを運ぶ。
+
+- std の `GameWindow` / `GameCanvas` / `GameMessageArea` を `WindowHandle` / `CanvasHandle` / `MessageAreaHandle` に改名した。
+- `WindowHandle` は `Window::show()` が組み立て (出力先の ui_id は ScenePage の `CanvasId` / `MessageAreaId` から取る)、
+  `sys_ui_set_value` でホストに預ける。SceneStartButton が押されると、ホストはそれをそのまま `on_click` に渡す。
+  - std の host export `__biwa_std_game_window_new` と、ホストが ui_id を渡す処理は消した。
+    `WindowHandle` に何を足しても、ホストと ABI は変わらない。
+  - 出力先は ScenePage が必ず持つので、`Option` をやめた (0 を「無し」とする取り決めも消えた)。
+  - エンジンは ScenePage の出力先の配置を確かめるだけで、ui_id は返さない。
+- `WindowHandle` は型引数を持たない。ゲームの状態 `S` やプレイごとのものは `Game` に置く。
+- `Game[S]` はプレイの間これを持ち続け、Window への副作用の経路にする (struct は参照で、書き換えは共有される)。
+- ABI 2 (`docs/toolchain.md`)。
+- 設定 (`Config`) も `WindowHandle` に移した。プレイヤーが変える `UserConfig` はプレイをまたいで続くので、Window の寿命のものである。
+  - `Window::config(Config)` で与える (省くと `Config::default()`)。`Game::new(window, name, states)` は設定を取らない。
+  - std は `game.window.config()` を読んで絶対値に直す。返るのは Window が持つものそのものなので、書き換えは Window の側にも効く。
+- struct が参照として共有されること (mutable な参照の共有) を `docs/biwa-lang-type-system.md` に明文化した。
+

@@ -17,7 +17,7 @@ pub use emit::{WasmError, emit};
 ///
 /// **約束を変えたら上げ、runtime の側も合わせる。** std の `[[native(arch="wasm")]]` の import 宣言を
 /// 変えたときもここである (std はツールチェインの一部なので、コンパイラと同じ版で配られる)。
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 
 /// [`ABI_VERSION`] を書く custom section の名前。
 pub const ABI_SECTION: &str = "biwa.abi";

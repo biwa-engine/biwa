@@ -1433,9 +1433,9 @@ mod tests {
         // main から辿れないので、これが出ているのは
         // 単相化の roots に host export が正しく加わっている証拠でもある。
         assert!(wat.contains("(export \"host_export_demo\""), "{wat}");
-        // std の `GameWindow` を組み立てる入口。ランタイムはこれで作った値を
-        // `SceneStartButton` の `on_click` に渡す。std (依存) の host export なので、
-        // test1 の生成物から出ていることがパッケージ越しの export の実用上の確認になる。
+        // テスト用の std (`assets/tests/std`) の host export。本物の std はもうこれを使わない
+        // (`WindowHandle` は `Window::show()` がランタイムに預ける) が、依存パッケージの host export が
+        // test1 の生成物から出ていることの確認として残している。
         assert!(
             wat.contains("(export \"__biwa_std_game_window_new\""),
             "{wat}"

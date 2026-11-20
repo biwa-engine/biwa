@@ -16,6 +16,8 @@ import {
   handlerTarget,
   isKnownElementKind,
   isKnownHandlerKind,
+  ValueKind,
+  valueTarget,
   isKnownNumericProperty,
   isKnownStringProperty,
   PropertyKind,
@@ -77,6 +79,12 @@ interface UiNode {
    * Element が消えるときに、ここにある番号を手放す (`destroy`)。
    */
   handlers: Map<number, number>;
+  /**
+   * 設定された値。値の種類 (`ValueKind`) → 預けた値の番号。
+   *
+   * ハンドラと同じく番号しか持たず、Element が消えるときに手放す。
+   */
+  values: Map<number, number>;
 }
 
 /**
@@ -84,23 +92,21 @@ interface UiNode {
  *
  * 値はすべて番号で、関数そのものは関数を預かっている側 (wasm は Worker) にある
  * (`docs/host-function-values.md`)。受け取った側は
- * `onClick(GameWindow::new(canvasId, messageAreaId))` で `Game[S]` を作り、
+ * `onClick(windowHandle)` で `Game[S]` を作り、
  * `enterScenePage(windowId)` で ScenePage を見せてから `mainScene(game)` を呼ぶ。
  */
 export interface SceneStartRequest {
   /** ボタンが属する Window の ui_id。 */
   windowId: number;
-  /** ボタンの `on_click` (`fn(GameWindow) -> Game[S]`) の番号。 */
+  /** ボタンの `on_click` (`fn(WindowHandle) -> Game[S]`) の番号。 */
   onClick: number;
   /** Window の `main_scene` (`Scene[S]`) の番号。 */
   mainScene: number;
   /**
-   * Window の ScenePage の出力先 (Canvas / MessageArea) の ui_id。そのまま `__biwa_std_game_window_new` に渡す。
-   * ScenePage は今は両方を必ず持つ (`sceneOutputsOf`) が、`GameWindow` 側は将来に備えて
-   * 「0 は無し」の取り決めのまま (`Option`) にしてある。
+   * Window に預けた std の `WindowHandle` の番号。そのまま `on_click` に渡す。
+   * 出力先 (Canvas / MessageArea) もこの中にあり、ホストからは返さない。
    */
-  canvasId: number;
-  messageAreaId: number;
+  windowHandle: number;
 }
 
 /**
@@ -169,20 +175,20 @@ export class UIObjects {
    */
   private startScene: (request: SceneStartRequest) => void = () => {};
   /**
-   * 要らなくなったハンドラの番号を、関数を預かっている側に返す。
+   * 要らなくなったハンドラ・値の番号を、それを預かっている側に返す。
    *
-   * 預かっているのは Worker なので、走らせる側 (`vm/wasm/host.ts`) が `setHandlerReleaser` で差し込む。
+   * 預かっているのは Worker なので、走らせる側 (`vm/wasm/host.ts`) が `setRetainedReleaser` で差し込む。
    * 差し込まれるまでは何もしない。
    */
-  private releaseHandlers: (handles: number[]) => void = () => {};
+  private releaseRetained: (handles: number[]) => void = () => {};
 
   constructor(root: HTMLElement) {
     this.root = root;
   }
 
-  /** ハンドラの番号を手放す先を決める (`releaseHandlers` を参照)。 */
-  setHandlerReleaser(release: (handles: number[]) => void): void {
-    this.releaseHandlers = release;
+  /** ハンドラ・値の番号を手放す先を決める (`releaseRetained` を参照)。 */
+  setRetainedReleaser(release: (handles: number[]) => void): void {
+    this.releaseRetained = release;
   }
 
   /**
@@ -318,6 +324,7 @@ export class UIObjects {
       textEl: null,
       z: 0,
       handlers: new Map(),
+      values: new Map(),
     };
     this.nodes.set(id, node);
     if (textBox !== null) {
@@ -414,26 +421,60 @@ export class UIObjects {
     const node = this.nodes.get(id);
     if (node === undefined) {
       console.error(`[biwa] no such ui element: ${id}`);
-      this.releaseHandlers([handle]);
+      this.releaseRetained([handle]);
       return;
     }
     if (!isKnownHandlerKind(kind)) {
       console.error(`[biwa] unknown ui handler kind: ${kind}`);
-      this.releaseHandlers([handle]);
+      this.releaseRetained([handle]);
       return;
     }
     if (handlerTarget(kind) !== node.kind) {
       console.error(
         `[biwa] ui handler kind ${kind} cannot be set on ui element ${id} (kind ${node.kind})`,
       );
-      this.releaseHandlers([handle]);
+      this.releaseRetained([handle]);
       return;
     }
 
     const previous = node.handlers.get(kind);
     node.handlers.set(kind, handle);
     if (previous !== undefined) {
-      this.releaseHandlers([previous]);
+      this.releaseRetained([previous]);
+    }
+  }
+
+  /**
+   * 値 (預けた struct の番号) を設定する。
+   *
+   * 規則はハンドラ (`setHandler`) と同じ: 同じ種類の値が既にあれば置き換えて古い番号を手放し、
+   * 設定できなかった番号も手放す。
+   */
+  setValue(id: number, kind: number, handle: number): void {
+    const node = this.nodes.get(id);
+    if (node === undefined) {
+      console.error(`[biwa] no such ui element: ${id}`);
+      this.releaseRetained([handle]);
+      return;
+    }
+    const target = valueTarget(kind);
+    if (target === null) {
+      console.error(`[biwa] unknown ui value kind: ${kind}`);
+      this.releaseRetained([handle]);
+      return;
+    }
+    if (target !== node.kind) {
+      console.error(
+        `[biwa] ui value kind ${kind} cannot be set on ui element ${id} (kind ${node.kind})`,
+      );
+      this.releaseRetained([handle]);
+      return;
+    }
+
+    const previous = node.values.get(kind);
+    node.values.set(kind, handle);
+    if (previous !== undefined) {
+      this.releaseRetained([previous]);
     }
   }
 
@@ -511,6 +552,8 @@ export class UIObjects {
     const missing: string[] = [];
     if (window.scenePage === null) missing.push("`scene_page`");
     if (!window.handlers.has(HandlerKind.WindowMainScene)) missing.push("`main_scene`");
+    // `WindowHandle` は std の `Window::show()` が必ず預ける。ゲームの作者が書き忘れるものではない。
+    if (!window.values.has(ValueKind.WindowHandle)) missing.push("std's `WindowHandle`");
     if (missing.length > 0) {
       throw new UiContractError(
         `ui element ${window.id} (Window) must have ${missing.join(" and ")} ` +
@@ -585,9 +628,11 @@ export class UIObjects {
     }
     this.messageAreas.delete(node);
     this.nodes.delete(node.id);
-    if (node.handlers.size > 0) {
-      this.releaseHandlers([...node.handlers.values()]);
+    const retained = [...node.handlers.values(), ...node.values.values()];
+    if (retained.length > 0) {
+      this.releaseRetained(retained);
       node.handlers.clear();
+      node.values.clear();
     }
   }
 
@@ -756,7 +801,7 @@ export class UIObjects {
     }
     // ScenePage の部分木はこの時点で組み上がっている (std は子から組み上げる) ので、
     // 出力先が揃って子孫に置かれていることをここで確かめる。
-    this.sceneOutputsOf(scenePage);
+    this.checkSceneOutputs(scenePage);
     if (window.scenePage === scenePage) return;
     if (window.scenePage !== null) {
       this.destroy(window.scenePage);
@@ -786,13 +831,14 @@ export class UIObjects {
   }
 
   /**
-   * ScenePage の出力先 (Canvas と MessageArea の ui_id) を返す。
+   * ScenePage の出力先 (Canvas と MessageArea) を確かめる。
    *
    * どちらも設定されていて、ScenePage の子孫に置かれていなければならない。
    * std は ID を `ScenePage::new` で必ず受け取るが、実体の配置は型で担保できないので、ここで確かめる。
+   * 出力先の ui_id は std の `WindowHandle` が持っているので、ホストは確かめるだけで返さない。
    */
-  private sceneOutputsOf(scenePage: UiNode): { canvasId: number; messageAreaId: number } {
-    const resolve = (id: number | null, property: string): number => {
+  private checkSceneOutputs(scenePage: UiNode): void {
+    const check = (id: number | null, property: string): void => {
       if (id === null) {
         throw new UiContractError(
           `ui element ${scenePage.id} (ScenePage) must have its "${property}" set`,
@@ -805,16 +851,13 @@ export class UIObjects {
           "which must be placed inside the ScenePage",
         );
       }
-      return id;
     };
-    return {
-      canvasId: resolve(scenePage.sceneCanvasId, "canvas"),
-      messageAreaId: resolve(scenePage.sceneMessageAreaId, "message_area"),
-    };
+    check(scenePage.sceneCanvasId, "canvas");
+    check(scenePage.sceneMessageAreaId, "message_area");
   }
 
   /**
-   * SceneStartButton が押された。Window の ScenePage の出力先と預けた関数の番号を揃えて、
+   * SceneStartButton が押された。Window に預けた関数と `WindowHandle` の番号を揃えて、
    * scene を始める者 (`setSceneStarter`) に渡す。
    *
    * クリックは host まで伝播させない (Link と同じ理由)。
@@ -831,22 +874,22 @@ export class UIObjects {
       return;
     }
     const mainScene = win.handlers.get(HandlerKind.WindowMainScene);
+    const windowHandle = win.values.get(ValueKind.WindowHandle);
     const scenePage = win.scenePage;
-    if (mainScene === undefined || scenePage === null) {
+    if (mainScene === undefined || windowHandle === undefined || scenePage === null) {
       // Page を積む時点で検査している (`requireSceneSettings`) ので、ここには来ない想定。
       console.error(`[biwa] ui element ${win.id} (Window) cannot start a scene`);
       return;
     }
     // Window に結びつけたときに確かめてあるが、その後に動かされていないとも限らないので見直す。
     // ここはイベントの中なので、誤りはゲームを止めずにログに出すに留める。
-    let outputs: { canvasId: number; messageAreaId: number };
     try {
-      outputs = this.sceneOutputsOf(scenePage);
+      this.checkSceneOutputs(scenePage);
     } catch (e) {
       console.error(e);
       return;
     }
-    this.startScene({ windowId: win.id, onClick, mainScene, ...outputs });
+    this.startScene({ windowId: win.id, onClick, mainScene, windowHandle });
   }
 }
 
