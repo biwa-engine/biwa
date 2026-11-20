@@ -11,6 +11,7 @@
 import { checkAbi } from "./abi";
 import { SyscallChannel, type WorkerMessage } from "./bridge";
 import {
+  ALLOC_SPACE,
   ENGINE_NAMESPACE,
   ENGINE_SYSCALLS,
   ENTER_SCENE_PAGE,
@@ -382,6 +383,17 @@ const LOCAL_SYSCALLS: Record<string, (...args: never[]) => unknown> = {
  */
 let nextObjectId = 1;
 
+/** `ALLOC_SPACE` の空間ごとの連番 (音の SoundObject・Bus・Effect)。 */
+const nextIdInSpace = new Map<string, number>();
+
+function allocId(name: string): number {
+  const space = ALLOC_SPACE[name];
+  if (space === undefined) return nextObjectId++;
+  const id = nextIdInSpace.get(space) ?? 1;
+  nextIdInSpace.set(space, id + 1);
+  return id;
+}
+
 /**
  * Biwa から預かった関数 (ハンドラ) と値の表 (`contract.ts` の `retain`)。
  *
@@ -425,7 +437,7 @@ function syscall(
     // 採番だけをこちらで行い、本体はメインスレッドへ投げる。
     // 戻り値があるのに Worker は止まらない。
     return ((...args: unknown[]): number => {
-      const id = nextObjectId++;
+      const id = allocId(name);
       channel.cast(name, [id, ...args]);
       return id;
     }) as WebAssembly.ImportValue;

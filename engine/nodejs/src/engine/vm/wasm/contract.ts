@@ -134,6 +134,42 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   sys_ui_set_handler: "retain",
   /** Element に値 (ホストが中身を見ずに預かり、後で返す struct) を設定する。 */
   sys_ui_set_value: "retain",
+
+  // 音 (`docs/sound.md`)。id は SoundObject・Bus・Effect の空間ごとに Worker で採番する (`ALLOC_SPACE`)。
+  /** バスを作る。 */
+  sys_sound_bus_create: "alloc",
+  /** バスの effect の列の末尾に effect を挿す (繋ぐ前だけ)。effect の id を返す。 */
+  sys_sound_bus_add_effect: "alloc",
+  sys_sound_bus_attach: "cast",
+  /** 根のバスを出力に繋ぐ。根は 1 本だけ。 */
+  sys_sound_output_attach: "cast",
+  /** バスの部分木で鳴っている音をすべて止める (発火で)。 */
+  sys_sound_bus_add_stop_all: "cast",
+  /** `after` の後に、バスとその部分木を消す。 */
+  sys_sound_bus_delete: "cast",
+  sys_sound_bus_add_transition: "cast",
+  /** 即座に値を設定する (発火を待たない)。 */
+  sys_sound_bus_set_param: "cast",
+  sys_sound_effect_add_transition: "cast",
+  sys_sound_effect_set_param: "cast",
+  /** SoundObject を作る。まだ鳴らない (開始は add_start + start_transitions)。 */
+  sys_sound_create: "alloc",
+  sys_sound_add_start: "cast",
+  sys_sound_add_stop: "cast",
+  sys_sound_add_transition: "cast",
+  /** 音のファイルの読み込みを先に始める。 */
+  sys_sound_preload: "cast",
+};
+
+/**
+ * `alloc` の syscall がどの id 空間で採番するか。載っていないものは canvas オブジェクトと UI Element の共通の空間。
+ *
+ * 音は SoundObject・Bus・Effect を別の空間にする (`docs/sound.md`。それぞれ 1 から振る)。
+ */
+export const ALLOC_SPACE: Record<string, string> = {
+  sys_sound_create: "sound",
+  sys_sound_bus_create: "bus",
+  sys_sound_bus_add_effect: "effect",
 };
 
 /**

@@ -1,5 +1,6 @@
 import type { CanvasObjects } from "../canvas/CanvasObjects";
 import type { Renderer } from "../Renderer";
+import type { SoundEngine } from "../sound/SoundEngine";
 import type { UIObjects } from "../ui/UIObjects";
 
 /**
@@ -13,6 +14,8 @@ export interface EngineContext {
   renderer: Renderer;
   /** canvas に置かれたオブジェクトと、その遷移。 */
   objects: CanvasObjects;
+  /** 音のミキサーと出力 (`docs/sound.md`)。時計は `objects` と同じものを使う。 */
+  sound: SoundEngine;
   /**
    * UI Element のツリー (`docs/ui-api.md`)。
    *

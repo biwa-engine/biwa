@@ -80,6 +80,8 @@ export class CanvasObjects {
    */
   private readonly params = new Automation();
   private waiters: Array<() => void> = [];
+  /** sync 印の演出の待ちに加わる、canvas の外のもの (音)。 */
+  private readonly syncPeers: Array<{ hasSync(): boolean }> = [];
   private timers: Timer[] = [];
 
   constructor(surfaces: CanvasSurfaces) {
@@ -207,9 +209,32 @@ export class CanvasObjects {
     return this.params.hasSync();
   }
 
+  /** エンジン時計 [ms]。音も同じ時計で進む。 */
+  get clock(): number {
+    return this.now;
+  }
+
+  /** sync 印の待ち (`awaitSync`) に加える。音のミキサーが使う。 */
+  addSyncPeer(peer: { hasSync(): boolean }): void {
+    this.syncPeers.push(peer);
+  }
+
+  private anySync(): boolean {
+    return this.params.hasSync() || this.syncPeers.some((p) => p.hasSync());
+  }
+
+  /** 待っているものの条件が揃っていれば起こす。Ticker の最後に呼ぶ (音の更新の後)。 */
+  settle(): void {
+    if (!this.anySync() && this.waiters.length > 0) {
+      const waiters = this.waiters;
+      this.waiters = [];
+      for (const resolve of waiters) resolve();
+    }
+  }
+
   /** sync 印の演出がすべて終わるまで待つ。 */
   awaitSync(): Promise<void> {
-    if (!this.params.hasSync()) {
+    if (!this.anySync()) {
       return Promise.resolve();
     }
     return new Promise<void>((resolve) => {
@@ -349,11 +374,7 @@ export class CanvasObjects {
 
   /** 終わった sync バッチと sleep を回収する。 */
   private collect(now: number): void {
-    if (!this.params.hasSync() && this.waiters.length > 0) {
-      const waiters = this.waiters;
-      this.waiters = [];
-      for (const resolve of waiters) resolve();
-    }
+    this.settle();
 
     if (this.timers.length > 0) {
       const due = this.timers.filter((timer) => now >= timer.at);

@@ -26,6 +26,23 @@ import {
   setUiProperty,
   setUiPropertyString,
 } from "../../api/ui";
+import {
+  soundAddStart,
+  soundAddStop,
+  soundAddTransition,
+  soundBusAddEffect,
+  soundBusAddStopAll,
+  soundBusAddTransition,
+  soundBusAttach,
+  soundBusCreate,
+  soundBusDelete,
+  soundBusSetParam,
+  soundCreate,
+  soundEffectAddTransition,
+  soundEffectSetParam,
+  soundOutputAttach,
+  soundPreload,
+} from "../../api/sound";
 import { engine } from "../../api/context";
 import {
   completeCall,
@@ -117,6 +134,57 @@ function createHandlers(): Record<string, SyscallHandler> {
     sys_await_transitions: () => awaitTransitions(),
 
     sys_sleep: (ms: number) => sleep(ms),
+
+    // 音。`alloc` のものは先頭が Worker の採った id (`ALLOC_SPACE` の空間ごと)。
+    sys_sound_bus_create: (bus: number) => soundBusCreate(bus),
+    sys_sound_bus_add_effect: (effect: number, bus: number, kind: number, cfg1: number, cfg2: number) =>
+      soundBusAddEffect(effect, bus, kind, cfg1, cfg2),
+    sys_sound_bus_attach: (bus: number, parent: number) => soundBusAttach(bus, parent),
+    sys_sound_output_attach: (bus: number) => soundOutputAttach(bus),
+    sys_sound_bus_add_stop_all: (bus: number, after: number) => soundBusAddStopAll(bus, after),
+    sys_sound_bus_delete: (bus: number, after: number) => soundBusDelete(bus, after),
+    sys_sound_bus_add_transition: (
+      bus: number,
+      param: number,
+      kind: number,
+      value: number,
+      after: number,
+      duration: number,
+    ) => soundBusAddTransition(bus, param, kind, value, after, duration),
+    sys_sound_bus_set_param: (bus: number, param: number, value: number) => soundBusSetParam(bus, param, value),
+    sys_sound_effect_add_transition: (
+      effect: number,
+      param: number,
+      kind: number,
+      value: number,
+      after: number,
+      duration: number,
+    ) => soundEffectAddTransition(effect, param, kind, value, after, duration),
+    sys_sound_effect_set_param: (effect: number, param: number, value: number) =>
+      soundEffectSetParam(effect, param, value),
+    sys_sound_create: (
+      id: number,
+      path: string,
+      bus: number,
+      volumeDb: number,
+      x: number,
+      y: number,
+      loopStartMs: number,
+      loopEndMs: number,
+      normalize: number,
+    ) => soundCreate(id, path, bus, volumeDb, x, y, loopStartMs, loopEndMs, normalize),
+    sys_sound_add_start: (id: number, after: number, offsetMs: number, repeat: number) =>
+      soundAddStart(id, after, offsetMs, repeat),
+    sys_sound_add_stop: (id: number, after: number) => soundAddStop(id, after),
+    sys_sound_add_transition: (
+      id: number,
+      param: number,
+      kind: number,
+      value: number,
+      after: number,
+      duration: number,
+    ) => soundAddTransition(id, param, kind, value, after, duration),
+    sys_sound_preload: (path: string) => soundPreload(path),
 
     sys_ui_create: (id: number, kind: number) => createUiElement(id, kind),
 

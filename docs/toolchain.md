@@ -135,6 +135,7 @@ curl / irm で取ったファイルには macOS の quarantine が付かない�
 | -- | ---------- |
 | 1  | 最初の版 |
 | 2  | `sys_ui_set_value` (値を預ける) を足した。scene を始めるとき、Window に預けた `WindowHandle` をそのまま `on_click` に渡し、std の host export `__biwa_std_game_window_new` は使わなくなった (`host-function-values.md`) |
+| 3  | 音の syscall 16 個 (`sys_sound_*` と `sys_sound_output_attach`) を足した。`sys_start_transitions` / `sys_await_transitions` が音も扱う (`sound.md`) |
 
 ## まだやらないこと
 
