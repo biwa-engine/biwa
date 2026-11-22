@@ -18,8 +18,10 @@ const STD_STAMP_FILE: &str = ".biwa-std-stamp";
 /// biwac は依存が `<root>/.biwa_build/deps/<name>/` に取得済みであることを前提とする。
 /// 取得の実装はまだ無いので、同梱している std をここに置くのが CLI の仕事になる。
 pub fn ensure_std(project: &Project) -> Result<()> {
-    let deps_dir = project.dependencies_dir();
-    let std_dir = deps_dir.join("std");
+    ensure_std_in(&project.dependencies_dir().join("std"))
+}
+
+fn ensure_std_in(std_dir: &Path) -> Result<()> {
     let stamp_path = std_dir.join(STD_STAMP_FILE);
     let stamp = assets::stamp::<Std>();
 
@@ -32,13 +34,18 @@ pub fn ensure_std(project: &Project) -> Result<()> {
             return Ok(());
         }
         println!("Updating bundled `std`");
+        // 上書きで展開するだけだと、新しい std で消えたファイルが残る
+        // (残った `.biwa` は「宣言されていないモジュール」としてコンパイルを止める)。
+        // 印のあるディレクトリは CLI が置いたものなので、丸ごと消してから置き直してよい。
+        std::fs::remove_dir_all(std_dir)
+            .with_context(|| format!("failed to remove {}", std_dir.display()))?;
     } else {
-        println!("Placing bundled `std` into {}", deps_dir.display());
+        println!("Placing bundled `std` into {}", std_dir.display());
     }
 
-    std::fs::create_dir_all(&std_dir)
+    std::fs::create_dir_all(std_dir)
         .with_context(|| format!("failed to create {}", std_dir.display()))?;
-    assets::extract::<Std>(&std_dir)?;
+    assets::extract::<Std>(std_dir)?;
     std::fs::write(&stamp_path, &stamp)
         .with_context(|| format!("failed to write {}", stamp_path.display()))?;
 
@@ -113,4 +120,46 @@ pub fn watch_targets(project: &Project) -> Vec<PathBuf> {
         .into_iter()
         .filter(|p| p.is_dir())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("biwa-files-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn updating_std_removes_files_the_new_std_does_not_have() {
+        let std_dir = temp_dir("update").join("std");
+        ensure_std_in(&std_dir).unwrap();
+        // 古い std の名残と、古い印。
+        let stale = std_dir.join("src").join("stale_module.biwa");
+        std::fs::write(&stale, "").unwrap();
+        std::fs::write(std_dir.join(STD_STAMP_FILE), "old").unwrap();
+
+        ensure_std_in(&std_dir).unwrap();
+        assert!(!stale.exists());
+        assert!(std_dir.join("src").join("lib.biwa").is_file());
+        assert_eq!(
+            std::fs::read_to_string(std_dir.join(STD_STAMP_FILE)).unwrap(),
+            assets::stamp::<Std>()
+        );
+    }
+
+    #[test]
+    fn std_placed_by_the_user_is_left_alone() {
+        let std_dir = temp_dir("user").join("std");
+        std::fs::create_dir_all(&std_dir).unwrap();
+        let own = std_dir.join("mine.biwa");
+        std::fs::write(&own, "").unwrap();
+
+        ensure_std_in(&std_dir).unwrap();
+        assert!(own.exists());
+        assert!(!std_dir.join(STD_STAMP_FILE).exists());
+    }
 }
