@@ -1,7 +1,7 @@
 /**
  * wasm 生成物とエンジンの境界の定義。
  *
- * ここが std (`library/std/src/game/base_engine.biwa` の `[[native(arch="wasm")]]`)
+ * ここが std (`library/std/src/game/runtime.biwa` の `[[native(arch="wasm")]]`)
  * との唯一の合意点である。
  *
  * std は `(import "biwa:engine" "sys_*" ...)` を自分で書き、コンパイラはそれを
@@ -140,8 +140,8 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   // 音 (`docs/sound.md`)。id は SoundObject・Bus・Effect の空間ごとに Worker で採番する (`ALLOC_SPACE`)。
   /** バスを作る。 */
   sys_sound_bus_create: "alloc",
-  /** バスの effect の列の末尾に effect を挿す (繋ぐ前だけ)。effect の id を返す。 */
-  sys_sound_bus_add_effect: "alloc",
+  /** バスの effect の列の末尾に、作ってある effect を挿す (繋ぐ前だけ)。 */
+  sys_sound_bus_add_effect: "cast",
   sys_sound_bus_attach: "cast",
   /** 根のバスを出力に繋ぐ。根は 1 本だけ。 */
   sys_sound_output_attach: "cast",
@@ -152,6 +152,8 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   sys_sound_bus_add_transition: "cast",
   /** 即座に値を設定する (発火を待たない)。 */
   sys_sound_bus_set_param: "cast",
+  /** effect を作る (まだどのバスにも挿さない)。effect の id を返す。 */
+  sys_sound_effect_create: "alloc",
   sys_sound_effect_add_transition: "cast",
   sys_sound_effect_set_param: "cast",
   /** SoundObject を作る。まだ鳴らない (開始は add_start + start_transitions)。 */
@@ -171,7 +173,7 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
 export const ALLOC_SPACE: Record<string, string> = {
   sys_sound_create: "sound",
   sys_sound_bus_create: "bus",
-  sys_sound_bus_add_effect: "effect",
+  sys_sound_effect_create: "effect",
 };
 
 /**

@@ -1,7 +1,7 @@
 /**
  * UI syscall の kind 番号と、その実装への合流点。
  *
- * Element kind / property kind の番号は std (`library/std/src/game/base_engine.biwa`)
+ * Element kind / property kind の番号は std (`library/std/src/game/runtime.biwa` と `runtime/*.biwa`)
  * との唯一の合意点である。wasm 側の std はこれを `.wat` に直書きするので、
  * 写し間違いは `UIObjects` が名指しで叱る (`isKnownElementKind` などを経由する)。
  * この番号表自体は `Param` / `Curve` (`api/transition.ts`) と同じ役割である。

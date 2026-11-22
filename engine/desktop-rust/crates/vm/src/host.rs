@@ -201,16 +201,19 @@ fn define_sound(linker: &mut Linker<HostState>) -> Result<()> {
     })?;
     linker.func_wrap(
         ENGINE,
-        "sys_sound_bus_add_effect",
-        |mut caller: Caller<'_, HostState>, bus: i32, kind: i32, cfg1: i32, cfg2: i32| -> i32 {
+        "sys_sound_effect_create",
+        |mut caller: Caller<'_, HostState>, kind: i32, cfg1: i32, cfg2: i32| -> i32 {
             traced(&mut caller, |c| {
                 let state = c.data_mut();
                 let effect = HostState::alloc_in(&mut state.next_effect);
-                state.cast(Syscall::SoundBusAddEffect { bus: bus as u32, effect, kind, cfg1, cfg2 });
+                state.cast(Syscall::SoundEffectCreate { effect, kind, cfg1, cfg2 });
                 effect as i32
             })
         },
     )?;
+    linker.func_wrap(ENGINE, "sys_sound_bus_add_effect", |mut caller: Caller<'_, HostState>, bus: i32, effect: i32| {
+        traced(&mut caller, |c| c.data_mut().cast(Syscall::SoundBusAddEffect { bus: bus as u32, effect: effect as u32 }));
+    })?;
     linker.func_wrap(ENGINE, "sys_sound_bus_attach", |mut caller: Caller<'_, HostState>, bus: i32, parent: i32| {
         traced(&mut caller, |c| c.data_mut().cast(Syscall::SoundBusAttach { bus: bus as u32, parent: parent as u32 }));
     })?;

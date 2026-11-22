@@ -73,7 +73,8 @@ const engine = {
   },
   // 音は鳴らさない。id を空間ごとに振るだけ。
   sys_sound_bus_create: () => nextSound.bus++,
-  sys_sound_bus_add_effect: () => nextSound.effect++,
+  sys_sound_effect_create: () => nextSound.effect++,
+  sys_sound_bus_add_effect: () => {},
   sys_sound_bus_attach: () => {},
   sys_sound_output_attach: () => {},
   sys_sound_bus_add_stop_all: () => {},

@@ -173,8 +173,9 @@ impl Engine {
             }
 
             Syscall::SoundBusCreate { bus } => self.sound.bus_create(bus).map_err(UiError)?,
-            Syscall::SoundBusAddEffect { bus, effect, kind, cfg1, cfg2 } => {
-                self.sound.bus_add_effect(bus, effect, kind, cfg1, cfg2).map_err(UiError)?
+            Syscall::SoundBusAddEffect { bus, effect } => self.sound.bus_add_effect(bus, effect).map_err(UiError)?,
+            Syscall::SoundEffectCreate { effect, kind, cfg1, cfg2 } => {
+                self.sound.effect_create(effect, kind, cfg1, cfg2).map_err(UiError)?
             }
             Syscall::SoundBusAttach { bus, parent } => self.sound.bus_attach(bus, parent).map_err(UiError)?,
             Syscall::SoundOutputAttach { bus } => self.sound.output_attach(bus).map_err(UiError)?,

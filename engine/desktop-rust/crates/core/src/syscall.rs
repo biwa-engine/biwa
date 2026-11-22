@@ -96,8 +96,10 @@ pub enum Syscall {
     // --- 音 (`docs/sound.md`)。id は vm が SoundObject / Bus / Effect の空間ごとに採番済み。 ---
     /// バスを作る。
     SoundBusCreate { bus: u32 },
-    /// バスの effect の列の末尾に effect を挿す (繋ぐ前だけ)。
-    SoundBusAddEffect { bus: u32, effect: u32, kind: i32, cfg1: i32, cfg2: i32 },
+    /// バスの effect の列の末尾に、作ってある effect を挿す (繋ぐ前だけ)。
+    SoundBusAddEffect { bus: u32, effect: u32 },
+    /// effect を作る (まだどのバスにも挿さない)。
+    SoundEffectCreate { effect: u32, kind: i32, cfg1: i32, cfg2: i32 },
     SoundBusAttach { bus: u32, parent: u32 },
     /// 根のバスを出力に繋ぐ。
     SoundOutputAttach { bus: u32 },
@@ -165,6 +167,7 @@ impl Syscall {
             Self::UiSetValue { .. } => "sys_ui_set_value",
             Self::SoundBusCreate { .. } => "sys_sound_bus_create",
             Self::SoundBusAddEffect { .. } => "sys_sound_bus_add_effect",
+            Self::SoundEffectCreate { .. } => "sys_sound_effect_create",
             Self::SoundBusAttach { .. } => "sys_sound_bus_attach",
             Self::SoundOutputAttach { .. } => "sys_sound_output_attach",
             Self::SoundBusAddStopAll { .. } => "sys_sound_bus_add_stop_all",

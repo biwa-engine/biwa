@@ -70,6 +70,8 @@ interface Bus {
 
 interface Effect {
   kind: number;
+  /** 挿したバス。作っただけで挿していない effect は何もしない。 */
+  bus: number | null;
   steep: boolean;
   key: number;
   duckGain: number;
@@ -132,11 +134,25 @@ export class Mixer {
     this.params.define(busKey(id), 0, 0);
   }
 
-  busAddEffect(bus: number, id: number, kind: number, cfg1: number, cfg2: number): void {
+  /** effect の列の末尾に、作ってある effect を挿す。繋いだ後は挿せない。1 つの effect は 1 つのバスにしか挿せない。 */
+  busAddEffect(bus: number, effect: number): void {
     const b = this.bus(bus);
     if (b.parent.kind !== "none") {
       throw new Error(`sound bus ${bus} is already attached; effects must be added before attaching`);
     }
+    const e = this.effects.get(effect);
+    if (e === undefined) throw new Error(`no such sound effect: ${effect}`);
+    if (e.bus !== null) {
+      throw new Error(`sound effect ${effect} is already in sound bus ${e.bus}; an effect can be in only one bus`);
+    }
+    e.bus = bus;
+    b.effects.push(effect);
+  }
+
+  // --- effect -------------------------------------------------------------
+
+  /** effect を作る (まだどのバスにも挿さない)。パラメータは既定値で始まる。 */
+  effectCreate(id: number, kind: number, cfg1: number, cfg2: number): void {
     if (kind !== EffectKind.PassFilter && kind !== EffectKind.Compressor && kind !== EffectKind.Duck) {
       throw new Error(`unknown sound effect kind: ${kind}`);
     }
@@ -144,9 +160,9 @@ export class Mixer {
       throw new Error(`duck mode ${cfg2} is not supported (only 0 = activity)`);
     }
     if (this.effects.has(id)) throw new Error(`sound effect ${id} already exists`);
-    b.effects.push(id);
     this.effects.set(id, {
       kind,
+      bus: null,
       steep: kind === EffectKind.PassFilter && cfg1 === 1,
       key: kind === EffectKind.Duck ? cfg1 : 0,
       duckGain: 0,

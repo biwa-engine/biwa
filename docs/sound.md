@@ -96,11 +96,16 @@ master          (リミッタ。出力に繋がる)
 
 ### 組み立てと削除
 
-1. `sys_sound_bus_create() -> bus`
-2. `sys_sound_bus_add_effect(bus, kind, cfg1, cfg2) -> effect` (0 回以上)
-3. `sys_sound_bus_attach(bus, parent)`、根は `sys_sound_output_attach(bus)`
+1. `sys_sound_effect_create(kind, cfg1, cfg2) -> effect` で effect を作る (どのバスにも挿さない。パラメータは既定値)。
+2. `sys_sound_bus_create() -> bus`
+3. `sys_sound_bus_add_effect(bus, effect)` (0 回以上)
+4. `sys_sound_bus_attach(bus, parent)`、根は `sys_sound_output_attach(bus)`
 
 - **effect は繋ぐ前にしか挿せない** (UI の「組み立ててから push_child」と同じ。kira の制約とも合う)。
+- **1 つの effect は 1 つのバスにしか挿せない** (2 つ目は警告して無視する)。どのバスにも挿していない effect は何もしない。
+- effect を作るのとバスに挿すのを分けたのは、effect の id (パラメータを後から動かすハンドル) を
+  バスを作る前に手に入れるためである。std はこの段を `Bus::new(parent, volume, effects)` 1 回の中に隠し、
+  途中の状態 (親の無いバス、effect の無いバス) を外に見せない。
 - `sys_sound_bus_delete(bus, after)` は `after` の後に、バスと部分木 (子のバス・effect・中で鳴っている音) を消す。
   消した id への操作は無視する。消したバスを key にしていた duck は効かなくなり、release の時間で戻る。
 
@@ -155,13 +160,14 @@ Web Audio のような任意のグラフは組ませない。持つのはバス�
 
 ```wat
 (import "biwa:engine" "sys_sound_bus_create" (func (result i32)))                        ;; → bus
-(import "biwa:engine" "sys_sound_bus_add_effect" (func (param i32 i32 i32 i32) (result i32)))  ;; bus kind cfg1 cfg2 → effect
+(import "biwa:engine" "sys_sound_bus_add_effect" (func (param i32 i32)))                  ;; bus effect (繋ぐ前だけ)
 (import "biwa:engine" "sys_sound_bus_attach" (func (param i32 i32)))                      ;; bus parent
 (import "biwa:engine" "sys_sound_output_attach" (func (param i32)))                       ;; bus
 (import "biwa:engine" "sys_sound_bus_add_stop_all" (func (param i32 i32)))                ;; bus after
 (import "biwa:engine" "sys_sound_bus_delete" (func (param i32 i32)))                      ;; bus after
 (import "biwa:engine" "sys_sound_bus_add_transition" (func (param i32 i32 i32 f32 i32 i32)))   ;; bus param kind value after duration
 (import "biwa:engine" "sys_sound_bus_set_param" (func (param i32 i32 f32)))               ;; bus param value (発火を待たない)
+(import "biwa:engine" "sys_sound_effect_create" (func (param i32 i32 i32) (result i32)))  ;; kind cfg1 cfg2 → effect
 (import "biwa:engine" "sys_sound_effect_add_transition" (func (param i32 i32 i32 f32 i32 i32)))
 (import "biwa:engine" "sys_sound_effect_set_param" (func (param i32 i32 f32)))
 ;; path bus volume_db x y loop_start_ms loop_end_ms (0 = ファイルの終わり) normalize → id。まだ鳴らない。
@@ -191,27 +197,39 @@ std の値の操作として `sys_string_eq` (文字列を中身で比べる。`
 
 ```biwa
 // 鳴らす
-g.play_se(Sound::new("sounds/se/chime.wav"));
-g.play_se_and_wait(Sound::new("sounds/se/chime.wav"));      // sync で鳴らして待つ。クリックで飛ばせる
-g.play_ambient(Sound::new("sounds/ambient/wind.wav"), ms(2000));
-g = g.change_bgm(Sound::new("sounds/bgm/morning.mp3").with_volume(Volume::db(-4.0)), ms(1000));  // クロスフェード。同じファイルなら何もしない
+g.play_se(Sound::file("sounds/se/chime.wav"));
+g.play_se_and_wait(Sound::file("sounds/se/chime.wav"));     // sync で鳴らして待つ。クリックで飛ばせる
+g.play_ambient(Sound::file("sounds/ambient/wind.wav"), ms(2000));
+g = g.change_bgm(Sound::new("sounds/bgm/morning.mp3", Volume::db(-4.0), SoundPosition::center(), SoundLoopRange::whole()), ms(1000));
+                                                             // クロスフェード。同じファイルなら何もしない
 g = g.stop_bgm(ms(3000));
 biwa.voice("sounds/voice/biwa_001.ogg");                     // 同じキャラの前のボイスは止まる
 
-// 型
-Sound::new(path).with_volume(v).with_position(Position::at(-0.5, 0.0)).with_loop(start, Some(end)).preload()
-sound.play_on(bus, repeat) / sound.fade_in_on(bus, repeat, d)        // -> SoundObject
-object.stop() / stop_after(d) / fade_out(d) / fade_to(v, d) / move_to(p, d)
+// 値 (syscall を出さない)。すべてを渡す new と、既定値で埋める短いコンストラクタがある
+Sound::new(path, volume, position, loop_range) / Sound::file(path)          // 0 dB・中央・ファイル全体
+SoundPlayback::new(repetition, offset, fade_in, loudness) / SoundPlayback::once() / SoundPlayback::forever()
+SoundRepetition::Infinite / SoundRepetition::Count(n)
+Loudness::AsIs / Loudness::Normalize
+SoundLoopRange::new(start, Some(end)) / SoundLoopRange::whole()
 Volume::db(-6.0) / Volume::percent(50) / Volume::silent()
-Position::center() / left() / right() / at(x, y)
+SoundPosition::center() / left() / right() / at(x, y)
+hz(500.0)                                                    // Hz::hz。cx() と同じく import して使う
+CompressionRatio::new(4.0)                                   // 4:1
 
-// バス
-let bus = Bus::new();
-let filter = bus.add_pass_filter(FilterSlope::Steep);   // 繋ぐ前に挿す
-bus.attach(g.sound().buses().master());
-filter.high_cut_to(500.0, ms(1000));                     // 水に潜る
+// 鳴らす (返るときには鳴り始めている)
+let object = bus.play(sound, SoundPlayback::once());
+object.stop() / stop_after(d) / fade_out(d) / fade_to(v, d) / move_to(p, d)
+
+// effect: 作った時点で完成している。手元に残した値がパラメータを動かすハンドルになる
+let filter = PassFilter::new(FilterSlope::Steep, None, None);   // None はその側を削らない。PassFilter::open(slope) も同じ
+Compressor::new(threshold, ratio, attack, release, makeup) / Compressor::limiter()
+Duck::new(key_bus, Ducking::new(amount, attack, release)) / duck.set(Ducking::none())
+
+// バス: 親・音量・effect の列を一度に渡す。返るときには木に繋がっている
+let bus = Bus::new(BusParent::Bus(g.sound().buses().master()), Volume::db(0.0), Vec::of(BusEffect::PassFilter(filter)));
+Bus::under(parent)                                           // 0 dB・effect 無し
+filter.high_cut_to(Some(hz(500.0)), ms(1000));               // 水に潜る
 bus.fade_to(v, d) / bus.set_volume(v) / bus.stop_all(fade) / bus.delete(after)
-bus.add_compressor(threshold, ratio, attack, release) / bus.add_limiter() / bus.add_duck(key)
 
 // 既定の木と設定
 fn main() {
@@ -259,7 +277,7 @@ headless でも同じ論理が走る。
 
 - 無いファイル・読めないファイル・3 チャンネル以上のファイルは、長さ 0 の音として扱う (すぐ終わる。`await` は固まらない)。エンジンがログを出す。
 - 終わった SoundObject への操作は黙って無視する (鳴り終わった SE を止めるのはよくあるため)。
-- 無いバス・effect への操作、繋いだ後の `add_effect`、2 本目の根は警告して無視する。
+- 無いバス・effect への操作、繋いだ後の `add_effect`、別のバスに挿した effect の `add_effect`、2 本目の根は警告して無視する。
 - ネイティブで出力デバイスを開けなければ、警告して音を出さずに動く (論理状態は動く)。
 - headless は出力を開かない。アセットがあれば音をデコードして長さだけを使う。
 

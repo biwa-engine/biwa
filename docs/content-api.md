@@ -294,7 +294,7 @@ wasm の `String` は externref で、実体はホスト側にしか無い。
 `Size` を (単位, 値) の 2 つに割るのは、
 wasm の引数に enum をそのまま渡せないためである。
 
-wasm の import 宣言は `library/std/src/game/base_engine.biwa` の
+wasm の import 宣言は `library/std/src/game/runtime.biwa` の
 `[[native(arch="wasm")]]` ブロックに足す。
 TypeScript 側は `Sys` の番号を足して `BiwaSyscall` の記述子を返す
 (ただし決めたこと 1 のとおり、TypeScript は当面建たない)。

@@ -22,8 +22,12 @@ export function soundBusCreate(bus: number): void {
   guarded("sys_sound_bus_create", () => mixer().busCreate(bus));
 }
 
-export function soundBusAddEffect(effect: number, bus: number, kind: number, cfg1: number, cfg2: number): void {
-  guarded("sys_sound_bus_add_effect", () => mixer().busAddEffect(bus, effect, kind, cfg1, cfg2));
+export function soundEffectCreate(effect: number, kind: number, cfg1: number, cfg2: number): void {
+  guarded("sys_sound_effect_create", () => mixer().effectCreate(effect, kind, cfg1, cfg2));
+}
+
+export function soundBusAddEffect(bus: number, effect: number): void {
+  guarded("sys_sound_bus_add_effect", () => mixer().busAddEffect(bus, effect));
 }
 
 export function soundBusAttach(bus: number, parent: number): void {

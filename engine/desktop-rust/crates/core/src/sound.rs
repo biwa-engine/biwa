@@ -51,7 +51,7 @@ impl DecodedSound {
     }
 }
 
-/// effect の種類 (`sys_sound_bus_add_effect` の kind)。
+/// effect の種類 (`sys_sound_effect_create` の kind)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectKind {
     /// 帯域制限 (highpass と lowpass の直列)。`steep` なら 24 dB/oct (2 段)、でなければ 12 dB/oct。
@@ -178,6 +178,8 @@ struct Bus {
 #[derive(Debug)]
 struct Effect {
     kind: EffectKind,
+    /// 挿したバス。作っただけで挿していない effect は何もしない。
+    bus: Option<u32>,
     /// duck の key のバス。
     key: u32,
     /// duck の今の音量 [dB] (attack / release で動く)。
@@ -273,12 +275,25 @@ impl Mixer {
         Ok(())
     }
 
-    /// effect を列の末尾に挿す。繋いだ後は挿せない。
-    pub fn bus_add_effect(&mut self, bus: u32, id: u32, kind: i32, cfg1: i32, cfg2: i32) -> Result<(), String> {
-        let b = self.buses.get_mut(&bus).ok_or_else(|| format!("no such sound bus: {bus}"))?;
+    /// effect の列の末尾に、作ってある effect を挿す。繋いだ後は挿せない。1 つの effect は 1 つのバスにしか挿せない。
+    pub fn bus_add_effect(&mut self, bus: u32, effect: u32) -> Result<(), String> {
+        let b = self.buses.get(&bus).ok_or_else(|| format!("no such sound bus: {bus}"))?;
         if b.parent != Parent::None {
             return Err(format!("sound bus {bus} is already attached; effects must be added before attaching"));
         }
+        let e = self.effects.get_mut(&effect).ok_or_else(|| format!("no such sound effect: {effect}"))?;
+        if let Some(owner) = e.bus {
+            return Err(format!("sound effect {effect} is already in sound bus {owner}; an effect can be in only one bus"));
+        }
+        e.bus = Some(bus);
+        self.buses.get_mut(&bus).unwrap().effects.push(effect);
+        Ok(())
+    }
+
+    // --- effect -----------------------------------------------------------
+
+    /// effect を作る (まだどのバスにも挿さない)。パラメータは既定値で始まる。
+    pub fn effect_create(&mut self, id: u32, kind: i32, cfg1: i32, cfg2: i32) -> Result<(), String> {
         let (kind, key) = match kind {
             1 => (EffectKind::PassFilter { steep: cfg1 == 1 }, 0),
             20 => (EffectKind::Compressor, 0),
@@ -293,8 +308,7 @@ impl Mixer {
         if self.effects.contains_key(&id) {
             return Err(format!("sound effect {id} already exists"));
         }
-        b.effects.push(id);
-        self.effects.insert(id, Effect { kind, key, duck_gain: 0.0 });
+        self.effects.insert(id, Effect { kind, bus: None, key, duck_gain: 0.0 });
         let target = Target::Effect(id);
         match kind {
             EffectKind::PassFilter { .. } => {
@@ -393,8 +407,6 @@ impl Mixer {
         self.params.set(Target::Bus(bus), bus_param::VOLUME, f64::from(value));
         Ok(())
     }
-
-    // --- effect -----------------------------------------------------------
 
     /// effect のパラメータの値を、補間の空間 (Hz は log2) に直す。
     fn effect_value(&self, effect: u32, param: i32, value: f32) -> Result<(u8, f64), String> {
@@ -967,8 +979,10 @@ mod tests {
         for id in 1..=3 {
             m.bus_create(id).unwrap();
         }
-        m.bus_add_effect(1, 1, 20, 0, 0).unwrap();
-        m.bus_add_effect(2, 2, 30, 3, 0).unwrap();
+        m.effect_create(1, 20, 0, 0).unwrap();
+        m.effect_create(2, 30, 3, 0).unwrap();
+        m.bus_add_effect(1, 1).unwrap();
+        m.bus_add_effect(2, 2).unwrap();
         m.effect_set_param(2, i32::from(duck::AMOUNT), 12.0).unwrap();
         m.effect_set_param(2, i32::from(duck::ATTACK), 100.0).unwrap();
         m.effect_set_param(2, i32::from(duck::RELEASE), 400.0).unwrap();
@@ -1001,7 +1015,13 @@ mod tests {
         // 2 本目の根と、繋いだ後の effect は拒む。
         m.bus_create(3).unwrap();
         assert!(m.output_attach(3).is_err());
-        assert!(m.bus_add_effect(2, 9, 1, 0, 0).is_err());
+        m.effect_create(9, 1, 0, 0).unwrap();
+        assert!(m.bus_add_effect(2, 9).is_err());
+        // 1 つの effect は 1 つのバスにだけ。
+        m.bus_create(4).unwrap();
+        m.bus_create(5).unwrap();
+        m.bus_add_effect(4, 9).unwrap();
+        assert!(m.bus_add_effect(5, 9).is_err());
         assert!(m.bus_attach(1, 2).is_err());
     }
 
@@ -1119,7 +1139,8 @@ mod tests {
     fn hz_moves_on_a_log_scale_and_volume_in_db() {
         let mut m = Mixer::default();
         m.bus_create(1).unwrap();
-        m.bus_add_effect(1, 1, 1, 1, 0).unwrap();
+        m.effect_create(1, 1, 1, 0).unwrap();
+        m.bus_add_effect(1, 1).unwrap();
         m.output_attach(1).unwrap();
         m.take_commands();
         m.effect_add_transition(1, i32::from(pass_filter::HIGH_CUT), 1, 500.0, 0, 1000).unwrap();

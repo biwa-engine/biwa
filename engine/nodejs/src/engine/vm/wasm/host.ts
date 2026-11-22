@@ -31,6 +31,7 @@ import {
   soundAddStop,
   soundAddTransition,
   soundBusAddEffect,
+  soundEffectCreate,
   soundBusAddStopAll,
   soundBusAddTransition,
   soundBusAttach,
@@ -137,8 +138,9 @@ function createHandlers(): Record<string, SyscallHandler> {
 
     // 音。`alloc` のものは先頭が Worker の採った id (`ALLOC_SPACE` の空間ごと)。
     sys_sound_bus_create: (bus: number) => soundBusCreate(bus),
-    sys_sound_bus_add_effect: (effect: number, bus: number, kind: number, cfg1: number, cfg2: number) =>
-      soundBusAddEffect(effect, bus, kind, cfg1, cfg2),
+    sys_sound_effect_create: (effect: number, kind: number, cfg1: number, cfg2: number) =>
+      soundEffectCreate(effect, kind, cfg1, cfg2),
+    sys_sound_bus_add_effect: (bus: number, effect: number) => soundBusAddEffect(bus, effect),
     sys_sound_bus_attach: (bus: number, parent: number) => soundBusAttach(bus, parent),
     sys_sound_output_attach: (bus: number) => soundOutputAttach(bus),
     sys_sound_bus_add_stop_all: (bus: number, after: number) => soundBusAddStopAll(bus, after),
