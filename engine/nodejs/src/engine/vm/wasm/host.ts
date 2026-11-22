@@ -69,7 +69,7 @@ type SyscallHandler = (...args: never[]) => unknown;
  * どれをブロッキングにするかは `contract.ts` が決めている。
  * ここにあるのは中身だけである。
  *
- * `sys_create_object` の先頭の `id` は Worker が採ったものである
+ * `sys_canvas_object_create` の先頭の `id` は Worker が採ったものである
  * (`alloc`。メインスレッドと往復せずに戻り値を返すため)。
  */
 function createHandlers(): Record<string, SyscallHandler> {
@@ -103,9 +103,9 @@ function createHandlers(): Record<string, SyscallHandler> {
 
     sys_content_clear: (uiId: number) => clearContent(uiId),
 
-    sys_wait: () => waitForClick(),
+    sys_timeline_wait_click: () => waitForClick(),
 
-    sys_create_object: (
+    sys_canvas_object_create: (
       id: number,
       canvasId: number,
       path: string,
@@ -118,9 +118,9 @@ function createHandlers(): Record<string, SyscallHandler> {
       theta: number,
     ) => createObject(id, canvasId, path, layer, x, y, w, h, alpha, theta),
 
-    sys_delete_object: (id: number, after: number) => deleteObject(id, after),
+    sys_canvas_object_delete: (id: number, after: number) => deleteObject(id, after),
 
-    sys_add_transition: (
+    sys_canvas_object_add_transition: (
       id: number,
       param: number,
       kind: number,
@@ -130,11 +130,11 @@ function createHandlers(): Record<string, SyscallHandler> {
       duration: number,
     ) => addTransition(id, param, kind, valI, valF, after, duration),
 
-    sys_start_transitions: (sync: number) => startTransitions(sync),
+    sys_timeline_fire: (sync: number) => startTransitions(sync),
 
-    sys_await_transitions: () => awaitTransitions(),
+    sys_timeline_await_synced: () => awaitTransitions(),
 
-    sys_sleep: (ms: number) => sleep(ms),
+    sys_timeline_sleep: (ms: number) => sleep(ms),
 
     // 音。`alloc` のものは先頭が Worker の採った id (`ALLOC_SPACE` の空間ごと)。
     sys_sound_bus_create: (bus: number) => soundBusCreate(bus),
@@ -164,7 +164,7 @@ function createHandlers(): Record<string, SyscallHandler> {
     ) => soundEffectAddTransition(effect, param, kind, value, after, duration),
     sys_sound_effect_set_param: (effect: number, param: number, value: number) =>
       soundEffectSetParam(effect, param, value),
-    sys_sound_create: (
+    sys_sound_object_create: (
       id: number,
       path: string,
       bus: number,
@@ -175,10 +175,10 @@ function createHandlers(): Record<string, SyscallHandler> {
       loopEndMs: number,
       normalize: number,
     ) => soundCreate(id, path, bus, volumeDb, x, y, loopStartMs, loopEndMs, normalize),
-    sys_sound_add_start: (id: number, after: number, offsetMs: number, repeat: number) =>
+    sys_sound_object_add_start: (id: number, after: number, offsetMs: number, repeat: number) =>
       soundAddStart(id, after, offsetMs, repeat),
-    sys_sound_add_stop: (id: number, after: number) => soundAddStop(id, after),
-    sys_sound_add_transition: (
+    sys_sound_object_add_stop: (id: number, after: number) => soundAddStop(id, after),
+    sys_sound_object_add_transition: (
       id: number,
       param: number,
       kind: number,

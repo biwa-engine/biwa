@@ -52,7 +52,7 @@ API によっては完了までブロックし、API によっては処理を積
 
 ```wat
 (import "biwa:engine" "sys_content_flush" (func $sys_content_flush))
-(import "biwa:engine" "sys_wait"          (func $sys_wait))
+(import "biwa:engine" "sys_timeline_wait_click"          (func $sys_timeline_wait_click))
 ```
 
 wasm 自身には中断の仕組みが無いので、**wasm を Worker で走らせ、
@@ -81,16 +81,16 @@ src/engine/api/
 | ----------------------------------------------- | ------------ | --------------------------------- |
 | `biwa:runtime` `string_const`                   | -            | Worker (memory から UTF-8 を復号) |
 | `biwa:engine` `sys_content_push_text` ほか      | 積んで返る   | Main                              |
-| `biwa:engine` `sys_wait`                        | **中断する** | Main                              |
-| `biwa:engine` `sys_create_object`               | 積んで返る   | Main (id の採番のみ Worker)       |
-| `biwa:engine` `sys_add_transition` ほか         | 積んで返る   | Main                              |
-| `biwa:engine` `sys_await_transitions`           | **中断する** | Main                              |
-| `biwa:engine` `sys_sleep`                       | **中断する** | Main                              |
+| `biwa:engine` `sys_timeline_wait_click`                        | **中断する** | Main                              |
+| `biwa:engine` `sys_canvas_object_create`               | 積んで返る   | Main (id の採番のみ Worker)       |
+| `biwa:engine` `sys_canvas_object_add_transition` ほか         | 積んで返る   | Main                              |
+| `biwa:engine` `sys_timeline_await_synced`           | **中断する** | Main                              |
+| `biwa:engine` `sys_timeline_sleep`                       | **中断する** | Main                              |
 | `biwa:engine` `sys_string_concat` / `sys_map_*` | -            | Worker                            |
 | `biwa:engine` `sys_int_to_string` ほか          | -            | Worker                            |
 | `biwa:engine` `sys_ui_set_handler`              | 積んで返る   | Main (関数は Worker に預ける)     |
 
-`sys_create_object` は戻り値 (オブジェクト id) を持つが**中断しない**。
+`sys_canvas_object_create` は戻り値 (オブジェクト id) を持つが**中断しない**。
 採番だけを Worker 内で行い、本体はメインスレッドへ投げるからである
 (`contract.ts` の `alloc`)。素直に中断させると、
 オブジェクトを 1 つ作るたびにスレッドが往復してしまう。
@@ -202,7 +202,7 @@ scene の生テキストと `$` の埋め込み式は、std の `Content` を経
 画像などを canvas に置き、パラメータの遷移でアニメーションさせる。
 規約と設計の理由は [`docs/media-object-model.md`](../../docs/media-object-model.md) にある。
 
-- 出力先は UI Element `Canvas` で、`sys_create_object` の第一引数の ui_id で指定する。
+- 出力先は UI Element `Canvas` で、`sys_canvas_object_create` の第一引数の ui_id で指定する。
   描画範囲はその Element の矩形で、はみ出しは切り取る (`engine/canvas/CanvasSurfaces.ts`)
 - 座標は **出力先の Canvas の中央が原点**で、x は右が正、**y は上が正**。
   位置も回転も画像の中心を基準にする (PixiJS とは向きも単位も違うので、

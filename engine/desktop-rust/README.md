@@ -175,7 +175,7 @@ test1 の scene の背景・立ち絵の出入り・揺れながらの移動・�
   エンジン時計で決め、変化を `AudioCommand` として出す。音のファイルは画像と同じく番号を振って読み込みを依頼し
   (`Engine::take_sound_requests`)、読めたら長さをエンジンに、PCM を `audio-kira` に渡す。読めない音は長さ 0。
   headless は音を読まず、すべて長さ 0 の音として扱う。
-- 演出待ち (`sys_await_transitions`) は sync の束が終わるまで返事を保留する。クリック待ちの途中のクリックは、
+- 演出待ち (`sys_timeline_await_synced`) は sync の束が終わるまで返事を保留する。クリック待ちの途中のクリックは、
   文字送りと sync の演出を両方畳む (短絡させない)。
 - 画像はエンジンが番号を振って読み込みを依頼するだけで (`Engine::take_image_requests`)、
   `image` crate が裏のスレッドで読み、player がエンジン (元の大きさ) と `render` (テクスチャ) に渡す。

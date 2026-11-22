@@ -65,7 +65,7 @@ fn content_flush_and_wait[S](game: Game[S]) {
   // 将来的に各種イベントを受け取る機構が検討されている
   // 共通のイベントハンドラをエンジン側が呼び、イベントの種類ごとに振り分けがされるなどが考えられる
   // game.window.wait_event(Event::MouseClickLeft);
-  // 現在の一時的な実装ではsys_wait()の単なるラッパ
+  // 現在の一時的な実装ではsys_timeline_wait_click()の単なるラッパ
   game.window.wait();
 }
 
@@ -102,7 +102,7 @@ fn sys_content_push_image(path: String);
 
 fn sys_content_flush();
 
-fn sys_wait(); // 既存
+fn sys_timeline_wait_click(); // 既存
 ```
 
 ## scene 埋め込み式

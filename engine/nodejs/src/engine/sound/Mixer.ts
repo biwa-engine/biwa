@@ -13,7 +13,7 @@ import { Automation } from "../automation/Automation";
  * - バスは木で、根は 1 本だけが出力に繋がる。エンジンは木を保持するだけで、どのバスが何のためかは知らない。
  * - 音量はすべて dB。-60 dB 以下は無音。
  * - パラメータの遷移は canvas と同じ `Automation` で動かす。Hz は log2 に直して持ち、対数の上で補間する。
- * - 開始・停止・stop_all は `start` (= `sys_start_transitions`) で発火する。
+ * - 開始・停止・stop_all は `start` (= `sys_timeline_fire`) で発火する。
  */
 
 /** これ以下の dB は無音。 */

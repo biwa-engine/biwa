@@ -269,7 +269,7 @@ fn define_sound(linker: &mut Linker<HostState>) -> Result<()> {
     )?;
     linker.func_wrap(
         ENGINE,
-        "sys_sound_create",
+        "sys_sound_object_create",
         |mut caller: Caller<'_, HostState>,
          path: Option<Rooted<ExternRef>>,
          bus: i32,
@@ -301,19 +301,19 @@ fn define_sound(linker: &mut Linker<HostState>) -> Result<()> {
     )?;
     linker.func_wrap(
         ENGINE,
-        "sys_sound_add_start",
+        "sys_sound_object_add_start",
         |mut caller: Caller<'_, HostState>, id: i32, after: i32, offset_ms: i32, repeat: i32| {
             traced(&mut caller, |c| {
                 c.data_mut().cast(Syscall::SoundAddStart { id: id as u32, after, offset_ms, repeat })
             });
         },
     )?;
-    linker.func_wrap(ENGINE, "sys_sound_add_stop", |mut caller: Caller<'_, HostState>, id: i32, after: i32| {
+    linker.func_wrap(ENGINE, "sys_sound_object_add_stop", |mut caller: Caller<'_, HostState>, id: i32, after: i32| {
         traced(&mut caller, |c| c.data_mut().cast(Syscall::SoundAddStop { id: id as u32, after }));
     })?;
     linker.func_wrap(
         ENGINE,
-        "sys_sound_add_transition",
+        "sys_sound_object_add_transition",
         |mut caller: Caller<'_, HostState>, id: i32, param: i32, kind: i32, value: f32, after: i32, duration: i32| {
             traced(&mut caller, |c| {
                 c.data_mut().cast(Syscall::SoundAddTransition { id: id as u32, param, kind, value, after, duration })
@@ -399,7 +399,7 @@ fn define_content(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(ENGINE, "sys_content_clear", |mut caller: Caller<'_, HostState>, ui: i32| {
         traced(&mut caller, |c| c.data_mut().cast(Syscall::ContentClear { ui: ui as u32 }));
     })?;
-    linker.func_wrap(ENGINE, "sys_wait", |mut caller: Caller<'_, HostState>| -> Result<()> {
+    linker.func_wrap(ENGINE, "sys_timeline_wait_click", |mut caller: Caller<'_, HostState>| -> Result<()> {
         traced(&mut caller, |c| c.data_mut().call(Syscall::Wait))
     })?;
     Ok(())
@@ -408,7 +408,7 @@ fn define_content(linker: &mut Linker<HostState>) -> Result<()> {
 fn define_canvas(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         ENGINE,
-        "sys_create_object",
+        "sys_canvas_object_create",
         |mut caller: Caller<'_, HostState>,
          canvas: i32,
          path: Option<Rooted<ExternRef>>,
@@ -440,12 +440,12 @@ fn define_canvas(linker: &mut Linker<HostState>) -> Result<()> {
             })
         },
     )?;
-    linker.func_wrap(ENGINE, "sys_delete_object", |mut caller: Caller<'_, HostState>, id: i32, after: i32| {
+    linker.func_wrap(ENGINE, "sys_canvas_object_delete", |mut caller: Caller<'_, HostState>, id: i32, after: i32| {
         traced(&mut caller, |c| c.data_mut().cast(Syscall::DeleteObject { id: id as u32, after }));
     })?;
     linker.func_wrap(
         ENGINE,
-        "sys_add_transition",
+        "sys_canvas_object_add_transition",
         |mut caller: Caller<'_, HostState>,
          id: i32,
          param: i32,
@@ -467,13 +467,13 @@ fn define_canvas(linker: &mut Linker<HostState>) -> Result<()> {
             });
         },
     )?;
-    linker.func_wrap(ENGINE, "sys_start_transitions", |mut caller: Caller<'_, HostState>, sync: i32| {
+    linker.func_wrap(ENGINE, "sys_timeline_fire", |mut caller: Caller<'_, HostState>, sync: i32| {
         traced(&mut caller, |c| c.data_mut().cast(Syscall::StartTransitions { sync }));
     })?;
-    linker.func_wrap(ENGINE, "sys_await_transitions", |mut caller: Caller<'_, HostState>| -> Result<()> {
+    linker.func_wrap(ENGINE, "sys_timeline_await_synced", |mut caller: Caller<'_, HostState>| -> Result<()> {
         traced(&mut caller, |c| c.data_mut().call(Syscall::AwaitTransitions))
     })?;
-    linker.func_wrap(ENGINE, "sys_sleep", |mut caller: Caller<'_, HostState>, ms: i32| -> Result<()> {
+    linker.func_wrap(ENGINE, "sys_timeline_sleep", |mut caller: Caller<'_, HostState>, ms: i32| -> Result<()> {
         traced(&mut caller, |c| c.data_mut().call(Syscall::Sleep { ms }))
     })?;
     Ok(())

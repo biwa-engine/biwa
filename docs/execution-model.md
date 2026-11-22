@@ -304,7 +304,7 @@ wasm では scene も普通の関数として出力される。generator は Typ
 
 ```wat
 (import "biwa:engine" "sys_content_flush" (func $sys_content_flush))
-(import "biwa:engine" "sys_wait"          (func $sys_wait))
+(import "biwa:engine" "sys_timeline_wait_click"          (func $sys_timeline_wait_click))
 ```
 
 呼び出し規約が wasm の `call` そのものなので、B よりも syscall に近い。
@@ -319,7 +319,7 @@ wasm を Worker で走らせ、ブロッキング syscall ではそのスレッ�
 ```
   Worker (wasm)                    Main (エンジン)
   -------------                    ---------------
-  call $sys_wait
+  call $sys_timeline_wait_click
     postMessage({name, args})  ->  waitForClick() を await
     Atomics.wait(状態)             (この間も描画は動く)
       (スレッドが止まる)            結果を SAB に書く
@@ -350,7 +350,7 @@ E の後半 (JSPI) を採らなかった理由:
 | -------------- | -------------------------------- | ------------ | --------------------------------- |
 | `biwa:runtime` | `string_const`                   | -            | Worker (memory から UTF-8 を復号) |
 | `biwa:engine`  | `sys_content_push_text` ほか     | 積んで返る   | Main                              |
-| `biwa:engine`  | `sys_wait`                       | **中断する** | Main                              |
+| `biwa:engine`  | `sys_timeline_wait_click`                       | **中断する** | Main                              |
 | `biwa:engine`  | `sys_create_image`               | 積んで返る   | Main                              |
 | `biwa:engine`  | `sys_string_concat`              | -            | Worker                            |
 | `biwa:engine`  | `sys_int_to_string` ほか         | -            | Worker                            |

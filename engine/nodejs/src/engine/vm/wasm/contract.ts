@@ -85,20 +85,20 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   /** 枠を空にする。時機を決めるのは std であってエンジンではない。 */
   sys_content_clear: "cast",
   /** クリックが来るまで止まる。 */
-  sys_wait: "call",
+  sys_timeline_wait_click: "call",
 
   /** canvas にオブジェクトを置く。id を返すが、止まらない。 */
-  sys_create_object: "alloc",
+  sys_canvas_object_create: "alloc",
   /** オブジェクトを消す。 */
-  sys_delete_object: "cast",
+  sys_canvas_object_delete: "cast",
   /** 次の発火に備えて遷移を積む。 */
-  sys_add_transition: "cast",
+  sys_canvas_object_add_transition: "cast",
   /** 積まれた遷移を発火する。 */
-  sys_start_transitions: "cast",
+  sys_timeline_fire: "cast",
   /** sync 印の演出が終わるまで止まる。 */
-  sys_await_transitions: "call",
+  sys_timeline_await_synced: "call",
   /** エンジン時計の上で指定時間止まる。 */
-  sys_sleep: "call",
+  sys_timeline_sleep: "call",
 
   // 以下はエンジン呼び出しではなく、wasm の値に対する操作である。
   // 生成物は `String` を externref、`Map` / `Option` を externref / anyref として
@@ -157,10 +157,10 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   sys_sound_effect_add_transition: "cast",
   sys_sound_effect_set_param: "cast",
   /** SoundObject を作る。まだ鳴らない (開始は add_start + start_transitions)。 */
-  sys_sound_create: "alloc",
-  sys_sound_add_start: "cast",
-  sys_sound_add_stop: "cast",
-  sys_sound_add_transition: "cast",
+  sys_sound_object_create: "alloc",
+  sys_sound_object_add_start: "cast",
+  sys_sound_object_add_stop: "cast",
+  sys_sound_object_add_transition: "cast",
   /** 音のファイルの読み込みを先に始める。 */
   sys_sound_preload: "cast",
 };
@@ -171,7 +171,7 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
  * 音は SoundObject・Bus・Effect を別の空間にする (`docs/sound.md`。それぞれ 1 から振る)。
  */
 export const ALLOC_SPACE: Record<string, string> = {
-  sys_sound_create: "sound",
+  sys_sound_object_create: "sound",
   sys_sound_bus_create: "bus",
   sys_sound_effect_create: "effect",
 };
@@ -205,9 +205,9 @@ export const ENTER_SCENE_PAGE = "__biwa_enter_scene_page";
  * フレームを描けない** — 揃って始まることが構造として保証される。
  */
 export const FLUSH_AFTER_CAST: ReadonlySet<string> = new Set([
-  "sys_start_transitions",
+  "sys_timeline_fire",
 ]);
 
-// NOTE: `sys_content_flush` はここに要らない。直後に `sys_wait` が来て、
+// NOTE: `sys_content_flush` はここに要らない。直後に `sys_timeline_wait_click` が来て、
 // `call` は必ず溜めてある cast を先に流すためである (`bridge.ts`)。
 // 「flush はするが待たない」API を std が持ったら、ここに足すこと。

@@ -90,18 +90,18 @@ export function soundCreate(
   loopEndMs: number,
   _normalize: number,
 ): void {
-  guarded("sys_sound_create", () => {
+  guarded("sys_sound_object_create", () => {
     const sound = engine().sound.register(path);
     mixer().create(id, sound, bus, volumeDb, x, y, loopStartMs, loopEndMs);
   });
 }
 
 export function soundAddStart(id: number, after: number, offsetMs: number, repeat: number): void {
-  guarded("sys_sound_add_start", () => mixer().addStart(id, after, offsetMs, repeat));
+  guarded("sys_sound_object_add_start", () => mixer().addStart(id, after, offsetMs, repeat));
 }
 
 export function soundAddStop(id: number, after: number): void {
-  guarded("sys_sound_add_stop", () => mixer().addStop(id, after));
+  guarded("sys_sound_object_add_stop", () => mixer().addStop(id, after));
 }
 
 export function soundAddTransition(
@@ -112,7 +112,7 @@ export function soundAddTransition(
   after: number,
   duration: number,
 ): void {
-  guarded("sys_sound_add_transition", () => mixer().addTransition(id, param, kind, value, after, duration));
+  guarded("sys_sound_object_add_transition", () => mixer().addTransition(id, param, kind, value, after, duration));
 }
 
 export function soundPreload(path: string): void {

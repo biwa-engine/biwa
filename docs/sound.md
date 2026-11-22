@@ -12,7 +12,7 @@ canvas オブジェクト・遷移・Content API の既存の約束 (`media-obje
 - 音量はすべて **dB**。経路に沿って**足し算**になる。-60 dB 以下は無音。
 - 出力は当面**ステレオ**。音の位置は **position** (x と y、どちらも -1.0〜1.0)。
 - runtime は最初に**何も用意しない**。std が `master` を作り、リミッタを挿して**出力**に繋ぐ。
-- 開始・停止・変化は canvas の遷移と同じく、`add_*` で積んで `sys_start_transitions(sync)` で発火する。
+- 開始・停止・変化は canvas の遷移と同じく、`add_*` で積んで `sys_timeline_fire(sync)` で発火する。
 - 形式 (Tier 1): **MP3・WAV (PCM)・Ogg Vorbis**。
 
 ## 用語
@@ -68,7 +68,7 @@ channel (経路ではなく L/R の意味になる)、track (音楽では「曲�
 - 100 → 0 dB、50 → -12 dB、25 → -24 dB、10 → -40 dB、0 → 無音。
 - バスの音量は 0 dB 以下を推す。std は master を -3 dB にして余裕を残し、master にリミッタを挿す。
 - **ラウドネス正規化** (段 2): `biwa build` が LUFS を測って補正の dB を持ち、`normalize` が付いた音に足す。
-  既定は BGM・ボイスがオン、SE がオフ (決めるのは std)。`sys_sound_create` の `normalize` は今から入っていて、エンジンは段 2 まで無視する。
+  既定は BGM・ボイスがオン、SE がオフ (決めるのは std)。`sys_sound_object_create` の `normalize` は今から入っていて、エンジンは段 2 まで無視する。
 
 ## バス
 
@@ -171,10 +171,10 @@ Web Audio のような任意のグラフは組ませない。持つのはバス�
 (import "biwa:engine" "sys_sound_effect_add_transition" (func (param i32 i32 i32 f32 i32 i32)))
 (import "biwa:engine" "sys_sound_effect_set_param" (func (param i32 i32 f32)))
 ;; path bus volume_db x y loop_start_ms loop_end_ms (0 = ファイルの終わり) normalize → id。まだ鳴らない。
-(import "biwa:engine" "sys_sound_create" (func (param externref i32 f32 f32 f32 i32 i32 i32) (result i32)))
-(import "biwa:engine" "sys_sound_add_start" (func (param i32 i32 i32 i32)))               ;; id after offset_ms repeat (0 = 無限)
-(import "biwa:engine" "sys_sound_add_stop" (func (param i32 i32)))                        ;; id after
-(import "biwa:engine" "sys_sound_add_transition" (func (param i32 i32 i32 f32 i32 i32)))  ;; id param kind value after duration
+(import "biwa:engine" "sys_sound_object_create" (func (param externref i32 f32 f32 f32 i32 i32 i32) (result i32)))
+(import "biwa:engine" "sys_sound_object_add_start" (func (param i32 i32 i32 i32)))               ;; id after offset_ms repeat (0 = 無限)
+(import "biwa:engine" "sys_sound_object_add_stop" (func (param i32 i32)))                        ;; id after
+(import "biwa:engine" "sys_sound_object_add_transition" (func (param i32 i32 i32 f32 i32 i32)))  ;; id param kind value after duration
 (import "biwa:engine" "sys_sound_preload" (func (param externref)))                       ;; path
 ```
 
@@ -188,8 +188,8 @@ Web Audio のような任意のグラフは組ませない。持つのはバス�
 
 既存の syscall の意味の拡張:
 
-- `sys_start_transitions(sync)`: canvas と音の積まれたもの (開始・停止・stop_all・3 種の遷移) をまとめて発火する。
-- `sys_await_transitions()`: sync で始めた有限の音 (repeat ≥ 1) が鳴り終わるのも待つ。
+- `sys_timeline_fire(sync)`: canvas と音の積まれたもの (開始・停止・stop_all・3 種の遷移) をまとめて発火する。
+- `sys_timeline_await_synced()`: sync で始めた有限の音 (repeat ≥ 1) が鳴り終わるのも待つ。
 
 std の値の操作として `sys_string_eq` (文字列を中身で比べる。`local`) も ABI 3 で足した (`change_bgm` が同じ曲かを見る)。
 

@@ -57,7 +57,7 @@ scene 本文
         ▼
   sys_content_push_text(text, speed, size_unit, size_value, weight, color)
   sys_content_flush()
-  sys_wait()
+  sys_timeline_wait_click()
   sys_content_clear()
 ```
 
@@ -281,7 +281,7 @@ sys_content_flush();
 sys_content_clear();
 
 // クリックを待つ (既存)。
-sys_wait();
+sys_timeline_wait_click();
 ```
 
 `ContentColor::Configured` は std の側で設定値に解決されるので、
@@ -312,10 +312,10 @@ TypeScript 側は `Sys` の番号を足して `BiwaSyscall` の記述子を返�
 - 文字送りは断片ごとに速度が違いうるので、
   「いま何文字目まで見せているか」を断片の列に対する 1 本のカーソルで持つ
 - クリックが来たとき、文字送り中なら**まず全部出す** (skip)。
-  もう一度のクリックで `sys_wait` が解決する
+  もう一度のクリックで `sys_timeline_wait_click` が解決する
   (canvas の `objects.skipSync()` と同じ形)
 
-### 文字送りと `sys_wait` の関係
+### 文字送りと `sys_timeline_wait_click` の関係
 
 いまの `waitForClick` は「クリック → `box.clear()` → resolve」である。
 **クリアをここから外す** (決めたこと 2)。
@@ -381,7 +381,7 @@ std に依存するすべてのパッケージも建たない。
 [[lang="content_flush_and_wait"]]
 fn content_flush_and_wait[S](game: Game[S]) {
   game.window.message_window.flush();   // sys_content_flush()
-  game.window.wait();                   // sys_wait()
+  game.window.wait();                   // sys_timeline_wait_click()
   game.window.message_window.clear();   // sys_content_clear()
 }
 ```
@@ -678,7 +678,7 @@ flush と clear は段 3 で足す (決めたこと 2 の順序: `flush(); wait(
 
 TypeScript バックエンドは `Stmt::NovelSyscall` を `yield <call>` に落としているが、
 `content_push` は syscall 記述子を返さないただの std 関数なので、
-この形はもう正しくない。中断する syscall (`sys_wait`) は
+この形はもう正しくない。中断する syscall (`sys_timeline_wait_click`) は
 `content_flush_and_wait` の**奥**にあり、statement の位置には無い。
 
 TypeScript は tier 2 で、trait の段 2 以降そもそも建たない
@@ -785,7 +785,7 @@ clear()  → 枠を空にする
 変更がコンパイラと std に閉じるようにするための切り分けである (決めたこと 2)。
 
 wasm 経路では `sys_content_flush` を `FLUSH_AFTER_CAST` に入れる必要は無い。
-直後の `sys_wait` が `call` で、`call` は溜めてある cast を必ず先に流すからである。
+直後の `sys_timeline_wait_click` が `call` で、`call` は溜めてある cast を必ず先に流すからである。
 flush だけして待たない API が出てきたら足すこと。
 
 ### 段 3 の時点で出ているもの
