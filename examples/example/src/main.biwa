@@ -63,7 +63,7 @@ trait CharacterBiwaBehavior {
 impl CharacterBiwa: CharacterBiwaBehavior {
     // 琵琶 が笑うメソッド
     fn smile(self) {
-        let biwa_smile = Image::new("josei_20_b.png");
+        let biwa_smile = Image::new("images/character/biwa/josei_20_b.png");
         self.change_visual(biwa_smile);
     }
 }
@@ -188,7 +188,7 @@ fn main() {
 // シナリオ
 scene scenario(g: MyGame) -> MyGame {{    
     // キャラクターを初期化する(琵琶というキャラクター)
-    #let biwa_normal = Image::new("josei_20_a.png")
+    #let biwa_normal = Image::new("images/character/biwa/josei_20_a.png")
     #let biwa = CharacterBiwa::new(
         g,
         "言葉 琵琶", // (や,や.などで終わるコード行の次の行はコード行が継続される
@@ -198,11 +198,10 @@ scene scenario(g: MyGame) -> MyGame {{
         biwa_normal)
     // 背景描画
     // 今はstdの低レベルAPIを直で叩いているがいずれ抽象化される予定
-    #let bg = Image::new("background-countryside.jpg").
+    #let bg = Image::new("images/background/background-countryside.jpg").
         show_in_canvas(g.canvas(), 0, cx(0.0), cy(0.0), Cw::Auto, ch(100.0), Alpha::opaque())
     // BGM と環境音。BGM は 1 秒かけて大きくなり、環境音 (風) は 2 秒かけて入ってくる。
-    // 音の素材は `tools/make_sounds.py` で合成したもの (CC0)。
-    #g.change_bgm(Sound::new("sounds/bgm/morning.wav").with_volume(Volume::db(-4.0)), ms(1000))
+    #g.change_bgm(Sound::new("sounds/bgm/Free_BGM_Tr13.mp3").with_volume(Volume::db(-4.0)), ms(1000))
     #g.play_ambient(Sound::new("sounds/ambient/wind.wav").with_volume(Volume::db(-14.0)), ms(2000))
     // 本文開始
     Hello, Biwa World!
@@ -229,10 +228,11 @@ scene scenario(g: MyGame) -> MyGame {{
     $gray("この演出はテキストと同期しているので、途中でクリックすると")
     $gray("まず演出が終わり、もう一度クリックすると先に進みます。") >>
     // ボイス。鳴っている間は BGM が下がる (ダッキング)。`>>` で止まる。
-    #biwa.voice("sounds/voice/biwa_001.wav")
+    #biwa.voice("sounds/voice/biwa/biwa-001-hello-i-am.wav")
     こんにちは。
     私は$red(bold("言葉 琵琶"))(ことのは びわ)。
     $big(slow(slow("ゆっくり大きく")))話すこともできます。 >>
+    #biwa.voice("sounds/voice/biwa/biwa-002-source-code-is.wav")
     ソースコードはこんな感じかな:
 
     // ソースコードをメッセージウィンドウに表示したいがために頑張ってセルフシンタックスハイライトをしている部分:
@@ -246,6 +246,7 @@ scene scenario(g: MyGame) -> MyGame {{
         x_move_and(cx(-20.0)).y_sin_and(ch(2.5), ms(500)).animate_for(ms(2000))
     $gray("揺れながら左へ歩いていきます。") >>
 
+    #biwa.voice("sounds/voice/biwa/biwa-003-current-code-is.wav")
     今のコードはこんな感じ:
     
     $yellow("#")$aqua("biwa")$silver(".")$aqua("and")$silver("().")
@@ -253,20 +254,20 @@ scene scenario(g: MyGame) -> MyGame {{
     $white("揺れながら左へ歩いていきます。") $red(">>")
     >>
 
-    #if add(1, 2) > 2 {
-         この文章が見えていますか?
-        見えているならばif文の分岐が成功しています!
-        今のコード例はコンパイル時に決定可能な定数の比較ですが、
-        本質的に動的に分岐可能です。バイナリが動いているのですから。
-         いずれ選択肢を出すAPIなどが作られて真に動的な実行がされることでしょう。 >>
-    }
+    // TODO: Select API 対応時に差し替え
+    // #if add(1, 2) > 2 {
+    //      この文章が見えていますか?
+    //     見えているならばif文の分岐が成功しています!
+    //     今のコード例はコンパイル時に決定可能な定数の比較ですが、
+    //     本質的に動的に分岐可能です。バイナリが動いているのですから。
+    //      いずれ選択肢を出すAPIなどが作られて真に動的な実行がされることでしょう。 >>
+    // }
 
     // コメントです
     #biwa.smile() // ここもコメント
-    #biwa.voice("sounds/voice/biwa_002.wav")
     // チャイムが鳴り終わるまで待つ (クリックで飛ばせる)。BGM は 3 秒かけて夕方の曲へ替わる。
     #g.play_se_and_wait(Sound::new("sounds/se/chime.wav"))
-    #g.change_bgm(Sound::new("sounds/bgm/evening.wav").with_volume(Volume::db(-4.0)), ms(3000))
+    #g.change_bgm(Sound::new("sounds/bgm/free_Tr2.mp3").with_volume(Volume::db(-4.0)), ms(3000))
     Biwa Engine はまだ開発の途上ですが、今のところこんな感じに動作します。
     シナリオ記述言語からほとんどすべてを制御でき、自由度の高さとそれなりに良さそうな開発体験になりそうだと思っていただけたでしょうか。
     今後の開発でさらなるパワーアップがされていくことでしょう。 >>
@@ -285,6 +286,12 @@ scene scenario(g: MyGame) -> MyGame {{
     #g.stop_bgm(ms(1500))
     #g.sound().buses().ambient().stop_all(ms(1500))
     おしまい。 >>
+    Credit:
+    - キャラクターイラスト: 立ち絵素材　女性20（パーカーワンピ） / わたおきば($aqua("https://wataokiba.net/"))
+    - 背景イラスト: 田舎道２（日中） / みんちりえ（ $aqua("https://min-chi.material.jp/") ）
+    - BGM: フリーＢＧＭ 「新たな一日」,「夕焼けが染まる頃」 / d-elf.com
+    - キャラクターボイス: VOICEVOX:四国めたん
+    >>
 
     #endscene g
 }}
