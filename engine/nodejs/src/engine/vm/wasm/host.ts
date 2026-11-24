@@ -39,6 +39,7 @@ import {
   soundBusDelete,
   soundBusSetParam,
   soundCreate,
+  soundEffectAddParam,
   soundEffectAddTransition,
   soundEffectSetParam,
   soundOutputAttach,
@@ -154,16 +155,26 @@ function createHandlers(): Record<string, SyscallHandler> {
       duration: number,
     ) => soundBusAddTransition(bus, param, kind, value, after, duration),
     sys_sound_bus_set_param: (bus: number, param: number, value: number) => soundBusSetParam(bus, param, value),
+    sys_sound_effect_add_param: (
+      effect: number,
+      param: number,
+      i1: number,
+      i2: number,
+      f1: number,
+      f2: number,
+      f3: number,
+    ) => soundEffectAddParam(effect, param, i1, i2, f1, f2, f3),
     sys_sound_effect_add_transition: (
       effect: number,
       param: number,
+      index: number,
       kind: number,
       value: number,
       after: number,
       duration: number,
-    ) => soundEffectAddTransition(effect, param, kind, value, after, duration),
-    sys_sound_effect_set_param: (effect: number, param: number, value: number) =>
-      soundEffectSetParam(effect, param, value),
+    ) => soundEffectAddTransition(effect, param, index, kind, value, after, duration),
+    sys_sound_effect_set_param: (effect: number, param: number, index: number, value: number) =>
+      soundEffectSetParam(effect, param, index, value),
     sys_sound_object_create: (
       id: number,
       path: string,

@@ -107,8 +107,11 @@ pub enum Syscall {
     SoundBusDelete { bus: u32, after: i32 },
     SoundBusAddTransition { bus: u32, param: i32, kind: i32, value: f32, after: i32, duration: i32 },
     SoundBusSetParam { bus: u32, param: i32, value: f32 },
-    SoundEffectAddTransition { effect: u32, param: i32, kind: i32, value: f32, after: i32, duration: i32 },
-    SoundEffectSetParam { effect: u32, param: i32, value: f32 },
+    /// effect にものをぶら下げる (duck の key など)。足した順に index が決まる。使わない引数は 0。
+    SoundEffectAddParam { effect: u32, param: i32, i1: i32, i2: i32, f1: f32, f2: f32, f3: f32 },
+    /// `index` は、effect に 1 つだけあるパラメータなら 0、ぶら下げたもののパラメータならぶら下げた順。
+    SoundEffectAddTransition { effect: u32, param: i32, index: i32, kind: i32, value: f32, after: i32, duration: i32 },
+    SoundEffectSetParam { effect: u32, param: i32, index: i32, value: f32 },
     /// SoundObject を作る。まだ鳴らない。`loop_end_ms` = 0 はファイルの終わり。
     SoundCreate {
         id: u32,
@@ -174,6 +177,7 @@ impl Syscall {
             Self::SoundBusDelete { .. } => "sys_sound_bus_delete",
             Self::SoundBusAddTransition { .. } => "sys_sound_bus_add_transition",
             Self::SoundBusSetParam { .. } => "sys_sound_bus_set_param",
+            Self::SoundEffectAddParam { .. } => "sys_sound_effect_add_param",
             Self::SoundEffectAddTransition { .. } => "sys_sound_effect_add_transition",
             Self::SoundEffectSetParam { .. } => "sys_sound_effect_set_param",
             Self::SoundCreate { .. } => "sys_sound_object_create",

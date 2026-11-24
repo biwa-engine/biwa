@@ -23,8 +23,12 @@ export const EffectKind = { PassFilter: 1, Compressor: 20, Duck: 30 } as const;
 
 export const PassFilterParam = { LowCut: 0, HighCut: 1, MinHz: 20, MaxHz: 20000 } as const;
 const COMPRESSOR_DEFAULTS = [0, 1, 10, 100, 0];
-const DUCK_DEFAULTS = [0, 80, 500];
-const DuckParam = { Amount: 0, Attack: 1, Release: 2 } as const;
+const DUCK_DEFAULTS = [80, 500];
+/**
+ * duck のパラメータ。key は `effectAddParam(Key)` でいくつでもぶら下げ、key ごとに下げ幅を持つ。
+ * 鳴っている key のうち最も深い下げ幅だけ下げる (足し合わせない)。attack / release は最も深い下げ幅の全部を動く時間。
+ */
+export const DuckParam = { Attack: 0, Release: 1, Key: 2, KeyAmount: 3 } as const;
 const ObjectParam = { Volume: 0, X: 1, Y: 2, Rate: 3 } as const;
 
 export interface EffectSpec {
@@ -73,7 +77,8 @@ interface Effect {
   /** 挿したバス。作っただけで挿していない effect は何もしない。 */
   bus: number | null;
   steep: boolean;
-  key: number;
+  /** duck の key のバス (ぶら下げた順。下げ幅は `entry(id, DuckParam.Key, i)` の `KeyAmount`)。 */
+  keys: number[];
   duckGain: number;
 }
 
@@ -109,6 +114,8 @@ interface SyncBatch {
 const obj = (id: number): string => `o:${id}`;
 const busKey = (id: number): string => `b:${id}`;
 const fx = (id: number): string => `e:${id}`;
+/** effect にぶら下げたもの (`add_param` の param, 足した順の index) のパラメータの持ち主。 */
+const entry = (id: number, list: number, index: number): string => `e:${id}:${list}:${index}`;
 
 export class Mixer {
   private readonly buses = new Map<number, Bus>();
@@ -156,6 +163,9 @@ export class Mixer {
     if (kind !== EffectKind.PassFilter && kind !== EffectKind.Compressor && kind !== EffectKind.Duck) {
       throw new Error(`unknown sound effect kind: ${kind}`);
     }
+    if (kind === EffectKind.Duck && cfg1 !== 0) {
+      throw new Error(`duck takes no cfg1 (got ${cfg1}); add keys with sys_sound_effect_add_param`);
+    }
     if (kind === EffectKind.Duck && cfg2 !== 0) {
       throw new Error(`duck mode ${cfg2} is not supported (only 0 = activity)`);
     }
@@ -164,7 +174,7 @@ export class Mixer {
       kind,
       bus: null,
       steep: kind === EffectKind.PassFilter && cfg1 === 1,
-      key: kind === EffectKind.Duck ? cfg1 : 0,
+      keys: [],
       duckGain: 0,
     });
     const defaults =
@@ -228,26 +238,81 @@ export class Mixer {
 
   // --- effect -------------------------------------------------------------
 
-  private effectValue(effect: number, param: number, value: number): number {
+  /**
+   * effect にものをぶら下げる (duck の key など、数の決まらないもの)。
+   *
+   * 足した順に、その param の index が 0, 1, 2 … と決まる。ぶら下げたものの実数のパラメータは、
+   * その index で `effectSetParam` / `effectAddTransition` から変えられる。
+   * 使わない引数は 0 でなければならない (後から意味を足しても、古いコンテンツの振る舞いが変わらないように)。
+   * バスに挿す前にだけ足せる。
+   */
+  effectAddParam(effect: number, param: number, i1: number, i2: number, f1: number, f2: number, f3: number): void {
     const e = this.effects.get(effect);
     if (e === undefined) throw new Error(`no such sound effect: ${effect}`);
-    if (!this.params.has(fx(effect), param)) {
-      throw new Error(`unknown param ${param} for sound effect ${effect}`);
+    if (e.bus !== null) {
+      throw new Error(`sound effect ${effect} is already in sound bus ${e.bus}; params must be added before that`);
+    }
+    const unused = (values: number[]): void => {
+      if (values.some((v) => v !== 0)) {
+        throw new Error(`unused arguments of param ${param} for sound effect ${effect} must be 0`);
+      }
+    };
+    if (e.kind === EffectKind.Duck && param === DuckParam.Key) {
+      unused([i2, f2, f3]);
+      if (!this.buses.has(i1)) throw new Error(`duck key: no such sound bus: ${i1}`);
+      this.params.define(entry(effect, DuckParam.Key, e.keys.length), DuckParam.KeyAmount, f1);
+      e.keys.push(i1);
+      return;
+    }
+    throw new Error(`param ${param} cannot be added to sound effect ${effect}`);
+  }
+
+  /**
+   * effect のパラメータの持ち主と、補間の空間 (Hz は log2) に直した値。
+   * effect に 1 つだけあるパラメータは index 0。ぶら下げたもののパラメータは、ぶら下げた順の index。
+   */
+  private effectValue(effect: number, param: number, index: number, value: number): [string, number] {
+    const e = this.effects.get(effect);
+    if (e === undefined) throw new Error(`no such sound effect: ${effect}`);
+    const entryOf = e.kind === EffectKind.Duck && param === DuckParam.KeyAmount ? DuckParam.Key : null;
+    let owner: string;
+    if (entryOf === null) {
+      if (!this.params.has(fx(effect), param)) {
+        throw new Error(`unknown param ${param} for sound effect ${effect}`);
+      }
+      if (index !== 0) {
+        throw new Error(`param ${param} of sound effect ${effect} is single; its index must be 0, got ${index}`);
+      }
+      owner = fx(effect);
+    } else {
+      owner = entry(effect, entryOf, index);
+      if (!this.params.has(owner, param)) {
+        throw new Error(`sound effect ${effect} has no param ${entryOf} with index ${index}`);
+      }
     }
     if (e.kind === EffectKind.PassFilter) {
-      return Math.log2(clamp(value, PassFilterParam.MinHz, PassFilterParam.MaxHz));
+      return [owner, Math.log2(clamp(value, PassFilterParam.MinHz, PassFilterParam.MaxHz))];
     }
-    return value;
+    return [owner, value];
   }
 
-  effectAddTransition(effect: number, param: number, kind: number, value: number, after: number, duration: number): void {
-    const v = this.effectValue(effect, param, value);
+  effectAddTransition(
+    effect: number,
+    param: number,
+    index: number,
+    kind: number,
+    value: number,
+    after: number,
+    duration: number,
+  ): void {
+    const [owner, v] = this.effectValue(effect, param, index, value);
     this.checkKind(kind);
-    this.params.push(fx(effect), param, kind, v, after, duration);
+    this.params.push(owner, param, kind, v, after, duration);
   }
 
-  effectSetParam(effect: number, param: number, value: number): void {
-    this.params.set(fx(effect), param, this.effectValue(effect, param, value));
+  effectSetParam(effect: number, param: number, index: number, value: number): void {
+    const [owner, v] = this.effectValue(effect, param, index, value);
+    this.params.set(owner, param, v);
   }
 
   // --- 再生 ---------------------------------------------------------------
@@ -603,6 +668,8 @@ export class Mixer {
       const d = this.buses.get(id);
       if (d === undefined) continue;
       for (const e of d.effects) {
+        const effect = this.effects.get(e);
+        effect?.keys.forEach((_, i) => this.params.remove(entry(e, DuckParam.Key, i)));
         this.effects.delete(e);
         this.params.remove(fx(e));
         for (const key of [...this.sentEffect.keys()]) {
@@ -615,24 +682,35 @@ export class Mixer {
     }
   }
 
+  /** duck の i 番目の key の下げ幅 [dB] (正の数)。 */
+  private duckKeyAmount(effect: number, i: number): number {
+    return Math.abs(this.value(entry(effect, DuckParam.Key, i), DuckParam.KeyAmount));
+  }
+
+  /**
+   * duck の目標の音量 [dB]。key のバスの部分木で鳴っている音があれば、その key の下げ幅だけ下げる。
+   * 鳴っている key が複数あれば、最も深いものを取る (足し合わせない)。
+   */
   private duckTarget(effect: number): number {
     const e = this.effects.get(effect)!;
-    if (!this.buses.has(e.key)) return 0;
-    for (const o of this.objects.values()) {
-      if (o.state.kind === "playing" && this.inSubtree(o.bus, e.key)) {
-        return -Math.abs(this.value(fx(effect), DuckParam.Amount));
-      }
-    }
-    return 0;
+    const active = (key: number): boolean =>
+      this.buses.has(key) &&
+      [...this.objects.values()].some((o) => o.state.kind === "playing" && this.inSubtree(o.bus, key));
+    let deepest = 0;
+    e.keys.forEach((key, i) => {
+      if (active(key)) deepest = Math.max(deepest, this.duckKeyAmount(effect, i));
+    });
+    return -deepest;
   }
 
   private updateDucks(dt: number): void {
     for (const [id, e] of this.effects) {
       if (e.kind !== EffectKind.Duck) continue;
       const target = this.duckTarget(id);
-      const amount = Math.abs(this.value(fx(id), DuckParam.Amount));
+      // 速さは、key の下げ幅のうち最も深いもの (鳴っているかによらない) を attack / release で動く速さ。
+      const amount = e.keys.reduce((m, _, i) => Math.max(m, this.duckKeyAmount(id, i)), 0);
       const time = target < e.duckGain ? this.value(fx(id), DuckParam.Attack) : this.value(fx(id), DuckParam.Release);
-      // attack / release は「下げ幅の全部を動く時間」。
+      // attack / release は「最も深い下げ幅の全部を動く時間」。
       const step = time <= 0 || amount <= 0 ? Infinity : (amount / time) * dt;
       e.duckGain =
         Math.abs(target - e.duckGain) <= step ? target : e.duckGain + step * Math.sign(target - e.duckGain);

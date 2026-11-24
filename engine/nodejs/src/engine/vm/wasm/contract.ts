@@ -154,6 +154,7 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   sys_sound_bus_set_param: "cast",
   /** effect を作る (まだどのバスにも挿さない)。effect の id を返す。 */
   sys_sound_effect_create: "alloc",
+  sys_sound_effect_add_param: "cast",
   sys_sound_effect_add_transition: "cast",
   sys_sound_effect_set_param: "cast",
   /** SoundObject を作る。まだ鳴らない (開始は add_start + start_transitions)。 */

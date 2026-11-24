@@ -85,12 +85,19 @@ pub mod compressor {
 }
 
 /// duck のパラメータ (論理の側)。鳴らす側には、ここから決めた音量 (dB) だけが行く。
+///
+/// key (下げるきっかけになるバス) は `sys_sound_effect_add_param(KEY)` でいくつでもぶら下げる。
+/// key ごとに下げ幅を持ち、鳴っている key のうち最も深い下げ幅だけ下げる (足し合わせない)。
 pub mod duck {
-    /// 下げる量 [dB]。正でも負でも「その分だけ下げる」と読む。
-    pub const AMOUNT: u8 = 0;
-    pub const ATTACK: u8 = 1;
-    pub const RELEASE: u8 = 2;
-    pub const DEFAULTS: [f64; 3] = [0.0, 80.0, 500.0];
+    /// attack [ms]: 最も深い下げ幅の全部を下がるのにかかる時間。
+    pub const ATTACK: u8 = 0;
+    /// release [ms]: 最も深い下げ幅の全部を戻るのにかかる時間。
+    pub const RELEASE: u8 = 1;
+    pub const DEFAULTS: [f64; 2] = [80.0, 500.0];
+    /// key をぶら下げる (`add_param`)。i1 = key のバス、f1 = 下げ幅 [dB]。ほかは 0。
+    pub const KEY: u8 = 2;
+    /// key ごとの下げ幅 [dB] (index = key をぶら下げた順)。正でも負でも「その分だけ下げる」と読む。
+    pub const KEY_AMOUNT: u8 = 3;
     /// 鳴らす側に送るパラメータ: 今の音量 [dB]。
     pub const GAIN: u8 = 0;
 }
@@ -154,7 +161,10 @@ pub enum AudioCommand {
 enum Target {
     Object(u32),
     Bus(u32),
+    /// effect に 1 つだけあるパラメータ (syscall の index は 0)。
     Effect(u32),
+    /// effect にぶら下げたもの (`add_param` の param, 足した順の index) のパラメータ。
+    EffectEntry(u32, u8, u32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,8 +190,8 @@ struct Effect {
     kind: EffectKind,
     /// 挿したバス。作っただけで挿していない effect は何もしない。
     bus: Option<u32>,
-    /// duck の key のバス。
-    key: u32,
+    /// duck の key のバス (ぶら下げた順。下げ幅は `Target::EffectEntry(id, duck::KEY, i)` の `KEY_AMOUNT`)。
+    keys: Vec<u32>,
     /// duck の今の音量 [dB] (attack / release で動く)。
     duck_gain: f64,
 }
@@ -294,21 +304,24 @@ impl Mixer {
 
     /// effect を作る (まだどのバスにも挿さない)。パラメータは既定値で始まる。
     pub fn effect_create(&mut self, id: u32, kind: i32, cfg1: i32, cfg2: i32) -> Result<(), String> {
-        let (kind, key) = match kind {
-            1 => (EffectKind::PassFilter { steep: cfg1 == 1 }, 0),
-            20 => (EffectKind::Compressor, 0),
+        let kind = match kind {
+            1 => EffectKind::PassFilter { steep: cfg1 == 1 },
+            20 => EffectKind::Compressor,
             30 => {
+                if cfg1 != 0 {
+                    return Err(format!("duck takes no cfg1 (got {cfg1}); add keys with sys_sound_effect_add_param"));
+                }
                 if cfg2 != 0 {
                     return Err(format!("duck mode {cfg2} is not supported (only 0 = activity)"));
                 }
-                (EffectKind::Duck, cfg1 as u32)
+                EffectKind::Duck
             }
             _ => return Err(format!("unknown sound effect kind: {kind}")),
         };
         if self.effects.contains_key(&id) {
             return Err(format!("sound effect {id} already exists"));
         }
-        self.effects.insert(id, Effect { kind, bus: None, key, duck_gain: 0.0 });
+        self.effects.insert(id, Effect { kind, bus: None, keys: Vec::new(), duck_gain: 0.0 });
         let target = Target::Effect(id);
         match kind {
             EffectKind::PassFilter { .. } => {
@@ -408,30 +421,84 @@ impl Mixer {
         Ok(())
     }
 
-    /// effect のパラメータの値を、補間の空間 (Hz は log2) に直す。
-    fn effect_value(&self, effect: u32, param: i32, value: f32) -> Result<(u8, f64), String> {
+    /// effect にものをぶら下げる (duck の key など、数の決まらないもの)。
+    ///
+    /// 足した順に、その param の index が 0, 1, 2 … と決まる。ぶら下げたものの実数のパラメータは、
+    /// その index で `effect_set_param` / `effect_add_transition` から変えられる。
+    /// 使わない引数は 0 でなければならない (後から意味を足しても、古いコンテンツの振る舞いが変わらないように)。
+    /// バスに挿す前にだけ足せる (鳴らす側の組み立てが決まった後で形を変えない)。
+    #[allow(clippy::too_many_arguments)]
+    pub fn effect_add_param(&mut self, effect: u32, param: i32, i1: i32, i2: i32, f1: f32, f2: f32, f3: f32) -> Result<(), String> {
+        let e = self.effects.get(&effect).ok_or_else(|| format!("no such sound effect: {effect}"))?;
+        if let Some(bus) = e.bus {
+            return Err(format!("sound effect {effect} is already in sound bus {bus}; params must be added before that"));
+        }
+        let unused = |ints: &[i32], floats: &[f32]| -> Result<(), String> {
+            if ints.iter().any(|v| *v != 0) || floats.iter().any(|v| *v != 0.0) {
+                return Err(format!("unused arguments of param {param} for sound effect {effect} ({:?}) must be 0", e.kind));
+            }
+            Ok(())
+        };
+        match (e.kind, u8::try_from(param)) {
+            (EffectKind::Duck, Ok(duck::KEY)) => {
+                unused(&[i2], &[f2, f3])?;
+                let key = u32::try_from(i1).ok().filter(|b| self.buses.contains_key(b));
+                let key = key.ok_or_else(|| format!("duck key: no such sound bus: {i1}"))?;
+                let index = e.keys.len() as u32;
+                self.params.define(Target::EffectEntry(effect, duck::KEY, index), duck::KEY_AMOUNT, f64::from(f1));
+                self.effects.get_mut(&effect).unwrap().keys.push(key);
+                Ok(())
+            }
+            _ => Err(format!("param {param} cannot be added to sound effect {effect} ({:?})", e.kind)),
+        }
+    }
+
+    /// effect のパラメータの持ち主と、補間の空間 (Hz は log2) に直した値。
+    ///
+    /// effect に 1 つだけあるパラメータは index 0。ぶら下げたもののパラメータは、ぶら下げた順の index。
+    fn effect_value(&self, effect: u32, param: i32, index: i32, value: f32) -> Result<(Target, u8, f64), String> {
         let e = self.effects.get(&effect).ok_or_else(|| format!("no such sound effect: {effect}"))?;
         let param = u8::try_from(param).map_err(|_| format!("unknown sound effect param: {param}"))?;
-        if !self.params.contains(Target::Effect(effect), param) {
-            return Err(format!("unknown param {param} for sound effect {effect} ({:?})", e.kind));
-        }
+        let entry_of = match (e.kind, param) {
+            (EffectKind::Duck, duck::KEY_AMOUNT) => Some(duck::KEY),
+            _ => None,
+        };
+        let target = match entry_of {
+            None => {
+                if !self.params.contains(Target::Effect(effect), param) {
+                    return Err(format!("unknown param {param} for sound effect {effect} ({:?})", e.kind));
+                }
+                if index != 0 {
+                    return Err(format!("param {param} of sound effect {effect} ({:?}) is single; its index must be 0, got {index}", e.kind));
+                }
+                Target::Effect(effect)
+            }
+            Some(list) => {
+                let target = u32::try_from(index).ok().map(|i| Target::EffectEntry(effect, list, i));
+                match target {
+                    Some(t) if self.params.contains(t, param) => t,
+                    _ => return Err(format!("sound effect {effect} ({:?}) has no param {list} with index {index}", e.kind)),
+                }
+            }
+        };
         let value = f64::from(value);
         Ok(match e.kind {
-            EffectKind::PassFilter { .. } => (param, value.clamp(pass_filter::MIN_HZ, pass_filter::MAX_HZ).log2()),
-            _ => (param, value),
+            EffectKind::PassFilter { .. } => (target, param, value.clamp(pass_filter::MIN_HZ, pass_filter::MAX_HZ).log2()),
+            _ => (target, param, value),
         })
     }
 
-    pub fn effect_add_transition(&mut self, effect: u32, param: i32, kind: i32, value: f32, after: i32, duration: i32) -> Result<(), String> {
-        let (param, value) = self.effect_value(effect, param, value)?;
+    #[allow(clippy::too_many_arguments)]
+    pub fn effect_add_transition(&mut self, effect: u32, param: i32, index: i32, kind: i32, value: f32, after: i32, duration: i32) -> Result<(), String> {
+        let (target, param, value) = self.effect_value(effect, param, index, value)?;
         let kind = Curve::from_raw(kind).ok_or_else(|| format!("unknown transition kind: {kind}"))?;
-        self.params.push(Target::Effect(effect), param, kind, value, f64::from(after), f64::from(duration));
+        self.params.push(target, param, kind, value, f64::from(after), f64::from(duration));
         Ok(())
     }
 
-    pub fn effect_set_param(&mut self, effect: u32, param: i32, value: f32) -> Result<(), String> {
-        let (param, value) = self.effect_value(effect, param, value)?;
-        self.params.set(Target::Effect(effect), param, value);
+    pub fn effect_set_param(&mut self, effect: u32, param: i32, index: i32, value: f32) -> Result<(), String> {
+        let (target, param, value) = self.effect_value(effect, param, index, value)?;
+        self.params.set(target, param, value);
         Ok(())
     }
 
@@ -877,7 +944,11 @@ impl Mixer {
         for id in doomed {
             if let Some(b) = self.buses.remove(&id) {
                 for e in b.effects {
-                    self.effects.remove(&e);
+                    if let Some(effect) = self.effects.remove(&e) {
+                        for i in 0..effect.keys.len() as u32 {
+                            self.params.remove(Target::EffectEntry(e, duck::KEY, i));
+                        }
+                    }
                     self.params.remove(Target::Effect(e));
                     self.sent_effect.retain(|(eid, _), _| *eid != e);
                 }
@@ -887,13 +958,27 @@ impl Mixer {
         }
     }
 
-    /// duck の目標の音量 [dB]。key のバスの部分木で鳴っている音があれば下げる。
+    /// duck の i 番目の key の下げ幅 [dB] (正の数)。
+    fn duck_key_amount(&self, effect: u32, i: usize) -> f64 {
+        self.params.get(Target::EffectEntry(effect, duck::KEY, i as u32), duck::KEY_AMOUNT).unwrap_or(0.0).abs()
+    }
+
+    /// duck の目標の音量 [dB]。key のバスの部分木で鳴っている音があれば、その key の下げ幅だけ下げる。
+    /// 鳴っている key が複数あれば、最も深いものを取る (足し合わせない)。
     fn duck_target(&self, effect: u32) -> f64 {
         let e = &self.effects[&effect];
-        let key = e.key;
-        let active = self.buses.contains_key(&key)
-            && self.objects.values().any(|o| matches!(o.state, ObjectState::Playing { .. }) && self.in_subtree(o.bus, key));
-        if active { -self.params.get(Target::Effect(effect), duck::AMOUNT).unwrap_or(0.0).abs() } else { 0.0 }
+        let active = |key: u32| {
+            self.buses.contains_key(&key)
+                && self.objects.values().any(|o| matches!(o.state, ObjectState::Playing { .. }) && self.in_subtree(o.bus, key))
+        };
+        let deepest = e
+            .keys
+            .iter()
+            .enumerate()
+            .filter(|(_, key)| active(**key))
+            .map(|(i, _)| self.duck_key_amount(effect, i))
+            .fold(0.0, f64::max);
+        -deepest
     }
 
     fn update_ducks(&mut self, dt: f64) {
@@ -901,14 +986,15 @@ impl Mixer {
         for id in ids {
             let target = self.duck_target(id);
             let t = Target::Effect(id);
-            let amount = self.params.get(t, duck::AMOUNT).unwrap_or(0.0).abs();
+            // 速さは、key の下げ幅のうち最も深いもの (鳴っているかによらない) を attack / release で動く速さ。
+            let amount = (0..self.effects[&id].keys.len()).map(|i| self.duck_key_amount(id, i)).fold(0.0, f64::max);
             let current = self.effects[&id].duck_gain;
             let time = if target < current {
                 self.params.get(t, duck::ATTACK).unwrap_or(0.0)
             } else {
                 self.params.get(t, duck::RELEASE).unwrap_or(0.0)
             };
-            // attack / release は「下げ幅の全部を動く時間」。
+            // attack / release は「最も深い下げ幅の全部を動く時間」。
             let step = if time <= 0.0 || amount <= 0.0 { f64::INFINITY } else { amount / time * dt };
             let next = if (target - current).abs() <= step { target } else { current + step * (target - current).signum() };
             self.effects.get_mut(&id).unwrap().duck_gain = next;
@@ -973,21 +1059,25 @@ mod tests {
 
     const S: SoundHandle = SoundHandle(1);
 
-    /// master (1, compressor) → bgm (2, duck key=3) / voice (3)。
+    const KEY: i32 = duck::KEY as i32;
+
+    /// master (1, compressor) → bgm (2, duck: voice -12 dB / se -6 dB) / voice (3) / se (4)。
     fn mixer() -> Mixer {
         let mut m = Mixer::default();
-        for id in 1..=3 {
+        for id in 1..=4 {
             m.bus_create(id).unwrap();
         }
         m.effect_create(1, 20, 0, 0).unwrap();
-        m.effect_create(2, 30, 3, 0).unwrap();
+        m.effect_create(2, 30, 0, 0).unwrap();
+        m.effect_add_param(2, KEY, 3, 0, 12.0, 0.0, 0.0).unwrap();
+        m.effect_add_param(2, KEY, 4, 0, -6.0, 0.0, 0.0).unwrap();
+        m.effect_set_param(2, i32::from(duck::ATTACK), 0, 100.0).unwrap();
+        m.effect_set_param(2, i32::from(duck::RELEASE), 0, 400.0).unwrap();
         m.bus_add_effect(1, 1).unwrap();
         m.bus_add_effect(2, 2).unwrap();
-        m.effect_set_param(2, i32::from(duck::AMOUNT), 12.0).unwrap();
-        m.effect_set_param(2, i32::from(duck::ATTACK), 100.0).unwrap();
-        m.effect_set_param(2, i32::from(duck::RELEASE), 400.0).unwrap();
         m.bus_attach(2, 1).unwrap();
         m.bus_attach(3, 1).unwrap();
+        m.bus_attach(4, 1).unwrap();
         m.output_attach(1).unwrap();
         m.take_commands();
         m
@@ -1136,6 +1226,65 @@ mod tests {
     }
 
     #[test]
+    fn ducking_takes_the_deepest_active_key_without_adding_them_up() {
+        let mut m = mixer();
+        m.sound_loaded(S, Some(1000.0), 0.0);
+        m.sound_loaded(SoundHandle(2), Some(300.0), 0.0);
+        // se (-6 dB) だけ。
+        m.create(1, SoundHandle(2), 4, 0.0, 0.0, 0.0, 0, 0).unwrap();
+        m.add_start(1, 0, 0, 1).unwrap();
+        m.start(false, 0.0);
+        m.update(0.0);
+        m.update(200.0);
+        assert!((m.effects[&2].duck_gain + 6.0).abs() < 1e-6);
+        // voice (-12 dB) が重なっても -18 ではなく -12。
+        m.create(2, S, 3, 0.0, 0.0, 0.0, 0, 0).unwrap();
+        m.add_start(2, 0, 0, 1).unwrap();
+        m.start(false, 200.0);
+        m.update(200.0);
+        m.update(400.0);
+        assert!((m.effects[&2].duck_gain + 12.0).abs() < 1e-6);
+        // voice が終わって se が残れば -6 へ戻る (se は 300 ms で終わるので、もう一度鳴らす)。
+        m.create(3, SoundHandle(2), 4, 0.0, 0.0, 0.0, 0, 0).unwrap();
+        m.add_start(3, 0, 0, 1).unwrap();
+        m.start(false, 1150.0);
+        m.update(1150.0);
+        m.update(1200.0);
+        m.update(1400.0);
+        assert!((m.effects[&2].duck_gain + 6.0).abs() < 0.05);
+        // key ごとの下げ幅は index で変えられる。
+        m.effect_set_param(2, i32::from(duck::KEY_AMOUNT), 1, 3.0).unwrap();
+        assert!((m.duck_target(2) + 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn added_params_are_checked_and_addressed_by_index() {
+        let mut m = Mixer::default();
+        m.bus_create(1).unwrap();
+        m.bus_create(2).unwrap();
+        m.effect_create(1, 30, 0, 0).unwrap();
+        // 使わない引数は 0、key は在るバス。
+        assert!(m.effect_add_param(1, KEY, 2, 1, 6.0, 0.0, 0.0).is_err());
+        assert!(m.effect_add_param(1, KEY, 2, 0, 6.0, 1.0, 0.0).is_err());
+        assert!(m.effect_add_param(1, KEY, 9, 0, 6.0, 0.0, 0.0).is_err());
+        m.effect_add_param(1, KEY, 2, 0, 6.0, 0.0, 0.0).unwrap();
+        // ぶら下げられない param、1 つだけの param に 0 以外の index、無い index。
+        assert!(m.effect_add_param(1, i32::from(duck::ATTACK), 0, 0, 0.0, 0.0, 0.0).is_err());
+        assert!(m.effect_set_param(1, i32::from(duck::ATTACK), 1, 10.0).is_err());
+        assert!(m.effect_set_param(1, i32::from(duck::KEY_AMOUNT), 1, 10.0).is_err());
+        m.effect_set_param(1, i32::from(duck::KEY_AMOUNT), 0, 10.0).unwrap();
+        // 昔の形 (cfg1 = key) は拒む。バスに挿した後はぶら下げられない。
+        assert!(m.effect_create(2, 30, 2, 0).is_err());
+        m.bus_add_effect(1, 1).unwrap();
+        assert!(m.effect_add_param(1, KEY, 2, 0, 6.0, 0.0, 0.0).is_err());
+        // バスを消すと、ぶら下げたもののパラメータも消える。
+        m.output_attach(1).unwrap();
+        m.bus_delete(1, 0, 0.0).unwrap();
+        m.update(0.0);
+        assert!(!m.params.contains(Target::EffectEntry(1, duck::KEY, 0), duck::KEY_AMOUNT));
+    }
+
+    #[test]
     fn hz_moves_on_a_log_scale_and_volume_in_db() {
         let mut m = Mixer::default();
         m.bus_create(1).unwrap();
@@ -1143,7 +1292,7 @@ mod tests {
         m.bus_add_effect(1, 1).unwrap();
         m.output_attach(1).unwrap();
         m.take_commands();
-        m.effect_add_transition(1, i32::from(pass_filter::HIGH_CUT), 1, 500.0, 0, 1000).unwrap();
+        m.effect_add_transition(1, i32::from(pass_filter::HIGH_CUT), 0, 1, 500.0, 0, 1000).unwrap();
         m.bus_add_transition(1, 0, 1, -20.0, 0, 1000).unwrap();
         m.start(false, 0.0);
         m.update(500.0);

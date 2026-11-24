@@ -61,21 +61,36 @@ export function soundBusSetParam(bus: number, param: number, value: number): voi
   guarded("sys_sound_bus_set_param", () => mixer().busSetParam(bus, param, value));
 }
 
+/** effect にものをぶら下げる (duck の key など)。足した順に index が決まる。使わない引数は 0。 */
+export function soundEffectAddParam(
+  effect: number,
+  param: number,
+  i1: number,
+  i2: number,
+  f1: number,
+  f2: number,
+  f3: number,
+): void {
+  guarded("sys_sound_effect_add_param", () => mixer().effectAddParam(effect, param, i1, i2, f1, f2, f3));
+}
+
+/** `index` は、effect に 1 つだけあるパラメータなら 0、ぶら下げたもののパラメータならぶら下げた順。 */
 export function soundEffectAddTransition(
   effect: number,
   param: number,
+  index: number,
   kind: number,
   value: number,
   after: number,
   duration: number,
 ): void {
   guarded("sys_sound_effect_add_transition", () =>
-    mixer().effectAddTransition(effect, param, kind, value, after, duration),
+    mixer().effectAddTransition(effect, param, index, kind, value, after, duration),
   );
 }
 
-export function soundEffectSetParam(effect: number, param: number, value: number): void {
-  guarded("sys_sound_effect_set_param", () => mixer().effectSetParam(effect, param, value));
+export function soundEffectSetParam(effect: number, param: number, index: number, value: number): void {
+  guarded("sys_sound_effect_set_param", () => mixer().effectSetParam(effect, param, index, value));
 }
 
 /** SoundObject を作る。`normalize` (ラウドネス正規化) は段 2 で入れる。それまでは受け取って捨てる。 */

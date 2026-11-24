@@ -97,6 +97,7 @@ master          (リミッタ。出力に繋がる)
 ### 組み立てと削除
 
 1. `sys_sound_effect_create(kind, cfg1, cfg2) -> effect` で effect を作る (どのバスにも挿さない。パラメータは既定値)。
+   数の決まらないもの (duck の key など) は `sys_sound_effect_add_param` でぶら下げる (「ぶら下げる」の節)。
 2. `sys_sound_bus_create() -> bus`
 3. `sys_sound_bus_add_effect(bus, effect)` (0 回以上)
 4. `sys_sound_bus_attach(bus, parent)`、根は `sys_sound_output_attach(bus)`
@@ -122,13 +123,38 @@ master          (リミッタ。出力に繋がる)
 |---|---|---|---|---|
 | 1 | pass filter | cfg1: 傾き (0 = 12 dB/oct、1 = 24 dB/oct) | 0: low_cut Hz (20 以下は無効)、1: high_cut Hz (20000 以上は無効) | こもった音、電話の声 (300〜3400 Hz)、薄い音 |
 | 20 | compressor | なし | 0: threshold dB、1: ratio、2: attack ms、3: release ms、4: makeup dB | 声の粒を揃える、master のリミッタ |
-| 30 | duck | cfg1: key のバス、cfg2: mode (0 = activity。1 = level は予約) | 0: 下げ幅 dB、1: attack ms、2: release ms | ボイスが鳴る間 BGM を下げる |
+| 30 | duck | cfg1: 0、cfg2: mode (0 = activity。1 = level は予約) | 0: attack ms、1: release ms。ぶら下げる 2: key (i1 = バス、f1 = 下げ幅 dB) と、その 3: 下げ幅 dB (index = key の順) | ボイスや SE が鳴る間 BGM を下げる |
 
 - **pass filter**: 「範囲を通す」を下限 (highpass) と上限 (lowpass) の 2 つで表す。Q は 0.707 (盛り上がり無し) で固定。
   「無効」は 0 ではなく 20 Hz / 20 kHz で表す (Hz は対数で補間するので 0 は -∞ になる)。教科書の bandpass、EQ、notch は別の kind (後で)。
-- **duck mode 0**: key のバスの部分木で SoundObject が 1 つでも鳴っていれば、下げ幅だけ下げる。attack / release は
-  「下げ幅の全部を動く時間」。短すぎると音量が呼吸する (目安は attack 50〜100 ms、release 300〜800 ms)。
+- **duck mode 0**: key のバスの部分木で SoundObject が 1 つでも鳴っていれば、その key の下げ幅だけ下げる。
+  **鳴っている key が複数あれば、最も深い下げ幅だけ下げる (足し合わせない)**。voice -10 dB と se -6 dB が重なれば -10 dB、
+  voice が終わって se が残れば -6 dB へ release で戻る。attack / release は「key の下げ幅のうち最も深いものの全部を動く時間」。
+  短すぎると音量が呼吸する (目安は attack 50〜100 ms、release 300〜800 ms)。
+  - 最大を取るのは、key ごとに duck を直列に 2 つ挿すと dB が足し算になって 2 倍下がるからである。sidechain compressor で
+    複数の音源を 1 本の key バスにまとめてから 1 回だけ下げるのと同じ考え方で、下げを重ねない。
+    duck を直列に 2 つ挿したときは、今までどおり足し算になる (直列のゲイン段の意味は変えない)。
 - **補間の空間**: dB は dB のまま線形、**Hz は対数** (1000 → 2000 と 2000 → 4000 が同じ速さに聞こえる)、ms と ratio は線形。
+
+### ぶら下げる (`sys_sound_effect_add_param`)
+
+`sys_sound_effect_create` の cfg では渡しきれない、数の決まらないもの (duck の key、将来の EQ の帯域、send の送り先、
+マルチタップ delay のタップなど) は、effect ごとに syscall を足さず、汎用の 1 つでぶら下げる。
+
+```
+sys_sound_effect_add_param(effect, param, i1, i2, f1, f2, f3)
+```
+
+- param の番号と引数の意味は effect の種類ごとに決まっている。**使わない引数は 0 でなければならない** (エラー)。
+  後から引数に意味を足しても、古いコンテンツの振る舞いが黙って変わらないようにするためである。
+- 引数の数 (整数 2、実数 3) は使い道から決めた。整数は参照 (バス) と種類 (形・モード)、実数は作るときにまとめて渡したい値で、
+  EQ の帯域 (形・傾き / 周波数・ゲイン・Q) が最も多い。それより多いもの (マルチバンド compressor の帯域) は、
+  ぶら下げた後に index で 1 つずつ set する。文字列 (畳み込み reverb の IR のパス) はこれでは渡せない (別の仕組み)。
+- **バスに挿す前だけ**足せる (鳴らす側の組み立てが決まった後で形を変えない)。
+- 足した順に、その param の **index** が 0, 1, 2 … と決まる (戻り値は無い。std は自分が足した順を知っている)。
+  ぶら下げたものの実数のパラメータは、その index で `sys_sound_effect_set_param` / `sys_sound_effect_add_transition`
+  から変えたり遷移させたりできる。effect に 1 つだけあるパラメータの index は 0 (0 以外はエラー)。
+  例: duck の 1 番目の key の下げ幅を -3 dB に = `set_param(duck, 3 (key の下げ幅), 1, -3.0)`。
 
 ## 位置とチャンネル
 
@@ -168,8 +194,9 @@ Web Audio のような任意のグラフは組ませない。持つのはバス�
 (import "biwa:engine" "sys_sound_bus_add_transition" (func (param i32 i32 i32 f32 i32 i32)))   ;; bus param kind value after duration
 (import "biwa:engine" "sys_sound_bus_set_param" (func (param i32 i32 f32)))               ;; bus param value (発火を待たない)
 (import "biwa:engine" "sys_sound_effect_create" (func (param i32 i32 i32) (result i32)))  ;; kind cfg1 cfg2 → effect
-(import "biwa:engine" "sys_sound_effect_add_transition" (func (param i32 i32 i32 f32 i32 i32)))
-(import "biwa:engine" "sys_sound_effect_set_param" (func (param i32 i32 f32)))
+(import "biwa:engine" "sys_sound_effect_add_param" (func (param i32 i32 i32 i32 f32 f32 f32)))   ;; effect param i1 i2 f1 f2 f3 (挿す前だけ)
+(import "biwa:engine" "sys_sound_effect_add_transition" (func (param i32 i32 i32 i32 f32 i32 i32))) ;; effect param index kind value after duration
+(import "biwa:engine" "sys_sound_effect_set_param" (func (param i32 i32 i32 f32)))             ;; effect param index value
 ;; path bus volume_db x y loop_start_ms loop_end_ms (0 = ファイルの終わり) normalize → id。まだ鳴らない。
 (import "biwa:engine" "sys_sound_object_create" (func (param externref i32 f32 f32 f32 i32 i32 i32) (result i32)))
 (import "biwa:engine" "sys_sound_object_add_start" (func (param i32 i32 i32 i32)))               ;; id after offset_ms repeat (0 = 無限)
@@ -223,7 +250,8 @@ object.stop() / stop_after(d) / fade_out(d) / fade_to(v, d) / move_to(p, d)
 // effect: 作った時点で完成している。手元に残した値がパラメータを動かすハンドルになる
 let filter = PassFilter::new(FilterSlope::Steep, None, None);   // None はその側を削らない。PassFilter::open(slope) も同じ
 Compressor::new(threshold, ratio, attack, release, makeup) / Compressor::limiter()
-Duck::new(key_bus, Ducking::new(amount, attack, release)) / duck.set(Ducking::none())
+Duck::new(Vec::of(DuckKey::new(key_bus, Volume::db(-10.0))), DuckTiming::new(attack, release))  // key はいくつでも。重なれば最も深い下げ幅
+duck.set_amount(key_bus, Volume::db(-6.0)) / duck.set_timing(DuckTiming::default())
 
 // バス: 親・音量・effect の列を一度に渡す。返るときには木に繋がっている
 let bus = Bus::new(BusParent::Bus(g.sound().buses().master()), Volume::db(0.0), Vec::of(BusEffect::PassFilter(filter)));
@@ -238,7 +266,7 @@ fn main() {
   Window::new(main_scene, scene_page, pages).sound(sound).show();
 }
 g.sound().buses().se() / g.sound().volumes() / g.sound().set_volumes(Volumes::new(..))
-DeveloperConfig::default().with_volumes(..).with_bgm_ducking(Some(Ducking::new(Volume::db(-10.0), ms(80), ms(500))))
+DeveloperConfig::default().with_volumes(..).with_bgm_ducking(Some(BgmDucking::new(Volume::db(-10.0), Volume::db(-6.0), DuckTiming::default())))  // voice / se
 ```
 
 - 鳴らすにはバスが要るので、issue の `Sound::load(p).play()` (引数なし) は、既定のバスを知っている `Game` のメソッドにした。

@@ -187,11 +187,14 @@ impl Engine {
             Syscall::SoundBusSetParam { bus, param, value } => {
                 self.sound.bus_set_param(bus, param, value).map_err(UiError)?
             }
-            Syscall::SoundEffectAddTransition { effect, param, kind, value, after, duration } => {
-                self.sound.effect_add_transition(effect, param, kind, value, after, duration).map_err(UiError)?
+            Syscall::SoundEffectAddParam { effect, param, i1, i2, f1, f2, f3 } => {
+                self.sound.effect_add_param(effect, param, i1, i2, f1, f2, f3).map_err(UiError)?
             }
-            Syscall::SoundEffectSetParam { effect, param, value } => {
-                self.sound.effect_set_param(effect, param, value).map_err(UiError)?
+            Syscall::SoundEffectAddTransition { effect, param, index, kind, value, after, duration } => {
+                self.sound.effect_add_transition(effect, param, index, kind, value, after, duration).map_err(UiError)?
+            }
+            Syscall::SoundEffectSetParam { effect, param, index, value } => {
+                self.sound.effect_set_param(effect, param, index, value).map_err(UiError)?
             }
             Syscall::SoundCreate { id, path, bus, volume_db, x, y, loop_start_ms, loop_end_ms, normalize: _ } => {
                 // `normalize` (ラウドネス正規化) は段 2 で入れる。それまでは受け取って捨てる。

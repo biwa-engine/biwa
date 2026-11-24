@@ -135,7 +135,7 @@ curl / irm で取ったファイルには macOS の quarantine が付かない�
 | -- | ---------- |
 | 1  | 最初の版 |
 | 2  | `sys_ui_set_value` (値を預ける) を足した。scene を始めるとき、Window に預けた `WindowHandle` をそのまま `on_click` に渡し、std の host export `__biwa_std_game_window_new` は使わなくなった (`host-function-values.md`) |
-| 3  | 音の syscall 17 個 (`sys_sound_*` と `sys_sound_output_attach`) と、文字列の比較 `sys_string_eq` を足した。syscall の名前を `sys_<subsystem>_<対象>_<操作>` に揃えた (`sys_create_object` → `sys_canvas_object_create`、`sys_start_transitions` → `sys_timeline_fire`、`sys_await_transitions` → `sys_timeline_await_synced`、`sys_sleep` → `sys_timeline_sleep`、`sys_wait` → `sys_timeline_wait_click` など)。`sys_timeline_fire` / `sys_timeline_await_synced` が音も扱う (`sound.md`) |
+| 3  | 音の syscall 18 個 (`sys_sound_*` と `sys_sound_output_attach`) と、文字列の比較 `sys_string_eq` を足した。syscall の名前を `sys_<subsystem>_<対象>_<操作>` に揃えた (`sys_create_object` → `sys_canvas_object_create`、`sys_start_transitions` → `sys_timeline_fire`、`sys_await_transitions` → `sys_timeline_await_synced`、`sys_sleep` → `sys_timeline_sleep`、`sys_wait` → `sys_timeline_wait_click` など)。`sys_timeline_fire` / `sys_timeline_await_synced` が音も扱う (`sound.md`) |
 
 ## まだやらないこと
 

@@ -244,12 +244,29 @@ fn define_sound(linker: &mut Linker<HostState>) -> Result<()> {
     )?;
     linker.func_wrap(
         ENGINE,
+        "sys_sound_effect_add_param",
+        |mut caller: Caller<'_, HostState>, effect: i32, param: i32, i1: i32, i2: i32, f1: f32, f2: f32, f3: f32| {
+            traced(&mut caller, |c| {
+                c.data_mut().cast(Syscall::SoundEffectAddParam { effect: effect as u32, param, i1, i2, f1, f2, f3 })
+            });
+        },
+    )?;
+    linker.func_wrap(
+        ENGINE,
         "sys_sound_effect_add_transition",
-        |mut caller: Caller<'_, HostState>, effect: i32, param: i32, kind: i32, value: f32, after: i32, duration: i32| {
+        |mut caller: Caller<'_, HostState>,
+         effect: i32,
+         param: i32,
+         index: i32,
+         kind: i32,
+         value: f32,
+         after: i32,
+         duration: i32| {
             traced(&mut caller, |c| {
                 c.data_mut().cast(Syscall::SoundEffectAddTransition {
                     effect: effect as u32,
                     param,
+                    index,
                     kind,
                     value,
                     after,
@@ -261,9 +278,9 @@ fn define_sound(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         ENGINE,
         "sys_sound_effect_set_param",
-        |mut caller: Caller<'_, HostState>, effect: i32, param: i32, value: f32| {
+        |mut caller: Caller<'_, HostState>, effect: i32, param: i32, index: i32, value: f32| {
             traced(&mut caller, |c| {
-                c.data_mut().cast(Syscall::SoundEffectSetParam { effect: effect as u32, param, value })
+                c.data_mut().cast(Syscall::SoundEffectSetParam { effect: effect as u32, param, index, value })
             });
         },
     )?;

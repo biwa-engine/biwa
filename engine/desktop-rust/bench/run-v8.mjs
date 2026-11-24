@@ -81,6 +81,7 @@ const engine = {
   sys_sound_bus_delete: () => {},
   sys_sound_bus_add_transition: () => {},
   sys_sound_bus_set_param: () => {},
+  sys_sound_effect_add_param: () => {},
   sys_sound_effect_add_transition: () => {},
   sys_sound_effect_set_param: () => {},
   sys_sound_object_create: () => nextSound.object++,
