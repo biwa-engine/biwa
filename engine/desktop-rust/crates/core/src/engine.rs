@@ -16,6 +16,7 @@ use crate::draw::{DrawItem, DrawList};
 use crate::geometry::{Color, Rect, Viewport};
 use crate::image::{ImageHandle, ImageRequest, normalize_asset_path};
 use crate::layout::{LayoutBox, LayoutTree, Layouter};
+use crate::sound::{AudioCommand, Mixer, SoundHandle, SoundRequest};
 use crate::syscall::{SceneStart, Syscall, UiId};
 use crate::text::{DEFAULT_FONT_SIZE, LineHeight, ParagraphStyle, ShapedText, TextShaper, TextSpan, TextStyle};
 use crate::ui::{Background, ElementKind, LayoutSlot, SceneOutputs, UiAction, UiError, UiTree};
@@ -94,6 +95,12 @@ pub struct Engine {
     image_sizes: HashMap<ImageHandle, (u32, u32)>,
     /// まだ渡していない読み込みの依頼。
     image_requests: Vec<ImageRequest>,
+    /// 音のミキサー (論理状態)。
+    sound: Mixer,
+    /// パス → 音のファイルの番号。同じパスは 1 度だけ読む。
+    sounds: HashMap<String, SoundHandle>,
+    /// まだ渡していない音の読み込みの依頼。
+    sound_requests: Vec<SoundRequest>,
 }
 
 impl Engine {
@@ -160,7 +167,50 @@ impl Engine {
                 .canvas
                 .add_transition(id, param, kind, val_i, val_f, after, duration)
                 .map_err(UiError)?,
-            Syscall::StartTransitions { sync } => self.canvas.start(sync != 0, self.now),
+            Syscall::StartTransitions { sync } => {
+                self.canvas.start(sync != 0, self.now);
+                self.sound.start(sync != 0, self.now);
+            }
+
+            Syscall::SoundBusCreate { bus } => self.sound.bus_create(bus).map_err(UiError)?,
+            Syscall::SoundBusAddEffect { bus, effect } => self.sound.bus_add_effect(bus, effect).map_err(UiError)?,
+            Syscall::SoundEffectCreate { effect, kind, cfg1, cfg2 } => {
+                self.sound.effect_create(effect, kind, cfg1, cfg2).map_err(UiError)?
+            }
+            Syscall::SoundBusAttach { bus, parent } => self.sound.bus_attach(bus, parent).map_err(UiError)?,
+            Syscall::SoundOutputAttach { bus } => self.sound.output_attach(bus).map_err(UiError)?,
+            Syscall::SoundBusAddStopAll { bus, after } => self.sound.bus_add_stop_all(bus, after).map_err(UiError)?,
+            Syscall::SoundBusDelete { bus, after } => self.sound.bus_delete(bus, after, self.now).map_err(UiError)?,
+            Syscall::SoundBusAddTransition { bus, param, kind, value, after, duration } => {
+                self.sound.bus_add_transition(bus, param, kind, value, after, duration).map_err(UiError)?
+            }
+            Syscall::SoundBusSetParam { bus, param, value } => {
+                self.sound.bus_set_param(bus, param, value).map_err(UiError)?
+            }
+            Syscall::SoundEffectAddParam { effect, param, i1, i2, f1, f2, f3 } => {
+                self.sound.effect_add_param(effect, param, i1, i2, f1, f2, f3).map_err(UiError)?
+            }
+            Syscall::SoundEffectAddTransition { effect, param, index, kind, value, after, duration } => {
+                self.sound.effect_add_transition(effect, param, index, kind, value, after, duration).map_err(UiError)?
+            }
+            Syscall::SoundEffectSetParam { effect, param, index, value } => {
+                self.sound.effect_set_param(effect, param, index, value).map_err(UiError)?
+            }
+            Syscall::SoundCreate { id, path, bus, volume_db, x, y, loop_start_ms, loop_end_ms, normalize: _ } => {
+                // `normalize` (ラウドネス正規化) は段 2 で入れる。それまでは受け取って捨てる。
+                let sound = self.register_sound(&path).map_err(UiError)?;
+                self.sound.create(id, sound, bus, volume_db, x, y, loop_start_ms, loop_end_ms).map_err(UiError)?
+            }
+            Syscall::SoundAddStart { id, after, offset_ms, repeat } => {
+                self.sound.add_start(id, after, offset_ms, repeat).map_err(UiError)?
+            }
+            Syscall::SoundAddStop { id, after } => self.sound.add_stop(id, after).map_err(UiError)?,
+            Syscall::SoundAddTransition { id, param, kind, value, after, duration } => {
+                self.sound.add_transition(id, param, kind, value, after, duration).map_err(UiError)?
+            }
+            Syscall::SoundPreload { path } => {
+                self.register_sound(&path).map_err(UiError)?;
+            }
 
             Syscall::UiCreate { id, kind } => {
                 self.ui.create(id, kind)?;
@@ -195,7 +245,7 @@ impl Engine {
         let call = match *syscall {
             Syscall::Wait => PendingCall::Wait,
             Syscall::Sleep { ms } if ms > 0 => PendingCall::Sleep { remaining_ms: f64::from(ms) },
-            Syscall::AwaitTransitions if self.canvas.has_sync() => PendingCall::AwaitTransitions,
+            Syscall::AwaitTransitions if self.has_sync() => PendingCall::AwaitTransitions,
             _ => return CallStatus::Done,
         };
         self.call = Some(call);
@@ -216,6 +266,8 @@ impl Engine {
             content.update(delta_ms);
         }
         self.canvas.update(self.now);
+        self.sound.update(self.now);
+        let has_sync = self.has_sync();
         match &mut self.call {
             Some(PendingCall::Sleep { remaining_ms }) => {
                 *remaining_ms -= delta;
@@ -223,7 +275,7 @@ impl Engine {
                     self.finish_call();
                 }
             }
-            Some(PendingCall::AwaitTransitions) if !self.canvas.has_sync() => self.finish_call(),
+            Some(PendingCall::AwaitTransitions) if !has_sync => self.finish_call(),
             _ => {}
         }
     }
@@ -260,6 +312,7 @@ impl Engine {
             skipped |= content.skip();
         }
         skipped |= self.canvas.skip_sync(self.now);
+        skipped |= self.sound.skip_sync(self.now);
         if skipped {
             // 飛ばした演出を終端の値にしておく (次のフレームを待たずに)。
             self.update(0.0);
@@ -275,6 +328,39 @@ impl Engine {
         matches!(self.call, Some(PendingCall::Sleep { .. } | PendingCall::AwaitTransitions))
             || self.contents.values().any(MessageContent::is_revealing)
             || self.canvas.is_animating(self.now)
+            || self.sound.is_animating(self.now)
+    }
+
+    /// sync 印の演出・音で、終わっていないものがあるか。
+    fn has_sync(&self) -> bool {
+        self.canvas.has_sync() || self.sound.has_sync()
+    }
+
+    /// まだ渡していない音の読み込みの依頼を取り出す。
+    pub fn take_sound_requests(&mut self) -> Vec<SoundRequest> {
+        std::mem::take(&mut self.sound_requests)
+    }
+
+    /// 音のファイルが読めた (`length_ms`)、または読めなかった (`None`。長さ 0 の音として扱う)。
+    pub fn sound_loaded(&mut self, sound: SoundHandle, length_ms: Option<f64>) {
+        self.sound.sound_loaded(sound, length_ms, self.now);
+    }
+
+    /// 音を鳴らす側への指示を取り出す (論理状態の変化の写し)。
+    pub fn take_audio_commands(&mut self) -> Vec<AudioCommand> {
+        self.sound.take_commands()
+    }
+
+    /// パスに音のファイルの番号を振る。初めてのパスなら読み込みを依頼する。
+    fn register_sound(&mut self, path: &str) -> Result<SoundHandle, String> {
+        let path = normalize_asset_path(path)?;
+        if let Some(sound) = self.sounds.get(&path) {
+            return Ok(*sound);
+        }
+        let sound = SoundHandle(self.sounds.len() as u32 + 1);
+        self.sounds.insert(path.clone(), sound);
+        self.sound_requests.push(SoundRequest { sound, path });
+        Ok(sound)
     }
 
     /// まだ渡していない画像の読み込みの依頼を取り出す。
@@ -812,5 +898,42 @@ mod tests {
     fn content_to_non_message_area_is_an_error() {
         let mut e = engine_with_scene();
         assert!(e.apply(Syscall::ContentFlush { ui: 3 }).is_err());
+    }
+
+    #[test]
+    fn sound_sync_is_awaited_and_skipped_by_a_click() {
+        let mut e = Engine::new();
+        let calls = [
+            Syscall::SoundBusCreate { bus: 1 },
+            Syscall::SoundOutputAttach { bus: 1 },
+            Syscall::SoundCreate {
+                id: 1,
+                path: "se/a.mp3".into(),
+                bus: 1,
+                volume_db: 0.0,
+                x: 0.0,
+                y: 0.0,
+                loop_start_ms: 0,
+                loop_end_ms: 0,
+                normalize: 0,
+            },
+            Syscall::SoundPreload { path: "./se/a.mp3".into() },
+            Syscall::SoundAddStart { id: 1, after: 0, offset_ms: 0, repeat: 1 },
+            Syscall::StartTransitions { sync: 1 },
+        ];
+        for c in calls {
+            e.apply(c).unwrap();
+        }
+        let requests = e.take_sound_requests();
+        assert_eq!(requests.len(), 1, "the same path is loaded once");
+        e.sound_loaded(requests[0].sound, Some(1000.0));
+        assert_eq!(e.begin_call(&Syscall::AwaitTransitions), CallStatus::Pending);
+        e.update(10.0);
+        assert!(e.take_audio_commands().iter().any(|c| matches!(c, AudioCommand::Play { object: 1, .. })));
+        assert!(!e.take_finished_call());
+        // クリックは鳴っている有限の音を止めて、待ちを終わらせる。
+        e.advance();
+        assert!(e.take_finished_call());
+        assert!(e.take_audio_commands().contains(&AudioCommand::Stop { object: 1 }));
     }
 }

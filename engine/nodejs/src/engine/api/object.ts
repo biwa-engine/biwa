@@ -66,10 +66,14 @@ export function addTransition(
  * クリックはまずこれを完了させ、`awaitTransitions` が待つ対象にもなる。
  */
 export function startTransitions(sync: number): void {
-  engine().objects.start(sync !== 0);
+  const { objects, sound } = engine();
+  objects.start(sync !== 0);
+  // 音の開始・停止・遷移も同じ発火で始まる (`docs/sound.md`)。
+  sound.mixer.start(sync !== 0, objects.clock);
+  sound.flush();
 }
 
-/** sync 印の演出がすべて終わるまでシーンを止める。 */
+/** sync 印の演出 (と sync 印で始めた有限の音) がすべて終わるまでシーンを止める。 */
 export function awaitTransitions(): Promise<void> {
   return engine().objects.awaitSync();
 }

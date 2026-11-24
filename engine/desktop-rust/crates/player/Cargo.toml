@@ -18,3 +18,5 @@ biwa-player-image.workspace = true
 biwa-player-layout.workspace = true
 biwa-player-render.workspace = true
 biwa-player-platform.workspace = true
+biwa-player-audio-decode.workspace = true
+biwa-player-audio-kira.workspace = true

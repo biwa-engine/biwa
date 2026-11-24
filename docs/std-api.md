@@ -9,18 +9,20 @@
 ```
 ゲーム (test/test1)
   ↓  Character / Image / CanvasObject とそのチェーン
-std::game::character, std::game::image
-  ↓  番号を渡す生の呼び出し
-std::game::base_engine        create_object / add_transition / start_transitions ...
-  ↓  syscall
-エンジン (engine/nodejs)
+std::game::character, std::game::canvas, std::game::sound, std::game::timeline, ...
+  ↓  std の型 (Cx・Volume・Transition・TimelineSync ...) のまま呼ぶ
+std::game::runtime::<subsystem>   canvas_object_create / sound_bus_create / timeline_fire ...
+  ↓  syscall (番号・センチネル・生の id に直すのはここだけ)
+エンジン (engine/nodejs, engine/desktop-rust)
 ```
 
-`base_engine` はエンジンとの取り決めをそのまま写した層で、
-パラメータや遷移の種類は整数である。
-その番号に名前を付けるのが `std::game::image` の
-`param_x()` / `kind_ease_out()` などで、
-普段はさらにその上のチェーン API を使えばよい。
+`runtime` はエンジンとの境界で、ABI (番号、0 = 無限のようなセンチネル、0/1 のフラグ、素の `Uint` の id) を
+この中に閉じ込める。std の他のモジュールは std の型 (struct / enum) を渡し、
+syscall を呼ぶところで初めて生の値に直す。命名と配置の規則は `library/std/src/game/runtime.biwa` にある。
+
+`std::game::timeline` は subsystem をまたぐ「時間に沿って起こる演出と scene の進行との同期」で、
+遷移の型 (`Transition[V, D]`) と、演出を scene の進行に結びつけるか (`TimelineSync`) を持つ。
+発火・待ち・sleep・クリック待ちは `runtime::timeline` にある。
 
 ## canvas オブジェクト
 
@@ -151,6 +153,20 @@ biwa.disappear(ms(1200));
 
 `change_visual` は、std が覚えている遷移の目標値の位置に新しい画像を出してから
 古いものを消す。走っている遷移の途中で呼ぶと、その遷移の行き先に飛ぶ。
+
+## 音 (`std::game::sound`)
+
+仕様と API の一覧は `sound.md`。
+
+```biwa
+g = g.change_bgm(Sound::new("sounds/bgm/morning.mp3", Volume::db(-4.0), SoundPosition::center(), SoundLoopRange::whole()), ms(1000));
+g.play_se(Sound::new("sounds/se/steps.wav", Volume::db(0.0), SoundPosition::at(0.6, 0.0), SoundLoopRange::whole()));
+biwa.voice("sounds/voice/biwa_001.ogg");   // Character ごとのボイスのバスで鳴る
+g = g.stop_bgm(ms(3000));
+```
+
+既定のバスの木 (`SoundBuses::standard()`) とプレイヤーの音量 (`Volumes`) は Window の寿命のもので、
+`WindowHandle` が `Game` に運ぶ。キャラのボイスのバスと今の BGM は `Game` の寿命のもの。
 
 ## Option
 
@@ -294,6 +310,18 @@ AliasOther::new("a", "b", BiwaCharacterProps {}, img, img)
 呼び出し位置に型引数を書く構文 (`Vec[Image]::new()`) はまだ無いので、
 エイリアスを経由しない `Vec::new()` の `self_ty` は型引数が空のままである。
 その場合は単一化に混ぜず、従来どおり引数と文脈から推論する。
+
+### 式の書き方の制限 (音の std を書いていて気付いたもの)
+
+- 単項の `!` は無い。`if x { } else { .. }` と書く。
+- `if` は文の末尾 (ブロックの値) には書けるが、関数の引数の位置には書けない。小さな関数に分ける
+  (`fn flag(b: Bool) -> Uint { if b { 1 } else { 0 } }`)。
+- `return` は無い。
+- `else` のブロックの中で、ブロックを腕に持つ `match` の後に文を続けると構文エラーになることがある。
+  `match` を別の関数に分ければ通る。
+- ラムダの引数の型は、型引数 (`self` の `V` など) を通しては推論されない
+  (`transition.as_fval_with(fn(v) { v.as_db() }, ..)` は `_` に `as_db` が無いと言われる)。
+  `fn(v: Volume) { v.as_db() }` のように注釈を書く。
 
 ### `if` / `while` の条件式に構造体リテラルは置けない
 

@@ -54,7 +54,7 @@ export function clearContent(uiId: number): void {
 /**
  * クリックが来るまで待つ。
  *
- * syscall `sys_wait` の実装。Promise を返すので `vm/wasm/host.ts` はこれを await し、
+ * syscall `sys_timeline_wait_click` の実装。Promise を返すので `vm/wasm/host.ts` はこれを await し、
  * 解決するまで Worker を起こさない (= scene は止まったまま)。
  *
  * **進行中のものがあれば、クリックはまずそれを完了させる。**
@@ -67,7 +67,7 @@ export function clearContent(uiId: number): void {
  * 「進行中のものがあれば 1 回目で畳み、次で進む」で一貫する。
  */
 export function waitForClick(): Promise<void> {
-  const { host, ui, objects } = engine();
+  const { host, ui, objects, sound } = engine();
 
   return new Promise((resolve) => {
     const onClick = (): void => {
@@ -75,7 +75,10 @@ export function waitForClick(): Promise<void> {
       // クリックはどの出力先にも属さないので、文字送りはすべての MessageArea で畳む。
       const skippedText = ui.skipMessageAreas();
       const skippedSync = objects.skipSync();
-      if (skippedText || skippedSync) return;
+      // sync 印で始めた音も畳む (未開始の有限の音は捨て、鳴っている有限の音は止め、無限の音はすぐ始める)。
+      const skippedSound = sound.mixer.skipSync(objects.clock);
+      sound.flush();
+      if (skippedText || skippedSync || skippedSound) return;
 
       host.removeEventListener("click", onClick);
       resolve();

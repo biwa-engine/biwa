@@ -1,7 +1,7 @@
 /**
  * UI Element `Canvas` ごとの描画先。
  *
- * Canvas API (`sys_create_object`) は第一引数の ui_id で出力先の `Canvas` を指定する
+ * Canvas API (`sys_canvas_object_create`) は第一引数の ui_id で出力先の `Canvas` を指定する
  * (`docs/ui-api-impl-status.md` §14 S6)。ここはその ui_id から描画先
  * ({@link CanvasSurface}) を引く。
  *

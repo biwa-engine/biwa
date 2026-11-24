@@ -483,7 +483,7 @@ CSS をはじめ既存のツールがすべてこの意味で使っているの�
 | wasm の区分と `alloc`               | `engine/src/engine/vm/wasm/contract.ts`      |
 | cast のまとめ流し                   | `engine/src/engine/vm/wasm/bridge.ts`        |
 | wasm 側の対応表                     | `engine/src/engine/vm/wasm/host.ts`          |
-| std の境界                          | `library/std/src/game/base_engine.biwa`      |
+| std の境界                          | `library/std/src/game/runtime.biwa`          |
 
 Ticker への登録は `engine/src/main.ts` の 1 箇所だけである。
 

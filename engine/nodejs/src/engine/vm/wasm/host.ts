@@ -26,6 +26,25 @@ import {
   setUiProperty,
   setUiPropertyString,
 } from "../../api/ui";
+import {
+  soundAddStart,
+  soundAddStop,
+  soundAddTransition,
+  soundBusAddEffect,
+  soundEffectCreate,
+  soundBusAddStopAll,
+  soundBusAddTransition,
+  soundBusAttach,
+  soundBusCreate,
+  soundBusDelete,
+  soundBusSetParam,
+  soundCreate,
+  soundEffectAddParam,
+  soundEffectAddTransition,
+  soundEffectSetParam,
+  soundOutputAttach,
+  soundPreload,
+} from "../../api/sound";
 import { engine } from "../../api/context";
 import {
   completeCall,
@@ -51,7 +70,7 @@ type SyscallHandler = (...args: never[]) => unknown;
  * どれをブロッキングにするかは `contract.ts` が決めている。
  * ここにあるのは中身だけである。
  *
- * `sys_create_object` の先頭の `id` は Worker が採ったものである
+ * `sys_canvas_object_create` の先頭の `id` は Worker が採ったものである
  * (`alloc`。メインスレッドと往復せずに戻り値を返すため)。
  */
 function createHandlers(): Record<string, SyscallHandler> {
@@ -85,9 +104,9 @@ function createHandlers(): Record<string, SyscallHandler> {
 
     sys_content_clear: (uiId: number) => clearContent(uiId),
 
-    sys_wait: () => waitForClick(),
+    sys_timeline_wait_click: () => waitForClick(),
 
-    sys_create_object: (
+    sys_canvas_object_create: (
       id: number,
       canvasId: number,
       path: string,
@@ -100,9 +119,9 @@ function createHandlers(): Record<string, SyscallHandler> {
       theta: number,
     ) => createObject(id, canvasId, path, layer, x, y, w, h, alpha, theta),
 
-    sys_delete_object: (id: number, after: number) => deleteObject(id, after),
+    sys_canvas_object_delete: (id: number, after: number) => deleteObject(id, after),
 
-    sys_add_transition: (
+    sys_canvas_object_add_transition: (
       id: number,
       param: number,
       kind: number,
@@ -112,11 +131,73 @@ function createHandlers(): Record<string, SyscallHandler> {
       duration: number,
     ) => addTransition(id, param, kind, valI, valF, after, duration),
 
-    sys_start_transitions: (sync: number) => startTransitions(sync),
+    sys_timeline_fire: (sync: number) => startTransitions(sync),
 
-    sys_await_transitions: () => awaitTransitions(),
+    sys_timeline_await_synced: () => awaitTransitions(),
 
-    sys_sleep: (ms: number) => sleep(ms),
+    sys_timeline_sleep: (ms: number) => sleep(ms),
+
+    // 音。`alloc` のものは先頭が Worker の採った id (`ALLOC_SPACE` の空間ごと)。
+    sys_sound_bus_create: (bus: number) => soundBusCreate(bus),
+    sys_sound_effect_create: (effect: number, kind: number, cfg1: number, cfg2: number) =>
+      soundEffectCreate(effect, kind, cfg1, cfg2),
+    sys_sound_bus_add_effect: (bus: number, effect: number) => soundBusAddEffect(bus, effect),
+    sys_sound_bus_attach: (bus: number, parent: number) => soundBusAttach(bus, parent),
+    sys_sound_output_attach: (bus: number) => soundOutputAttach(bus),
+    sys_sound_bus_add_stop_all: (bus: number, after: number) => soundBusAddStopAll(bus, after),
+    sys_sound_bus_delete: (bus: number, after: number) => soundBusDelete(bus, after),
+    sys_sound_bus_add_transition: (
+      bus: number,
+      param: number,
+      kind: number,
+      value: number,
+      after: number,
+      duration: number,
+    ) => soundBusAddTransition(bus, param, kind, value, after, duration),
+    sys_sound_bus_set_param: (bus: number, param: number, value: number) => soundBusSetParam(bus, param, value),
+    sys_sound_effect_add_param: (
+      effect: number,
+      param: number,
+      i1: number,
+      i2: number,
+      f1: number,
+      f2: number,
+      f3: number,
+    ) => soundEffectAddParam(effect, param, i1, i2, f1, f2, f3),
+    sys_sound_effect_add_transition: (
+      effect: number,
+      param: number,
+      index: number,
+      kind: number,
+      value: number,
+      after: number,
+      duration: number,
+    ) => soundEffectAddTransition(effect, param, index, kind, value, after, duration),
+    sys_sound_effect_set_param: (effect: number, param: number, index: number, value: number) =>
+      soundEffectSetParam(effect, param, index, value),
+    sys_sound_object_create: (
+      id: number,
+      path: string,
+      bus: number,
+      volumeDb: number,
+      x: number,
+      y: number,
+      loopStartMs: number,
+      loopEndMs: number,
+      normalize: number,
+    ) => soundCreate(id, path, bus, volumeDb, x, y, loopStartMs, loopEndMs, normalize),
+    sys_sound_object_add_start: (id: number, after: number, offsetMs: number, repeat: number) =>
+      soundAddStart(id, after, offsetMs, repeat),
+    sys_sound_object_add_stop: (id: number, after: number) => soundAddStop(id, after),
+    sys_sound_object_add_transition: (
+      id: number,
+      param: number,
+      kind: number,
+      value: number,
+      after: number,
+      duration: number,
+    ) => soundAddTransition(id, param, kind, value, after, duration),
+    sys_sound_preload: (path: string) => soundPreload(path),
 
     sys_ui_create: (id: number, kind: number) => createUiElement(id, kind),
 

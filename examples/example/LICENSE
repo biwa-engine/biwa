@@ -1,0 +1,92 @@
+# LICENSE
+
+This Biwa example project `example` contains various forms of products like:
+- Source code
+- Asset files
+  - Images (Illustrations)
+  - Audio
+    - Character voice sounds
+    - Background music (BGM)
+and each of them is subject to a different license and has different rights holders (see below for details).
+
+
+## Asset files - Images (Illustrations)
+
+### Character Illustration
+
+files: assets/images/character/biwa/josei_20_a.png, assets/images/character/biwa/josei_20_b.png
+
+title: 立ち絵素材　女性20（パーカーワンピ）
+
+credit: わたおきば(https://wataokiba.net/)
+
+downloaded from: https://wataokiba.net/2023/05/01/josei20/
+
+### Background Illustration
+
+files: assets/images/background/background-countryside.jpg
+
+title: 田舎道２（日中）
+
+credit: みんちりえ（ https://min-chi.material.jp/ ）
+
+downloaded from: https://min-chi.material.jp/fm/bg_c/country_road2/
+
+## Asset files - Audio
+
+### Background Music
+
+1.
+
+files: assets/sounds/bgm/Free_BGM_Tr13.mp3
+
+title: フリーＢＧＭ 「新たな一日」
+
+credit: d-elf.com
+
+downloaded from: https://digital-elf.com/free-bgm/Free_BGM_Tr13.mp3
+
+2.
+
+files: assets/sounds/bgm/free_Tr2.mp3
+
+title: フリーＢＧＭ 「夕焼けが染まる頃」
+
+credit: d-elf.com
+
+downloaded from: https://digital-elf.com/free-bgm/free_Tr2.mp3
+
+### Character Voice Sounds
+
+files: assets/sounds/voice/biwa/*
+
+credit: VOICEVOX:四国めたん
+
+downloaded from: https://voicevox.hiroshiba.jp/
+
+
+## Source Code
+
+The source code in `src/` directory is subject to following MIT License.
+
+MIT License
+
+Copyright (c) 2026 Biwa Engine Project
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

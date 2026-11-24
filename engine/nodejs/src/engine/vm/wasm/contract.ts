@@ -1,7 +1,7 @@
 /**
  * wasm 生成物とエンジンの境界の定義。
  *
- * ここが std (`library/std/src/game/base_engine.biwa` の `[[native(arch="wasm")]]`)
+ * ここが std (`library/std/src/game/runtime.biwa` の `[[native(arch="wasm")]]`)
  * との唯一の合意点である。
  *
  * std は `(import "biwa:engine" "sys_*" ...)` を自分で書き、コンパイラはそれを
@@ -85,26 +85,28 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   /** 枠を空にする。時機を決めるのは std であってエンジンではない。 */
   sys_content_clear: "cast",
   /** クリックが来るまで止まる。 */
-  sys_wait: "call",
+  sys_timeline_wait_click: "call",
 
   /** canvas にオブジェクトを置く。id を返すが、止まらない。 */
-  sys_create_object: "alloc",
+  sys_canvas_object_create: "alloc",
   /** オブジェクトを消す。 */
-  sys_delete_object: "cast",
+  sys_canvas_object_delete: "cast",
   /** 次の発火に備えて遷移を積む。 */
-  sys_add_transition: "cast",
+  sys_canvas_object_add_transition: "cast",
   /** 積まれた遷移を発火する。 */
-  sys_start_transitions: "cast",
+  sys_timeline_fire: "cast",
   /** sync 印の演出が終わるまで止まる。 */
-  sys_await_transitions: "call",
+  sys_timeline_await_synced: "call",
   /** エンジン時計の上で指定時間止まる。 */
-  sys_sleep: "call",
+  sys_timeline_sleep: "call",
 
   // 以下はエンジン呼び出しではなく、wasm の値に対する操作である。
   // 生成物は `String` を externref、`Map` / `Option` を externref / anyref として
   // 持っているので、その実体は JS 側にしか無い。
   /** 文字列の連結。 */
   sys_string_concat: "local",
+  /** 文字列の比較 (中身で)。 */
+  sys_string_eq: "local",
   /** 数値から文字列を作る。`String` の実体はホスト側にしか無い。 */
   sys_int_to_string: "local",
   sys_float_to_string: "local",
@@ -134,6 +136,45 @@ export const ENGINE_SYSCALLS: Record<string, SyscallKind> = {
   sys_ui_set_handler: "retain",
   /** Element に値 (ホストが中身を見ずに預かり、後で返す struct) を設定する。 */
   sys_ui_set_value: "retain",
+
+  // 音 (`docs/sound.md`)。id は SoundObject・Bus・Effect の空間ごとに Worker で採番する (`ALLOC_SPACE`)。
+  /** バスを作る。 */
+  sys_sound_bus_create: "alloc",
+  /** バスの effect の列の末尾に、作ってある effect を挿す (繋ぐ前だけ)。 */
+  sys_sound_bus_add_effect: "cast",
+  sys_sound_bus_attach: "cast",
+  /** 根のバスを出力に繋ぐ。根は 1 本だけ。 */
+  sys_sound_output_attach: "cast",
+  /** バスの部分木で鳴っている音をすべて止める (発火で)。 */
+  sys_sound_bus_add_stop_all: "cast",
+  /** `after` の後に、バスとその部分木を消す。 */
+  sys_sound_bus_delete: "cast",
+  sys_sound_bus_add_transition: "cast",
+  /** 即座に値を設定する (発火を待たない)。 */
+  sys_sound_bus_set_param: "cast",
+  /** effect を作る (まだどのバスにも挿さない)。effect の id を返す。 */
+  sys_sound_effect_create: "alloc",
+  sys_sound_effect_add_param: "cast",
+  sys_sound_effect_add_transition: "cast",
+  sys_sound_effect_set_param: "cast",
+  /** SoundObject を作る。まだ鳴らない (開始は add_start + start_transitions)。 */
+  sys_sound_object_create: "alloc",
+  sys_sound_object_add_start: "cast",
+  sys_sound_object_add_stop: "cast",
+  sys_sound_object_add_transition: "cast",
+  /** 音のファイルの読み込みを先に始める。 */
+  sys_sound_preload: "cast",
+};
+
+/**
+ * `alloc` の syscall がどの id 空間で採番するか。載っていないものは canvas オブジェクトと UI Element の共通の空間。
+ *
+ * 音は SoundObject・Bus・Effect を別の空間にする (`docs/sound.md`。それぞれ 1 から振る)。
+ */
+export const ALLOC_SPACE: Record<string, string> = {
+  sys_sound_object_create: "sound",
+  sys_sound_bus_create: "bus",
+  sys_sound_effect_create: "effect",
 };
 
 /**
@@ -165,9 +206,9 @@ export const ENTER_SCENE_PAGE = "__biwa_enter_scene_page";
  * フレームを描けない** — 揃って始まることが構造として保証される。
  */
 export const FLUSH_AFTER_CAST: ReadonlySet<string> = new Set([
-  "sys_start_transitions",
+  "sys_timeline_fire",
 ]);
 
-// NOTE: `sys_content_flush` はここに要らない。直後に `sys_wait` が来て、
+// NOTE: `sys_content_flush` はここに要らない。直後に `sys_timeline_wait_click` が来て、
 // `call` は必ず溜めてある cast を先に流すためである (`bridge.ts`)。
 // 「flush はするが待たない」API を std が持ったら、ここに足すこと。

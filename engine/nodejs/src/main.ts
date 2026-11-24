@@ -2,6 +2,7 @@ import { setEngineContext } from "./engine/api/context";
 import { CanvasObjects } from "./engine/canvas/CanvasObjects";
 import { CanvasSurfaces } from "./engine/canvas/CanvasSurfaces";
 import { Renderer } from "./engine/Renderer";
+import { SoundEngine } from "./engine/sound/SoundEngine";
 import { UIObjects } from "./engine/ui/UIObjects";
 import { runWasm } from "./engine/vm/wasm/host";
 import game from "./game/entry";
@@ -28,11 +29,21 @@ renderer.layers.defineDom(UI_LAYER_ID, 25);
 const ui = new UIObjects(renderer.layers.dom(UI_LAYER_ID));
 const surfaces = new CanvasSurfaces(ui);
 const objects = new CanvasObjects(surfaces);
+// 音は canvas と同じ時計で動き、sync 印の待ちにも加わる (`docs/sound.md`)。
+const sound = new SoundEngine();
+objects.addSyncPeer(sound.mixer);
+// ブラウザは利用者の操作があるまで音を出させない。最初の操作で許してもらう。
+for (const type of ["pointerdown", "keydown"]) {
+  window.addEventListener(type, () => sound.resume(), { capture: true });
+}
 // エンジンが Ticker に登録するコールバックはこれ 1 つだけである。
 // オブジェクトごとに生やさないのは、リークを避けるためでもあるし、
 // ポーズ・オート・スキップを 1 箇所の時間操作で効かせるためでもある。
 renderer.ticker.add((ticker) => {
   objects.update(ticker.deltaMS);
+  sound.update(objects.clock);
+  // 音が終わって sync の待ちが解けたかを、音の更新の後に見直す。
+  objects.settle();
   // 文字送りも同じ時計で進める (すべての MessageArea)。倍率を `objects` から借りるのは、
   // ポーズ・オート・スキップが 1 箇所の時間操作で効くようにするためである。
   ui.update(ticker.deltaMS * objects.timeScale);
@@ -44,6 +55,7 @@ renderer.ticker.add((ticker) => {
 setEngineContext({
   renderer,
   objects,
+  sound,
   ui,
   host,
 });

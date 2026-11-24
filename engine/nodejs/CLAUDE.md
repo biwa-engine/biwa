@@ -41,6 +41,13 @@
   - param / kind の番号は `src/engine/api/transition.ts` にある。
     wasm の std はこれを `.wat` に写しているので、変えるなら
     `library/std` の import 宣言と合わせて動かす。
+- 音は `src/engine/sound/` が持つ。規約と設計は `docs/sound.md`。
+  - **論理状態 (`Mixer.ts`) が正で、Web Audio (`WebAudioOutput.ts`) は写し**である。時間・遷移・ダッキング・削除は
+    論理状態で決め、Web Audio にはその結果 (`AudioCommand`) を当てるだけにする。Web Audio の時計で何かを決めないこと
+    (ネイティブ `crates/core/src/sound.rs` と同じ規則で二重に書いてある。片方を変えたらもう片方も)。
+  - 音も canvas と同じエンジン時計で、`main.ts` の 1 本の Ticker から進める。sync の待ちと畳みにも加わる。
+  - 時間で動くパラメータは canvas と共通の `src/engine/automation/Automation.ts`。
+  - id は SoundObject・Bus・Effect で空間を分ける (`contract.ts` の `ALLOC_SPACE`)。
 - アセットを読む API は必ず `src/engine/api/assets.ts` の `resolveAssetUrl()` を通す。
   `.biwa` が書くパスはゲームのパッケージの `assets/` 基準の相対パスで、
   ページの横の `assets/` にある (`biwa build` がコピーし、`biwa dev` が配る)。

@@ -93,6 +93,43 @@ pub enum Syscall {
     /// Element に値を預けた。`handle` は vm の表の番号 (値そのものは vm に残る)。
     UiSetValue { id: UiId, kind: i32, handle: u32 },
 
+    // --- 音 (`docs/sound.md`)。id は vm が SoundObject / Bus / Effect の空間ごとに採番済み。 ---
+    /// バスを作る。
+    SoundBusCreate { bus: u32 },
+    /// バスの effect の列の末尾に、作ってある effect を挿す (繋ぐ前だけ)。
+    SoundBusAddEffect { bus: u32, effect: u32 },
+    /// effect を作る (まだどのバスにも挿さない)。
+    SoundEffectCreate { effect: u32, kind: i32, cfg1: i32, cfg2: i32 },
+    SoundBusAttach { bus: u32, parent: u32 },
+    /// 根のバスを出力に繋ぐ。
+    SoundOutputAttach { bus: u32 },
+    SoundBusAddStopAll { bus: u32, after: i32 },
+    SoundBusDelete { bus: u32, after: i32 },
+    SoundBusAddTransition { bus: u32, param: i32, kind: i32, value: f32, after: i32, duration: i32 },
+    SoundBusSetParam { bus: u32, param: i32, value: f32 },
+    /// effect にものをぶら下げる (duck の key など)。足した順に index が決まる。使わない引数は 0。
+    SoundEffectAddParam { effect: u32, param: i32, i1: i32, i2: i32, f1: f32, f2: f32, f3: f32 },
+    /// `index` は、effect に 1 つだけあるパラメータなら 0、ぶら下げたもののパラメータならぶら下げた順。
+    SoundEffectAddTransition { effect: u32, param: i32, index: i32, kind: i32, value: f32, after: i32, duration: i32 },
+    SoundEffectSetParam { effect: u32, param: i32, index: i32, value: f32 },
+    /// SoundObject を作る。まだ鳴らない。`loop_end_ms` = 0 はファイルの終わり。
+    SoundCreate {
+        id: u32,
+        path: String,
+        bus: u32,
+        volume_db: f32,
+        x: f32,
+        y: f32,
+        loop_start_ms: i32,
+        loop_end_ms: i32,
+        normalize: i32,
+    },
+    /// 開始を積む。`repeat` = 0 は無限。
+    SoundAddStart { id: u32, after: i32, offset_ms: i32, repeat: i32 },
+    SoundAddStop { id: u32, after: i32 },
+    SoundAddTransition { id: u32, param: i32, kind: i32, value: f32, after: i32, duration: i32 },
+    SoundPreload { path: String },
+
     /// scene を始めるので ScenePage を見せる (vm 自身が流す。std の import ではない)。
     EnterScenePage { window: UiId },
 }
@@ -118,19 +155,36 @@ impl Syscall {
             Self::ContentPushText { .. } => "sys_content_push_text",
             Self::ContentFlush { .. } => "sys_content_flush",
             Self::ContentClear { .. } => "sys_content_clear",
-            Self::Wait => "sys_wait",
-            Self::CreateObject { .. } => "sys_create_object",
-            Self::DeleteObject { .. } => "sys_delete_object",
-            Self::AddTransition { .. } => "sys_add_transition",
-            Self::StartTransitions { .. } => "sys_start_transitions",
-            Self::AwaitTransitions => "sys_await_transitions",
-            Self::Sleep { .. } => "sys_sleep",
+            Self::Wait => "sys_timeline_wait_click",
+            Self::CreateObject { .. } => "sys_canvas_object_create",
+            Self::DeleteObject { .. } => "sys_canvas_object_delete",
+            Self::AddTransition { .. } => "sys_canvas_object_add_transition",
+            Self::StartTransitions { .. } => "sys_timeline_fire",
+            Self::AwaitTransitions => "sys_timeline_await_synced",
+            Self::Sleep { .. } => "sys_timeline_sleep",
             Self::UiCreate { .. } => "sys_ui_create",
             Self::UiSetProperty { .. } => "sys_ui_set_property",
             Self::UiSetPropertyWithString { .. } => "sys_ui_set_property_with_string",
             Self::UiPushChild { .. } => "sys_ui_push_child",
             Self::UiSetHandler { .. } => "sys_ui_set_handler",
             Self::UiSetValue { .. } => "sys_ui_set_value",
+            Self::SoundBusCreate { .. } => "sys_sound_bus_create",
+            Self::SoundBusAddEffect { .. } => "sys_sound_bus_add_effect",
+            Self::SoundEffectCreate { .. } => "sys_sound_effect_create",
+            Self::SoundBusAttach { .. } => "sys_sound_bus_attach",
+            Self::SoundOutputAttach { .. } => "sys_sound_output_attach",
+            Self::SoundBusAddStopAll { .. } => "sys_sound_bus_add_stop_all",
+            Self::SoundBusDelete { .. } => "sys_sound_bus_delete",
+            Self::SoundBusAddTransition { .. } => "sys_sound_bus_add_transition",
+            Self::SoundBusSetParam { .. } => "sys_sound_bus_set_param",
+            Self::SoundEffectAddParam { .. } => "sys_sound_effect_add_param",
+            Self::SoundEffectAddTransition { .. } => "sys_sound_effect_add_transition",
+            Self::SoundEffectSetParam { .. } => "sys_sound_effect_set_param",
+            Self::SoundCreate { .. } => "sys_sound_object_create",
+            Self::SoundAddStart { .. } => "sys_sound_object_add_start",
+            Self::SoundAddStop { .. } => "sys_sound_object_add_stop",
+            Self::SoundAddTransition { .. } => "sys_sound_object_add_transition",
+            Self::SoundPreload { .. } => "sys_sound_preload",
             Self::EnterScenePage { .. } => "__biwa_enter_scene_page",
         }
     }
